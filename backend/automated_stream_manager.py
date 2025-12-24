@@ -333,7 +333,7 @@ class RegexChannelMatcher:
         
         return True, None
     
-    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: List[str], enabled: bool = True):
+    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: List[str], enabled: bool = True, playlists: Optional[List[int]] = None):
         """Add or update a channel pattern.
         
         Args:
@@ -341,6 +341,8 @@ class RegexChannelMatcher:
             name: Channel name
             regex_patterns: List of regex patterns
             enabled: Whether the pattern is enabled
+            playlists: Optional list of channel_group IDs that this regex should apply to.
+                      If None or empty, applies to all playlists (backward compatible).
             
         Raises:
             ValueError: If any regex pattern is invalid
@@ -350,13 +352,23 @@ class RegexChannelMatcher:
         if not is_valid:
             raise ValueError(error_msg)
         
-        self.channel_patterns["patterns"][str(channel_id)] = {
+        pattern_data = {
             "name": name,
             "regex": regex_patterns,
             "enabled": enabled
         }
+        
+        # Store playlists field when explicitly provided
+        # - Not provided (None): field not stored, backward compatible (applies to all)
+        # - Empty list []: stored as [], explicitly means "all playlists"
+        # - Specific IDs [1,2,3]: stored as-is, only those playlists
+        if playlists is not None:
+            pattern_data["playlists"] = playlists
+        
+        self.channel_patterns["patterns"][str(channel_id)] = pattern_data
         self._save_patterns(self.channel_patterns)
-        logger.info(f"Added/updated pattern for channel {channel_id}: {name}")
+        logger.info(f"Added/updated pattern for channel {channel_id}: {name} (playlists: {playlists or 'all'})")
+    
     
     def reload_patterns(self):
         """Reload patterns from the config file.
@@ -382,8 +394,17 @@ class RegexChannelMatcher:
         escaped_channel_name = re.escape(channel_name)
         return pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
     
-    def match_stream_to_channels(self, stream_name: str) -> List[str]:
-        """Match a stream name to channel IDs based on regex patterns."""
+    def match_stream_to_channels(self, stream_name: str, stream_channel_group: Optional[int] = None) -> List[str]:
+        """Match a stream name to channel IDs based on regex patterns.
+        
+        Args:
+            stream_name: Name of the stream to match
+            stream_channel_group: Optional channel group ID (playlist) of the stream.
+                                 If provided, only matches patterns that apply to this group.
+        
+        Returns:
+            List of channel IDs that match the stream
+        """
         matches = []
         case_sensitive = self.channel_patterns.get("global_settings", {}).get("case_sensitive", False)
         
@@ -392,6 +413,19 @@ class RegexChannelMatcher:
         for channel_id, config in self.channel_patterns.get("patterns", {}).items():
             if not config.get("enabled", True):
                 continue
+            
+            # Check if this regex pattern applies to the stream's playlist
+            # Backward compatible behavior:
+            # - playlists not present (None) = old config, applies to all playlists
+            # - playlists = [] (empty) = new config, explicitly applies to all playlists
+            # - playlists = [1,2,3] = only applies to those specific playlists
+            pattern_playlists = config.get("playlists")
+            if pattern_playlists is not None and len(pattern_playlists) > 0:
+                # Pattern is limited to specific playlists
+                if stream_channel_group is None or stream_channel_group not in pattern_playlists:
+                    # Stream's playlist is not in the allowed list, skip this pattern
+                    continue
+            # If playlists is None (old config) or empty list (new, all), pattern applies to all playlists
             
             channel_name = config.get("name", "")
             
@@ -900,8 +934,11 @@ class AutomatedStreamManager:
                     else:
                         logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
                 
-                # Find matching channels
-                matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
+                # Get stream's channel_group (playlist) for playlist filtering
+                stream_channel_group = stream.get('channel_group')
+                
+                # Find matching channels (with playlist filtering if applicable)
+                matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_channel_group)
                 
                 for channel_id in matching_channels:
                     # Check if stream is already in this channel
@@ -1142,8 +1179,11 @@ class AutomatedStreamManager:
                         streams_to_keep.append(stream_id)
                         continue
                     
-                    # Check if stream matches any pattern for this channel
-                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
+                    # Get stream's channel_group (playlist) for playlist filtering
+                    stream_channel_group = full_stream.get('channel_group')
+                    
+                    # Check if stream matches any pattern for this channel (with playlist filtering)
+                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_channel_group)
                     
                     if str(channel_id) in matching_channels:
                         # Stream still matches, keep it
