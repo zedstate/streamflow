@@ -505,12 +505,29 @@ Schedule channel checks to run before EPG program events for optimal stream qual
 ### User Workflow - Auto-Create Rules
 1. Navigate to Scheduling section in the UI
 2. Click "Create Auto-Create Rule" button
-3. Configure rule name, channel, and regex pattern
-4. Test pattern against live EPG data (optional)
-5. Set minutes before program start
-6. Save the rule
-7. Events are automatically created as EPG refreshes
-8. No further action required!
+3. Configure rule name
+4. Select channels:
+   - **Individual Channels**: Choose specific channels from the dropdown
+   - **Channel Groups**: Select entire channel groups (automatically includes all current and future channels in the group)
+   - **Mixed Selection**: Combine both individual channels and channel groups in a single rule
+5. Define regex pattern to match program titles
+6. Test pattern against live EPG data (optional)
+7. Set minutes before program start for the check
+8. Save the rule
+9. Events are automatically created as EPG refreshes
+10. New channels added to selected groups are automatically included - no updates required!
+
+**Benefits of Channel Groups:**
+- Automatically applies rules to all channels in a group
+- New channels added to the group are included automatically
+- No manual updates needed when channels change
+- Perfect for dynamic channel groups (e.g., sports event channels created by Teamarr)
+
+**Example Use Case:**
+- Create a rule for "NBA Teamarr" channel group
+- Use regex pattern: `(?i)^(?:coming up:\s*)?NBA Basketball`
+- All NBA event channels get pre-event stream checks automatically
+- When Teamarr creates new event channels, they're included without updates
 
 ## API Integration
 

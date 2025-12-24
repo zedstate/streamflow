@@ -1617,10 +1617,10 @@ export default function Scheduling() {
                             </div>
                           )}
                           
-                          {/* Total channel count */}
-                          {(hasIndividualChannels || hasGroups) && (
+                          {/* Total channel count - show only for expanded display */}
+                          {channelsInfo.length > 1 && (
                             <span className="text-xs text-muted-foreground">
-                              Total: {channelsInfo.length} channel{channelsInfo.length !== 1 ? 's' : ''}
+                              Applied to: {channelsInfo.length} channel{channelsInfo.length !== 1 ? 's' : ''}
                             </span>
                           )}
                         </div>
