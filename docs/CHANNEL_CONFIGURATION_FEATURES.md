@@ -24,10 +24,11 @@ The Regex Configuration tab now features a clean, table-based interface for mana
 **Column Headers**:
 - **Select**: Checkbox for multi-select functionality
 - **#**: Channel number
+- **Logo**: Channel logo/icon (shows first letter if logo unavailable)
 - **Channel Name**: Name of the channel
 - **Channel Group**: Group the channel belongs to
 - **Regex Patterns**: Count of configured patterns
-- **Actions**: Edit button to manage patterns
+- **Actions**: Dropdown menu for channel actions
 
 #### 2. Multi-Select Functionality
 - **Individual Selection**: Click checkbox on any row to select/deselect a channel
@@ -77,12 +78,22 @@ Add a single regex pattern to multiple channels at once:
 - **Results counter**: Displays "Showing X-Y of Z channels"
 
 #### 7. Pattern Management Per Channel
-Click the Edit button (✏️) on any channel to:
-- **View existing patterns**: See all configured regex patterns
-- **Add new patterns**: Create additional patterns for the channel
-- **Edit patterns**: Modify existing regex rules
-- **Delete patterns**: Remove unwanted patterns
-- **Test patterns live**: See which streams match in real-time
+Click the Actions dropdown menu (⋮) on any channel row to:
+- **View/Edit Regex Rules**: Opens dialog to view, add, edit, or delete regex patterns
+- **Toggle Stream Matching**: Enable or disable stream matching for this channel
+- **Toggle Stream Checking**: Enable or disable stream checking for this channel
+
+The dropdown menu provides:
+- Quick access to all channel-specific actions
+- Visual indicators (switches) showing current matching and checking states
+- Immediate feedback via toast notifications when settings are changed
+
+#### 8. Channel Logo Display
+Each row displays the channel's logo or icon:
+- **Logo Source**: Fetched from Dispatcharr and cached locally
+- **Fallback Display**: If no logo is available, shows the first letter of the channel name
+- **Performance**: Logos are cached in browser localStorage for fast loading
+- **Consistent Design**: Matches the logo display style from Channel Order tab
 
 ### Example Workflows
 
@@ -111,13 +122,25 @@ Click the Edit button (✏️) on any channel to:
 
 ### Table Layout
 ```
-+--------+-----+--------------+---------------+------------------+---------+
-| Select | #   | Channel Name | Channel Group | Regex Patterns   | Actions |
-+--------+-----+--------------+---------------+------------------+---------+
-| ☐      | 5   | ABC News     | News          | 2 patterns       | ✏️      |
-| ☑      | 101 | ESPN         | Sports        | 1 pattern        | ✏️      |
-| ☑      | 505 | CNN          | News          | No patterns      | ✏️      |
-+--------+-----+--------------+---------------+------------------+---------+
++--------+-----+------+--------------+---------------+------------------+---------+
+| Select | #   | Logo | Channel Name | Channel Group | Regex Patterns   | Actions |
++--------+-----+------+--------------+---------------+------------------+---------+
+| ☐      | 5   | [A]  | ABC News     | News          | 2 patterns       | ⋮       |
+| ☑      | 101 | [E]  | ESPN         | Sports        | 1 pattern        | ⋮       |
+| ☑      | 505 | [C]  | CNN          | News          | No patterns      | ⋮       |
++--------+-----+------+--------------+---------------+------------------+---------+
+```
+
+### Actions Dropdown Menu
+When clicking the Actions menu (⋮), you see:
+```
+┌─ Channel Actions ─────────────────────────┐
+│ 👁️ View/Edit Regex Rules                  │
+├───────────────────────────────────────────┤
+│ Settings                                  │
+│ Stream Matching              [Toggle ON]  │
+│ Stream Checking              [Toggle ON]  │
+└───────────────────────────────────────────┘
 ```
 
 ### Filter and Selection Bar
@@ -259,6 +282,9 @@ if (sortByGroup) {
 5. **Clear Visual Feedback**: Table layout makes it easy to see pattern status
 6. **Scalability**: Works efficiently with hundreds of channels
 7. **Reduced Duplication**: Pattern variables eliminate redundant configurations
+8. **Visual Channel Recognition**: Logo display helps quickly identify channels
+9. **Quick Settings Access**: Dropdown menu provides one-click access to all channel actions
+10. **Immediate Feedback**: Toggle switches show current state and update instantly
 
 ## Group Management Tab Features
 
