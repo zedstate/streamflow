@@ -1000,7 +1000,12 @@ def test_regex_pattern_live():
                 matched_pattern = None
                 
                 for pattern in regex_patterns:
-                    search_pattern = pattern if case_sensitive else pattern.lower()
+                    # Substitute {CHANNEL_NAME} variable with actual channel name
+                    # This matches the behavior in automated_stream_manager.py
+                    escaped_channel_name = re.escape(channel_name)
+                    substituted_pattern = pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+                    
+                    search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
                     
                     # Convert literal spaces in pattern to flexible whitespace regex (\s+)
                     # This allows matching streams with different whitespace characters
