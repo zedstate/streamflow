@@ -303,52 +303,20 @@ class StreamCheckConfig:
         return value if value is not None else default
     
     def is_auto_m3u_updates_enabled(self) -> bool:
-        """Check if automatic M3U updates are enabled (pipeline or individual control)."""
-        pipeline_mode = self.config.get('pipeline_mode')
-        
-        # If pipeline_mode is set, use pipeline logic
-        if pipeline_mode and pipeline_mode != 'disabled':
-            # All pipelines except 'pipeline_3' have auto M3U updates
-            return pipeline_mode != 'pipeline_3'
-        
-        # Otherwise use individual controls
-        return self.config.get('automation_controls', {}).get('auto_m3u_updates', False)
+        """Check if automatic M3U updates are enabled."""
+        return self.config.get('automation_controls', {}).get('auto_m3u_updates', True)
     
     def is_auto_stream_matching_enabled(self) -> bool:
-        """Check if automatic stream matching is enabled (pipeline or individual control)."""
-        pipeline_mode = self.config.get('pipeline_mode')
-        
-        # If pipeline_mode is set, use pipeline logic
-        if pipeline_mode and pipeline_mode != 'disabled':
-            # All pipelines except 'pipeline_3' have stream matching
-            return pipeline_mode != 'pipeline_3'
-        
-        # Otherwise use individual controls
-        return self.config.get('automation_controls', {}).get('auto_stream_matching', False)
+        """Check if automatic stream matching is enabled."""
+        return self.config.get('automation_controls', {}).get('auto_stream_matching', True)
     
     def is_auto_quality_checking_enabled(self) -> bool:
-        """Check if automatic quality checking is enabled (pipeline or individual control)."""
-        pipeline_mode = self.config.get('pipeline_mode')
-        
-        # If pipeline_mode is set, use pipeline logic
-        if pipeline_mode and pipeline_mode != 'disabled':
-            # Only pipeline_1 and pipeline_1_5 have auto quality checking
-            return pipeline_mode in ['pipeline_1', 'pipeline_1_5']
-        
-        # Otherwise use individual controls
-        return self.config.get('automation_controls', {}).get('auto_quality_checking', False)
+        """Check if automatic quality checking is enabled."""
+        return self.config.get('automation_controls', {}).get('auto_quality_checking', True)
     
     def is_scheduled_global_action_enabled(self) -> bool:
-        """Check if scheduled global action is enabled (pipeline or individual control)."""
-        pipeline_mode = self.config.get('pipeline_mode')
-        
-        # If pipeline_mode is set, use pipeline logic
-        if pipeline_mode and pipeline_mode != 'disabled':
-            # Only pipeline_1_5, pipeline_2_5, and pipeline_3 have scheduled global actions
-            return pipeline_mode in ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3']
-        
-        # Otherwise use individual controls
-        return self.config.get('automation_controls', {}).get('scheduled_global_action', False)
+        """Check if scheduled global action is enabled."""
+        return self.config.get('automation_controls', {}).get('scheduled_global_action', True)
 
 
 class ChannelUpdateTracker:
@@ -2733,7 +2701,7 @@ class StreamCheckerService:
             'progress': progress,
             'last_global_check': self.update_tracker.get_last_global_check(),
             'config': {
-                'pipeline_mode': self.config.get('pipeline_mode'),
+                'automation_controls': self.config.get('automation_controls', {}),
                 'check_interval': self.config.get('check_interval'),
                 'global_check_schedule': self.config.get('global_check_schedule'),
                 'queue_settings': self.config.get('queue')
@@ -3079,11 +3047,13 @@ class StreamCheckerService:
         
         # Log what's being updated
         config_changes = []
-        if 'pipeline_mode' in updates:
-            old_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
-            new_mode = updates['pipeline_mode']
-            if old_mode != new_mode:
-                config_changes.append(f"Pipeline mode: {old_mode} → {new_mode}")
+        if 'automation_controls' in updates:
+            old_controls = self.config.get('automation_controls', {})
+            new_controls = updates['automation_controls']
+            for key, value in new_controls.items():
+                old_value = old_controls.get(key, False)
+                if old_value != value:
+                    config_changes.append(f"Automation control '{key}': {old_value} → {value}")
         
         if 'global_check_schedule' in updates:
             schedule_changes = []
