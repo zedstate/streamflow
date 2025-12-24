@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import ProfileManagement from '@/components/ProfileManagement.jsx'
@@ -414,15 +414,20 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings }) {
+function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const { toast } = useToast()
   
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
   const patternCount = channelPatterns?.regex?.length || 0
   const matchingMode = channelSettings?.matching_mode || 'enabled'
   const checkingMode = channelSettings?.checking_mode || 'enabled'
+  const matchingModeSource = channelSettings?.matching_mode_source || 'default'
+  const checkingModeSource = channelSettings?.checking_mode_source || 'default'
+  const isMatchingInherited = matchingModeSource === 'group'
+  const isCheckingInherited = checkingModeSource === 'group'
   
   // Load channel logo
   useEffect(() => {
@@ -444,13 +449,12 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
     loadLogo()
   }, [channel.id, channel.logo_id])
   
-  const handleMatchingModeToggle = async () => {
+  const handleMatchingModeChange = async (value) => {
     try {
-      const newMode = matchingMode === 'enabled' ? 'disabled' : 'enabled'
-      await onUpdateSettings(channel.id, { matching_mode: newMode })
+      await onUpdateSettings(channel.id, { matching_mode: value })
       toast({
         title: "Success",
-        description: `Stream matching ${newMode} for ${channel.name}`
+        description: "Matching mode updated successfully"
       })
     } catch (err) {
       toast({
@@ -461,13 +465,12 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
     }
   }
   
-  const handleCheckingModeToggle = async () => {
+  const handleCheckingModeChange = async (value) => {
     try {
-      const newMode = checkingMode === 'enabled' ? 'disabled' : 'enabled'
-      await onUpdateSettings(channel.id, { checking_mode: newMode })
+      await onUpdateSettings(channel.id, { checking_mode: value })
       toast({
         title: "Success",
-        description: `Stream checking ${newMode} for ${channel.name}`
+        description: "Checking mode updated successfully"
       })
     } catch (err) {
       toast({
@@ -479,80 +482,154 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
   }
   
   return (
-    <div key={channel.id} className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_100px] gap-4 p-4 hover:bg-muted/50 transition-colors">
-      <div className="flex items-center justify-center">
-        <Checkbox
-          checked={selectedChannels.has(channel.id)}
-          onCheckedChange={() => onToggleChannel(channel.id)}
-        />
-      </div>
-      <div className="flex items-center text-sm font-medium">
-        {channel.channel_number || '-'}
-      </div>
-      <div className="flex items-center">
-        <div className="w-16 h-10 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
-          {logoUrl && !logoError ? (
-            <img 
-              src={logoUrl} 
-              alt={channel.name} 
-              className="w-full h-full object-contain"
-              onError={() => setLogoError(true)}
-            />
+    <div key={channel.id}>
+      <div className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_100px] gap-4 p-4 hover:bg-muted/50 transition-colors">
+        <div className="flex items-center justify-center">
+          <Checkbox
+            checked={selectedChannels.has(channel.id)}
+            onCheckedChange={() => onToggleChannel(channel.id)}
+          />
+        </div>
+        <div className="flex items-center text-sm font-medium">
+          {channel.channel_number || '-'}
+        </div>
+        <div className="flex items-center">
+          <div className="w-16 h-10 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
+            {logoUrl && !logoError ? (
+              <img 
+                src={logoUrl} 
+                alt={channel.name} 
+                className="w-full h-full object-contain"
+                onError={() => setLogoError(true)}
+              />
+            ) : (
+              <span className="text-lg font-bold text-muted-foreground">
+                {channel.name?.charAt(0) || '?'}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center">
+          <span className="font-medium truncate">{channel.name}</span>
+        </div>
+        <div className="flex items-center text-sm text-muted-foreground truncate">
+          {group?.name || '-'}
+        </div>
+        <div className="flex items-center">
+          {patternCount > 0 ? (
+            <Badge variant="secondary">{patternCount} pattern{patternCount > 1 ? 's' : ''}</Badge>
           ) : (
-            <span className="text-lg font-bold text-muted-foreground">
-              {channel.name?.charAt(0) || '?'}
-            </span>
+            <span className="text-sm text-muted-foreground">No patterns</span>
           )}
         </div>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => setExpanded(!expanded)}
+          >
+            <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </Button>
+        </div>
       </div>
-      <div className="flex items-center">
-        <span className="font-medium truncate">{channel.name}</span>
-      </div>
-      <div className="flex items-center text-sm text-muted-foreground truncate">
-        {group?.name || '-'}
-      </div>
-      <div className="flex items-center">
-        {patternCount > 0 ? (
-          <Badge variant="secondary">{patternCount} pattern{patternCount > 1 ? 's' : ''}</Badge>
-        ) : (
-          <span className="text-sm text-muted-foreground">No patterns</span>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>Channel Actions</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => onEditRegex(channel.id, null)}>
-              <Eye className="mr-2 h-4 w-4" />
-              <span>View/Edit Regex Rules</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>Settings</DropdownMenuLabel>
-            <DropdownMenuItem onClick={handleMatchingModeToggle} className="justify-between">
-              <span>Stream Matching</span>
-              <Switch 
-                checked={matchingMode === 'enabled'} 
-                onClick={(e) => e.stopPropagation()}
-                className="pointer-events-none"
-              />
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleCheckingModeToggle} className="justify-between">
-              <span>Stream Checking</span>
-              <Switch 
-                checked={checkingMode === 'enabled'}
-                onClick={(e) => e.stopPropagation()}
-                className="pointer-events-none"
-              />
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+
+      {/* Expanded Section */}
+      {expanded && (
+        <div className="border-t p-4 bg-muted/50 space-y-4">
+          {/* Channel Settings */}
+          <div className="grid grid-cols-2 gap-4 pb-4 border-b">
+            <div className="space-y-2">
+              <Label htmlFor={`matching-mode-${channel.id}`} className="text-sm font-medium">
+                Stream Matching
+                {isMatchingInherited && (
+                  <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
+                )}
+              </Label>
+              <Select value={matchingMode} onValueChange={handleMatchingModeChange}>
+                <SelectTrigger id={`matching-mode-${channel.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="enabled">Enabled</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {matchingMode === 'enabled' 
+                  ? 'Channel will be included in stream matching'
+                  : 'Channel will be excluded from stream matching'}
+                {isMatchingInherited && ' (inherited from group)'}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`checking-mode-${channel.id}`} className="text-sm font-medium">
+                Stream Checking
+                {isCheckingInherited && (
+                  <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
+                )}
+              </Label>
+              <Select value={checkingMode} onValueChange={handleCheckingModeChange}>
+                <SelectTrigger id={`checking-mode-${channel.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="enabled">Enabled</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {checkingMode === 'enabled'
+                  ? 'Channel streams will be quality checked'
+                  : 'Channel streams will not be quality checked'}
+                {isCheckingInherited && ' (inherited from group)'}
+              </p>
+            </div>
+          </div>
+
+          {/* Regex Patterns */}
+          <div>
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="font-medium text-sm">Regex Patterns</h4>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onEditRegex(channel.id, null)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Pattern
+              </Button>
+            </div>
+          
+            {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
+              <div className="space-y-2">
+                {channelPatterns.regex.map((pattern, index) => (
+                  <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                    <code className="text-sm flex-1 break-all">{pattern}</code>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onEditRegex(channel.id, index)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onDeletePattern(channel.id, index)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No regex patterns configured</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1917,6 +1994,7 @@ export default function ChannelConfiguration() {
                             onToggleChannel={handleToggleChannel}
                             onEditRegex={handleEditRegex}
                             onUpdateSettings={handleUpdateSettings}
+                            onDeletePattern={handleDeletePattern}
                           />
                         )
                       })}
