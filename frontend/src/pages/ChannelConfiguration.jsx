@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
+import { Checkbox } from '@/components/ui/checkbox.jsx'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog.jsx'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
@@ -733,6 +734,13 @@ export default function ChannelConfiguration() {
   const [pendingChanges, setPendingChanges] = useState({})
   const [activeTab, setActiveTab] = useState('regex')
   
+  // Multi-select state for bulk regex assignment
+  const [selectedChannels, setSelectedChannels] = useState(new Set())
+  const [filterByGroup, setFilterByGroup] = useState('all')
+  const [sortByGroup, setSortByGroup] = useState(false)
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
+  const [bulkPattern, setBulkPattern] = useState('')
+  
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -1188,6 +1196,72 @@ export default function ChannelConfiguration() {
       })
     }
   }
+  
+  // Bulk assignment handlers
+  const handleToggleChannel = (channelId) => {
+    setSelectedChannels(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(channelId)) {
+        newSet.delete(channelId)
+      } else {
+        newSet.add(channelId)
+      }
+      return newSet
+    })
+  }
+  
+  const handleSelectAll = () => {
+    const visibleChannelIds = filteredChannels.map(ch => ch.id)
+    setSelectedChannels(new Set(visibleChannelIds))
+  }
+  
+  const handleDeselectAll = () => {
+    setSelectedChannels(new Set())
+  }
+  
+  const handleBulkAddPattern = async () => {
+    if (selectedChannels.size === 0) {
+      toast({
+        title: "No Channels Selected",
+        description: "Please select at least one channel",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    if (!bulkPattern.trim()) {
+      toast({
+        title: "No Pattern Provided",
+        description: "Please enter a regex pattern",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      const response = await regexAPI.bulkAddPatterns({
+        channel_ids: Array.from(selectedChannels),
+        regex_patterns: [bulkPattern]
+      })
+      
+      toast({
+        title: "Success",
+        description: response.data.message || `Added pattern to ${response.data.success_count} channels`,
+      })
+      
+      // Reload data and clear selection
+      await loadData()
+      setSelectedChannels(new Set())
+      setBulkDialogOpen(false)
+      setBulkPattern('')
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to add patterns",
+        variant: "destructive"
+      })
+    }
+  }
 
   // Helper function to check if channel should be visible based on group settings
   const isChannelVisibleByGroup = (channel) => {
@@ -1205,11 +1279,16 @@ export default function ChannelConfiguration() {
     return !(matchingDisabled && checkingDisabled)
   }
 
-  // Filter channels based on search query and group settings
+  // Filter channels based on search query, group settings, and group filter
   // Use orderedChannels as the base to ensure consistent ordering between tabs
   const filteredChannels = orderedChannels.filter(channel => {
     // First check group visibility
     if (!isChannelVisibleByGroup(channel)) return false
+    
+    // Apply group filter
+    if (filterByGroup !== 'all' && channel.channel_group_id !== parseInt(filterByGroup)) {
+      return false
+    }
     
     // Then apply search filter
     if (!searchQuery.trim()) return true
@@ -1219,19 +1298,33 @@ export default function ChannelConfiguration() {
     const channelNumber = channel.channel_number ? String(channel.channel_number) : ''
     const channelId = String(channel.id)
     
+    // Get group name for search
+    const group = groups.find(g => g.id === channel.channel_group_id)
+    const groupName = group ? group.name.toLowerCase() : ''
+    
     return channelName.includes(query) || 
            channelNumber.includes(query) || 
-           channelId.includes(query)
+           channelId.includes(query) ||
+           groupName.includes(query)
   })
+  
+  // Sort by group if enabled
+  const displayChannels = sortByGroup 
+    ? [...filteredChannels].sort((a, b) => {
+        const groupA = groups.find(g => g.id === a.channel_group_id)?.name || ''
+        const groupB = groups.find(g => g.id === b.channel_group_id)?.name || ''
+        return groupA.localeCompare(groupB) || (a.channel_number || 0) - (b.channel_number || 0)
+      })
+    : filteredChannels
 
   // Filter ordered channels based on group settings
   const visibleOrderedChannels = orderedChannels.filter(isChannelVisibleByGroup)
 
   // Calculate pagination for Regex Configuration
-  const totalPages = Math.ceil(filteredChannels.length / itemsPerPage)
+  const totalPages = Math.ceil(displayChannels.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const paginatedChannels = filteredChannels.slice(startIndex, endIndex)
+  const paginatedChannels = displayChannels.slice(startIndex, endIndex)
   
   // Calculate pagination for Channel Order
   const orderTotalPages = Math.ceil(visibleOrderedChannels.length / orderItemsPerPage)
@@ -1259,7 +1352,7 @@ export default function ChannelConfiguration() {
   // Reset to first page when search changes
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchQuery])
+  }, [searchQuery, filterByGroup, sortByGroup])
 
   // Reset to first page when group search changes
   useEffect(() => {
@@ -1513,11 +1606,81 @@ export default function ChannelConfiguration() {
           </div>
 
           <div className="space-y-4">
+            {/* Filter and Action Bar */}
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 flex-1">
+                    {/* Group Filter */}
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="group-filter" className="text-sm whitespace-nowrap">Filter Group:</Label>
+                      <Select value={filterByGroup} onValueChange={setFilterByGroup}>
+                        <SelectTrigger id="group-filter" className="h-9 w-[200px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Groups</SelectItem>
+                          {groups.map(group => (
+                            <SelectItem key={group.id} value={String(group.id)}>
+                              {group.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    {/* Sort by Group */}
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="sort-by-group"
+                        checked={sortByGroup}
+                        onCheckedChange={setSortByGroup}
+                      />
+                      <Label htmlFor="sort-by-group" className="text-sm whitespace-nowrap cursor-pointer">
+                        Sort by Group
+                      </Label>
+                    </div>
+                  </div>
+                  
+                  {/* Selection Actions */}
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">
+                      {selectedChannels.size} selected
+                    </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSelectAll}
+                      disabled={displayChannels.length === 0}
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDeselectAll}
+                      disabled={selectedChannels.size === 0}
+                    >
+                      Deselect All
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => setBulkDialogOpen(true)}
+                      disabled={selectedChannels.size === 0}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Regex to Selected
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            
             {/* Pagination info and controls at top */}
-            {filteredChannels.length > 0 && (
+            {displayChannels.length > 0 && (
               <div className="flex items-center justify-between">
                 <div className="text-sm text-muted-foreground">
-                  Showing {startIndex + 1}-{Math.min(endIndex, filteredChannels.length)} of {filteredChannels.length} channels
+                  Showing {startIndex + 1}-{Math.min(endIndex, displayChannels.length)} of {displayChannels.length} channels
                 </div>
                 <div className="flex items-center gap-2">
                   <Label htmlFor="items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
@@ -1542,7 +1705,7 @@ export default function ChannelConfiguration() {
               </div>
             )}
 
-            {filteredChannels.length === 0 ? (
+            {displayChannels.length === 0 ? (
               <Card>
                 <CardContent className="p-8 text-center">
                   <p className="text-muted-foreground">
@@ -1561,19 +1724,83 @@ export default function ChannelConfiguration() {
                 </CardContent>
               </Card>
             ) : (
-              paginatedChannels.map(channel => (
-                <ChannelCard
-                  key={channel.id}
-                  channel={channel}
-                  patterns={patterns}
-                  channelSettings={channelSettings[channel.id]}
-                  onEditRegex={handleEditRegex}
-                  onDeletePattern={handleDeletePattern}
-                  onCheckChannel={handleCheckChannel}
-                  onUpdateSettings={handleUpdateSettings}
-                  loading={checkingChannel === channel.id}
-                />
-              ))
+              <>
+                {/* Table Header */}
+                <Card>
+                  <CardContent className="p-0">
+                    <div className="border-b bg-muted/50">
+                      <div className="grid grid-cols-[50px_80px_1fr_200px_150px_100px] gap-4 p-4 font-medium text-sm">
+                        <div className="flex items-center justify-center">
+                          <Checkbox
+                            checked={paginatedChannels.every(ch => selectedChannels.has(ch.id))}
+                            onCheckedChange={(checked) => {
+                              const newSet = new Set(selectedChannels)
+                              paginatedChannels.forEach(ch => {
+                                if (checked) {
+                                  newSet.add(ch.id)
+                                } else {
+                                  newSet.delete(ch.id)
+                                }
+                              })
+                              setSelectedChannels(newSet)
+                            }}
+                          />
+                        </div>
+                        <div>#</div>
+                        <div>Channel Name</div>
+                        <div>Channel Group</div>
+                        <div>Regex Patterns</div>
+                        <div>Actions</div>
+                      </div>
+                    </div>
+                    
+                    {/* Table Rows */}
+                    <div className="divide-y">
+                      {paginatedChannels.map(channel => {
+                        const group = groups.find(g => g.id === channel.channel_group_id)
+                        const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
+                        const patternCount = channelPatterns?.regex?.length || 0
+                        
+                        return (
+                          <div key={channel.id} className="grid grid-cols-[50px_80px_1fr_200px_150px_100px] gap-4 p-4 hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center justify-center">
+                              <Checkbox
+                                checked={selectedChannels.has(channel.id)}
+                                onCheckedChange={() => handleToggleChannel(channel.id)}
+                              />
+                            </div>
+                            <div className="flex items-center text-sm font-medium">
+                              {channel.channel_number || '-'}
+                            </div>
+                            <div className="flex items-center">
+                              <span className="font-medium truncate">{channel.name}</span>
+                            </div>
+                            <div className="flex items-center text-sm text-muted-foreground truncate">
+                              {group?.name || '-'}
+                            </div>
+                            <div className="flex items-center">
+                              {patternCount > 0 ? (
+                                <Badge variant="secondary">{patternCount} pattern{patternCount > 1 ? 's' : ''}</Badge>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">No patterns</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleEditRegex(channel.id, null)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
             )}
 
             {/* Pagination controls at bottom */}
@@ -2030,7 +2257,7 @@ export default function ChannelConfiguration() {
               {editingPatternIndex !== null ? 'Edit' : 'Add'} Regex Pattern
             </DialogTitle>
             <DialogDescription>
-              Enter a regex pattern to match streams for this channel.
+              Enter a regex pattern to match streams for this channel. Use {'{CHANNEL_NAME}'} to insert the channel name.
             </DialogDescription>
           </DialogHeader>
           
@@ -2099,6 +2326,55 @@ export default function ChannelConfiguration() {
             </Button>
             <Button onClick={handleSavePattern} disabled={!newPattern.trim()}>
               {editingPatternIndex !== null ? 'Update' : 'Add'} Pattern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Bulk Pattern Assignment Dialog */}
+      <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Add Regex Pattern to Multiple Channels</DialogTitle>
+            <DialogDescription>
+              This pattern will be added to {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}. Use {'{CHANNEL_NAME}'} to insert each channel's name into the pattern.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="bulk-pattern">Regex Pattern</Label>
+              <Input
+                id="bulk-pattern"
+                placeholder="e.g., .*{CHANNEL_NAME}.*"
+                value={bulkPattern}
+                onChange={(e) => setBulkPattern(e.target.value)}
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use {'{CHANNEL_NAME}'} to create a pattern that works for all selected channels
+              </p>
+            </div>
+            
+            <div className="border rounded-md p-3 bg-muted/50">
+              <div className="text-sm font-medium mb-2">Example:</div>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div>Pattern: <code className="bg-background px-1 rounded">.*{'{CHANNEL_NAME}'}.*</code></div>
+                <div>For channel "ESPN", matches: <code className="bg-background px-1 rounded">.*ESPN.*</code></div>
+                <div>For channel "CNN", matches: <code className="bg-background px-1 rounded">.*CNN.*</code></div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setBulkDialogOpen(false)
+              setBulkPattern('')
+            }}>
+              Cancel
+            </Button>
+            <Button onClick={handleBulkAddPattern} disabled={!bulkPattern.trim()}>
+              Add to {selectedChannels.size} Channel{selectedChannels.size !== 1 ? 's' : ''}
             </Button>
           </DialogFooter>
         </DialogContent>

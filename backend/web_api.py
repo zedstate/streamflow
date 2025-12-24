@@ -746,6 +746,97 @@ def delete_regex_pattern(channel_id):
         logger.error(f"Error deleting regex pattern: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/regex-patterns/bulk', methods=['POST'])
+def add_bulk_regex_patterns():
+    """Add the same regex patterns to multiple channels."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        required_fields = ['channel_ids', 'regex_patterns']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
+        
+        channel_ids = data['channel_ids']
+        regex_patterns = data['regex_patterns']
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        if not isinstance(regex_patterns, list) or len(regex_patterns) == 0:
+            return jsonify({"error": "regex_patterns must be a non-empty list"}), 400
+        
+        # Get UDI manager to fetch channel names
+        udi = get_udi_manager()
+        matcher = get_regex_matcher()
+        
+        # Validate patterns before applying
+        is_valid, error_msg = matcher.validate_regex_patterns(regex_patterns)
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        # Apply patterns to each channel
+        success_count = 0
+        failed_channels = []
+        
+        for channel_id in channel_ids:
+            try:
+                # Get channel name from UDI
+                channel = udi.get_channel(channel_id)
+                if not channel:
+                    failed_channels.append({
+                        "channel_id": channel_id,
+                        "error": "Channel not found"
+                    })
+                    continue
+                
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get existing patterns for this channel
+                patterns = matcher.get_patterns()
+                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
+                existing_regex = existing_patterns.get('regex', [])
+                
+                # Merge with new patterns (avoid duplicates)
+                merged_regex = list(existing_regex)
+                for pattern in regex_patterns:
+                    if pattern not in merged_regex:
+                        merged_regex.append(pattern)
+                
+                # Add/update pattern
+                matcher.add_channel_pattern(
+                    str(channel_id),
+                    channel_name,
+                    merged_regex,
+                    existing_patterns.get('enabled', True)
+                )
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Error adding pattern to channel {channel_id}: {e}")
+                failed_channels.append({
+                    "channel_id": channel_id,
+                    "error": str(e)
+                })
+        
+        response_data = {
+            "message": f"Successfully added patterns to {success_count} channel(s)",
+            "success_count": success_count,
+            "total_channels": len(channel_ids)
+        }
+        
+        if failed_channels:
+            response_data["failed_channels"] = failed_channels
+            response_data["failed_count"] = len(failed_channels)
+        
+        return jsonify(response_data)
+    except ValueError as e:
+        logger.warning(f"Validation error in bulk regex pattern addition: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error adding bulk regex patterns: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/regex-patterns/import', methods=['POST'])
 def import_regex_patterns():
     """Import regex patterns from JSON file."""

@@ -86,10 +86,20 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - Preserves stream availability
 
 ### Stream Discovery
-- Regex pattern matching for automatic assignment
-- New stream detection on playlist refresh
-- Automatic channel assignment based on patterns
-- Pattern testing interface
+- **Regex Pattern Matching**: Automatic stream-to-channel assignment based on patterns
+- **Table-Based Interface**: Clean, sortable table layout for managing regex patterns across channels
+- **Mass Assignment**: Add a single regex pattern to multiple channels at once
+  - Multi-select channels with checkboxes
+  - Select All/Deselect All functionality
+  - Group filtering to show only channels from specific groups
+  - Group sorting for organized view
+- **Channel Name Variables**: Use `{CHANNEL_NAME}` in patterns to create reusable regex rules
+  - Pattern example: `.*{CHANNEL_NAME}.*` matches any stream containing the channel name
+  - One pattern works for multiple channels with different names
+  - Variables are substituted at match time, not storage time
+- **Pattern Testing Interface**: Live testing of patterns against available streams
+- **Pattern Import/Export**: Share regex configurations across installations
+- **New Stream Detection**: Automatically detects and assigns new streams on playlist refresh
 
 ## Quality Analysis
 

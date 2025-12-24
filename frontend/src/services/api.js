@@ -77,6 +77,7 @@ export const regexAPI = {
   testPattern: (data) => api.post('/test-regex', data),
   testPatternLive: (data) => api.post('/test-regex-live', data),
   importPatterns: (patterns) => api.post('/regex-patterns/import', patterns),
+  bulkAddPatterns: (data) => api.post('/regex-patterns/bulk', data),
 };
 
 export const streamAPI = {

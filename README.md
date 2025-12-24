@@ -33,6 +33,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 - **Stream Quality Checking**: Analyze streams for bitrate, resolution, FPS, codec quality, and errors
 - **Automatic Stream Reordering**: Best quality streams moved to the top
 - **Stream Discovery**: Regex patterns for automatic stream-to-channel assignment
+- **Mass Regex Assignment**: Add a single regex pattern to multiple channels at once with support for channel name variables
 - **Global Action**: Manual or scheduled complete update cycles (Update → Match → Check all channels)
 - **Channel-Specific Settings**: Exclude individual channels from matching and/or checking operations
 - **EPG-Based Scheduling**: Schedule channel checks based on EPG program data
