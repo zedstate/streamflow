@@ -358,8 +358,10 @@ class RegexChannelMatcher:
             "enabled": enabled
         }
         
-        # Add playlists field - empty list means "all playlists" for backward compatibility
-        # This allows distinguishing between "not set" (old configs) and "explicitly all" (new configs)
+        # Store playlists field when explicitly provided
+        # - Not provided (None): field not stored, backward compatible (applies to all)
+        # - Empty list []: stored as [], explicitly means "all playlists"
+        # - Specific IDs [1,2,3]: stored as-is, only those playlists
         if playlists is not None:
             pattern_data["playlists"] = playlists
         
@@ -413,15 +415,17 @@ class RegexChannelMatcher:
                 continue
             
             # Check if this regex pattern applies to the stream's playlist
-            # playlists field: if missing (old config) or empty list -> applies to all
-            # if has values -> only applies to those specific playlists
+            # Backward compatible behavior:
+            # - playlists not present (None) = old config, applies to all playlists
+            # - playlists = [] (empty) = new config, explicitly applies to all playlists
+            # - playlists = [1,2,3] = only applies to those specific playlists
             pattern_playlists = config.get("playlists")
             if pattern_playlists is not None and len(pattern_playlists) > 0:
                 # Pattern is limited to specific playlists
                 if stream_channel_group is None or stream_channel_group not in pattern_playlists:
                     # Stream's playlist is not in the allowed list, skip this pattern
                     continue
-            # If playlists is None or empty list, pattern applies to all playlists
+            # If playlists is None (old config) or empty list (new, all), pattern applies to all playlists
             
             channel_name = config.get("name", "")
             

@@ -1517,12 +1517,13 @@ export default function ChannelConfiguration() {
         // If no patterns left, delete the entire pattern config
         await regexAPI.deletePattern(channelId)
       } else {
-        // Update with remaining patterns
+        // Update with remaining patterns, preserving playlist configuration
         await regexAPI.addPattern({
           channel_id: channelId,
           name: channel?.name || '',
           regex: updatedRegex,
-          enabled: channelPatterns.enabled !== false
+          enabled: channelPatterns.enabled !== false,
+          playlists: channelPatterns.playlists  // Preserve playlist filtering
         })
       }
 
@@ -2663,7 +2664,10 @@ export default function ChannelConfiguration() {
                           if (checked) {
                             setSelectedPlaylists([])  // Empty = all playlists
                           } else {
-                            setSelectedPlaylists([groups[0].id])  // Select first playlist
+                            // When unchecking "All", select first playlist if available
+                            if (groups.length > 0) {
+                              setSelectedPlaylists([groups[0].id])
+                            }
                           }
                         }}
                       />
@@ -2797,7 +2801,10 @@ export default function ChannelConfiguration() {
                           if (checked) {
                             setBulkSelectedPlaylists([])  // Empty = all playlists
                           } else {
-                            setBulkSelectedPlaylists([groups[0].id])  // Select first playlist
+                            // When unchecking "All", select first playlist if available
+                            if (groups.length > 0) {
+                              setBulkSelectedPlaylists([groups[0].id])
+                            }
                           }
                         }}
                       />
