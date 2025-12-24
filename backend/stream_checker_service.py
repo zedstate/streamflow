@@ -84,6 +84,13 @@ class StreamCheckConfig:
         'enabled': True,
         'check_interval': 300,  # DEPRECATED - checks now only triggered by M3U refresh
         'pipeline_mode': 'pipeline_1_5',  # Pipeline mode: 'disabled', 'pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5', 'pipeline_3'
+        # New individual automation controls (used when pipeline_mode is None or empty)
+        'automation_controls': {
+            'auto_m3u_updates': True,  # Automatically refresh M3U playlists
+            'auto_stream_matching': True,  # Automatically match streams to channels via regex
+            'auto_quality_checking': True,  # Automatically check stream quality
+            'scheduled_global_action': False  # Run scheduled global actions (update + match + check all)
+        },
         'global_check_schedule': {
             'enabled': True,
             'cron_expression': '0 3 * * *',  # Cron expression: default is daily at 3:00 AM
@@ -244,6 +251,54 @@ class StreamCheckConfig:
             else:
                 return default
         return value if value is not None else default
+    
+    def is_auto_m3u_updates_enabled(self) -> bool:
+        """Check if automatic M3U updates are enabled (pipeline or individual control)."""
+        pipeline_mode = self.config.get('pipeline_mode')
+        
+        # If pipeline_mode is set, use pipeline logic
+        if pipeline_mode and pipeline_mode != 'disabled':
+            # All pipelines except 'pipeline_3' have auto M3U updates
+            return pipeline_mode != 'pipeline_3'
+        
+        # Otherwise use individual controls
+        return self.config.get('automation_controls', {}).get('auto_m3u_updates', False)
+    
+    def is_auto_stream_matching_enabled(self) -> bool:
+        """Check if automatic stream matching is enabled (pipeline or individual control)."""
+        pipeline_mode = self.config.get('pipeline_mode')
+        
+        # If pipeline_mode is set, use pipeline logic
+        if pipeline_mode and pipeline_mode != 'disabled':
+            # All pipelines except 'pipeline_3' have stream matching
+            return pipeline_mode != 'pipeline_3'
+        
+        # Otherwise use individual controls
+        return self.config.get('automation_controls', {}).get('auto_stream_matching', False)
+    
+    def is_auto_quality_checking_enabled(self) -> bool:
+        """Check if automatic quality checking is enabled (pipeline or individual control)."""
+        pipeline_mode = self.config.get('pipeline_mode')
+        
+        # If pipeline_mode is set, use pipeline logic
+        if pipeline_mode and pipeline_mode != 'disabled':
+            # Only pipeline_1 and pipeline_1_5 have auto quality checking
+            return pipeline_mode in ['pipeline_1', 'pipeline_1_5']
+        
+        # Otherwise use individual controls
+        return self.config.get('automation_controls', {}).get('auto_quality_checking', False)
+    
+    def is_scheduled_global_action_enabled(self) -> bool:
+        """Check if scheduled global action is enabled (pipeline or individual control)."""
+        pipeline_mode = self.config.get('pipeline_mode')
+        
+        # If pipeline_mode is set, use pipeline logic
+        if pipeline_mode and pipeline_mode != 'disabled':
+            # Only pipeline_1_5, pipeline_2_5, and pipeline_3 have scheduled global actions
+            return pipeline_mode in ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3']
+        
+        # Otherwise use individual controls
+        return self.config.get('automation_controls', {}).get('scheduled_global_action', False)
 
 
 class ChannelUpdateTracker:
@@ -945,11 +1000,9 @@ class StreamCheckerService:
         - Pipeline 2/2.5: Skip checking (only update and match)
         - Pipeline 3: Skip checking (only scheduled global actions)
         """
-        pipeline_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
-        
-        # Disabled and Pipelines 2, 2.5, and 3 don't check on update
-        if pipeline_mode in ['disabled', 'pipeline_2', 'pipeline_2_5', 'pipeline_3']:
-            logger.info(f"Skipping channel queueing - {pipeline_mode} mode does not check on update")
+        # Check if auto quality checking is enabled (considers both pipeline mode and individual controls)
+        if not self.config.is_auto_quality_checking_enabled():
+            logger.info("Skipping channel queueing - automatic quality checking is disabled")
             return
         
         max_channels = self.config.get('queue.max_channels_per_run', 50)
@@ -965,9 +1018,9 @@ class StreamCheckerService:
                 self.check_queue.remove_from_completed(channel_id)
             
             added = self.check_queue.add_channels(channels_to_queue, priority=10)
-            logger.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking (mode: {pipeline_mode})")
+            logger.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking")
         else:
-            logger.debug(f"No channels need checking (mode: {pipeline_mode})")
+            logger.debug("No channels need checking")
     
     def _check_global_schedule(self):
         """Check if it's time for a scheduled global action.
@@ -986,13 +1039,9 @@ class StreamCheckerService:
             logger.debug("Global check schedule is disabled")
             return
         
-        # Get pipeline mode
-        pipeline_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
-        
-        # Only pipelines with .5 suffix and pipeline_3 have scheduled global actions
-        # Disabled mode skips all automation
-        if pipeline_mode not in ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3']:
-            logger.debug(f"Skipping global schedule check - {pipeline_mode} mode does not have scheduled global actions")
+        # Check if scheduled global action is enabled (considers both pipeline mode and individual controls)
+        if not self.config.is_scheduled_global_action_enabled():
+            logger.debug("Skipping global schedule check - scheduled global actions are disabled")
             return
         
         now = datetime.now()
