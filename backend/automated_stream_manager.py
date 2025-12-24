@@ -367,6 +367,21 @@ class RegexChannelMatcher:
         self.channel_patterns = self._load_patterns()
         logger.debug("Reloaded regex patterns from config file")
     
+    def _substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
+        """Substitute channel name variables in a regex pattern.
+        
+        Args:
+            pattern: Regex pattern that may contain {CHANNEL_NAME}
+            channel_name: Name of the channel to substitute
+            
+        Returns:
+            Pattern with variables substituted
+        """
+        # Replace {CHANNEL_NAME} with the actual channel name
+        # Escape special regex characters in channel name to avoid issues
+        escaped_channel_name = re.escape(channel_name)
+        return pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+    
     def match_stream_to_channels(self, stream_name: str) -> List[str]:
         """Match a stream name to channel IDs based on regex patterns."""
         matches = []
@@ -378,8 +393,13 @@ class RegexChannelMatcher:
             if not config.get("enabled", True):
                 continue
             
+            channel_name = config.get("name", "")
+            
             for pattern in config.get("regex", []):
-                search_pattern = pattern if case_sensitive else pattern.lower()
+                # Substitute channel name variable if present
+                substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
+                
+                search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
                 
                 # Convert literal spaces in pattern to flexible whitespace regex (\s+)
                 # This allows matching streams with different whitespace characters
