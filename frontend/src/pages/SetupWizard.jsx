@@ -89,7 +89,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       auto_m3u_updates: true,
       auto_stream_matching: true,
       auto_quality_checking: true,
-      scheduled_global_action: true,
+      scheduled_global_action: false,
       remove_non_matching_streams: false
     },
     global_check_schedule: {

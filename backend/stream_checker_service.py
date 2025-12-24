@@ -88,7 +88,7 @@ class StreamCheckConfig:
             'auto_m3u_updates': True,  # Automatically refresh M3U playlists
             'auto_stream_matching': True,  # Automatically match streams to channels via regex
             'auto_quality_checking': True,  # Automatically check stream quality
-            'scheduled_global_action': True,  # Run scheduled global actions (update + match + check all)
+            'scheduled_global_action': False,  # Run scheduled global actions (update + match + check all)
             'remove_non_matching_streams': False  # Remove streams from channels if they no longer match regex
         },
         'global_check_schedule': {
@@ -316,7 +316,7 @@ class StreamCheckConfig:
     
     def is_scheduled_global_action_enabled(self) -> bool:
         """Check if scheduled global action is enabled."""
-        return self.config.get('automation_controls', {}).get('scheduled_global_action', True)
+        return self.config.get('automation_controls', {}).get('scheduled_global_action', False)
 
 
 class ChannelUpdateTracker:

@@ -3498,7 +3498,7 @@ if __name__ == '__main__':
                 automation_controls.get('auto_m3u_updates', True) or
                 automation_controls.get('auto_stream_matching', True) or
                 automation_controls.get('auto_quality_checking', True) or
-                automation_controls.get('scheduled_global_action', True)
+                automation_controls.get('scheduled_global_action', False)
             )
             
             if not any_automation_enabled:
@@ -3526,7 +3526,7 @@ if __name__ == '__main__':
                 automation_controls.get('auto_m3u_updates', True) or
                 automation_controls.get('auto_stream_matching', True) or
                 automation_controls.get('auto_quality_checking', True) or
-                automation_controls.get('scheduled_global_action', True)
+                automation_controls.get('scheduled_global_action', False)
             )
             
             if not any_automation_enabled:
