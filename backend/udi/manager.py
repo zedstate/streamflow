@@ -326,6 +326,44 @@ class UDIManager:
             if group.get('channel_count', 0) > 0
         ]
     
+    def get_channel_group_by_id(self, group_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific channel group by ID.
+        
+        Args:
+            group_id: The channel group ID
+            
+        Returns:
+            Channel group dictionary or None if not found
+        """
+        self._ensure_initialized()
+        for group in self._channel_groups_cache:
+            if group.get('id') == group_id:
+                return group
+        return None
+    
+    def get_channels_by_group(self, group_id: int) -> Optional[List[Dict[str, Any]]]:
+        """Get all channels that belong to a specific channel group.
+        
+        Args:
+            group_id: The channel group ID
+            
+        Returns:
+            List of channel dictionaries or None if group not found
+        """
+        self._ensure_initialized()
+        
+        # Verify group exists
+        group = self.get_channel_group_by_id(group_id)
+        if not group:
+            return None
+        
+        # Filter channels by group
+        channels = [
+            channel for channel in self._channels_cache
+            if channel.get('channel_group_id') == group_id
+        ]
+        return channels
+    
     def get_logos(self) -> List[Dict[str, Any]]:
         """Get all logos.
         
