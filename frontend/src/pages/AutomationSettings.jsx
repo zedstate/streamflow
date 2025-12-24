@@ -12,6 +12,14 @@ import { Loader2, AlertCircle, CheckCircle2, Trash2, Plus } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamCheckerAPI, dispatcharrAPI } from '@/services/api.js'
 
+// Default values for automation controls
+const DEFAULT_AUTOMATION_CONTROLS = {
+  auto_m3u_updates: true,
+  auto_stream_matching: true,
+  auto_quality_checking: true,
+  scheduled_global_action: false
+}
+
 export default function AutomationSettings() {
   const [config, setConfig] = useState(null)
   const [streamCheckerConfig, setStreamCheckerConfig] = useState(null)
@@ -324,7 +332,7 @@ export default function AutomationSettings() {
                 </div>
                 <Switch
                   id="auto_m3u_updates"
-                  checked={automationControls.auto_m3u_updates ?? true}
+                  checked={automationControls.auto_m3u_updates ?? DEFAULT_AUTOMATION_CONTROLS.auto_m3u_updates}
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.auto_m3u_updates', checked)}
                 />
               </div>
@@ -343,7 +351,7 @@ export default function AutomationSettings() {
                 </div>
                 <Switch
                   id="auto_stream_matching"
-                  checked={automationControls.auto_stream_matching ?? true}
+                  checked={automationControls.auto_stream_matching ?? DEFAULT_AUTOMATION_CONTROLS.auto_stream_matching}
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.auto_stream_matching', checked)}
                 />
               </div>
@@ -362,7 +370,7 @@ export default function AutomationSettings() {
                 </div>
                 <Switch
                   id="auto_quality_checking"
-                  checked={automationControls.auto_quality_checking ?? true}
+                  checked={automationControls.auto_quality_checking ?? DEFAULT_AUTOMATION_CONTROLS.auto_quality_checking}
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.auto_quality_checking', checked)}
                 />
               </div>
@@ -381,7 +389,7 @@ export default function AutomationSettings() {
                 </div>
                 <Switch
                   id="scheduled_global_action"
-                  checked={automationControls.scheduled_global_action ?? false}
+                  checked={automationControls.scheduled_global_action ?? DEFAULT_AUTOMATION_CONTROLS.scheduled_global_action}
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.scheduled_global_action', checked)}
                 />
               </div>

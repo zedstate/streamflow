@@ -621,7 +621,6 @@ def get_channel_logo_cached(logo_id):
         
         # Get the Dispatcharr base URL from config instead of environment variable
         # This ensures we use the configured value from the UI
-        from dispatcharr_config import get_dispatcharr_config
         dispatcharr_config = get_dispatcharr_config()
         dispatcharr_base_url = dispatcharr_config.get_base_url()
         
