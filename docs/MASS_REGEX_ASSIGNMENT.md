@@ -41,6 +41,11 @@ Use `{CHANNEL_NAME}` in patterns to create reusable regex rules:
 
 One pattern works for many channels!
 
+**Live Preview Support**:
+- The live regex preview automatically substitutes `{CHANNEL_NAME}` with the actual channel name
+- You can see in real-time which streams will be matched when you test your pattern
+- This ensures your pattern works correctly before applying it to channels
+
 ## How to Use
 
 ### Basic Workflow: Add Pattern to Multiple Channels
@@ -102,6 +107,22 @@ Features:
 - Merges with existing patterns (no duplicates)
 - Returns success/failure count
 
+#### 3. Live Regex Preview Endpoint
+File: `backend/web_api.py`
+
+Updated the `/api/test-regex-live` endpoint to support `{CHANNEL_NAME}` substitution:
+```python
+# Substitute {CHANNEL_NAME} variable with actual channel name
+escaped_channel_name = re.escape(channel_name)
+substituted_pattern = pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+```
+
+**Key Features**:
+- Automatically substitutes `{CHANNEL_NAME}` before testing patterns
+- Escapes special regex characters in channel names (e.g., `+`, `.`, `*`)
+- Provides real-time feedback on what streams will be matched
+- Works for both individual pattern editing and bulk assignment dialogs
+
 ### Frontend Changes
 
 #### 1. New Components
@@ -131,7 +152,10 @@ bulkAddPatterns: (data) => api.post('/regex-patterns/bulk', data)
 
 ## Testing
 
-Created comprehensive test suite: `backend/tests/test_mass_regex_assignment.py`
+Created comprehensive test suites:
+
+### 1. Mass Regex Assignment Tests
+File: `backend/tests/test_mass_regex_assignment.py`
 
 **9 Tests - All Passing**:
 1. Basic channel name substitution
@@ -142,6 +166,21 @@ Created comprehensive test suite: `backend/tests/test_mass_regex_assignment.py`
 6. End-to-end matching validation
 7. Dot escaping in channel names
 8. Pattern merge logic
+9. Duplicate prevention
+
+### 2. Live Regex Preview Tests
+File: `backend/tests/test_regex_live_preview.py`
+
+**7 Tests - All Passing**:
+1. Channel name substitution in live preview
+2. User-reported pattern validation
+3. Special characters in channel names
+4. Multiple {CHANNEL_NAME} occurrences
+5. Patterns without variables
+6. Empty channel name handling
+7. Case sensitivity behavior
+
+**Combined Results**: ✅ All 16 tests PASSED
 9. Duplicate prevention
 
 **Results**: ✅ All tests PASSED
@@ -164,6 +203,41 @@ Created comprehensive test suite: `backend/tests/test_mass_regex_assignment.py`
 - Group management tab unaffected
 - All existing patterns continue to work
 
+## Troubleshooting
+
+### Issue: {CHANNEL_NAME} shows 0 matches in live preview
+
+**Solution**: This has been fixed. The live preview now automatically substitutes `{CHANNEL_NAME}` with the actual channel name before testing.
+
+**What was the problem?**
+- The live preview endpoint wasn't substituting the variable
+- It treated `{CHANNEL_NAME}` as literal text
+- Actual stream matching worked correctly, but preview didn't
+
+**How it works now:**
+- Live preview substitutes `{CHANNEL_NAME}` before testing
+- You'll see the actual matches in real-time
+- Both individual and bulk regex dialogs work correctly
+
+### Issue: Pattern with special characters doesn't work
+
+**Solution**: Channel names with special regex characters are automatically escaped.
+
+**Example:**
+- Channel name: `ESPN+`
+- Pattern: `.*{CHANNEL_NAME}.*`
+- Becomes: `.*ESPN\+.*` (+ is escaped)
+
+This prevents regex errors and ensures patterns match correctly.
+
+### Issue: Pattern works in export but not in preview
+
+**Check these:**
+1. Verify you're using the latest version with the fix
+2. Make sure channel name is spelled correctly
+3. Test with a simpler pattern first (e.g., `.*{CHANNEL_NAME}.*`)
+4. Check that the channel actually exists in your setup
+
 ## Documentation Updates
 
 Updated three documentation files:
@@ -175,6 +249,7 @@ Updated three documentation files:
    - Group filtering explanation
    - Mass assignment workflows
    - Pattern variable details
+   - Live preview behavior
    - Updated examples and benefits
 
 ## Benefits
