@@ -783,7 +783,7 @@ def add_bulk_regex_patterns():
         for channel_id in channel_ids:
             try:
                 # Get channel name from UDI
-                channel = udi.get_channel(channel_id)
+                channel = udi.get_channel_by_id(channel_id)
                 if not channel:
                     failed_channels.append({
                         "channel_id": channel_id,
