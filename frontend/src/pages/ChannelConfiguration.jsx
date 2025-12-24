@@ -421,7 +421,7 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel }) {
+function RegexTableRow({ channel, group, groups, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
   const { toast } = useToast()
@@ -632,27 +632,44 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
           
             {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
               <div className="space-y-2">
-                {channelPatterns.regex.map((pattern, index) => (
-                  <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
-                    <code className="text-sm flex-1 break-all">{pattern}</code>
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onEditRegex(channel.id, index)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onDeletePattern(channel.id, index)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                {channelPatterns.regex.map((pattern, index) => {
+                  // Get playlist names if playlists are specified
+                  const playlistNames = channelPatterns.playlists && channelPatterns.playlists.length > 0
+                    ? channelPatterns.playlists.map(id => {
+                        const g = groups?.find(gr => gr.id === id)
+                        return g ? g.name : `Playlist ${id}`
+                      }).join(', ')
+                    : 'All Playlists'
+                  
+                  return (
+                    <div key={index} className="space-y-1">
+                      <div className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                        <div className="flex-1 space-y-1">
+                          <code className="text-sm break-all">{pattern}</code>
+                          <div className="text-xs text-muted-foreground">
+                            Playlists: {playlistNames}
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onEditRegex(channel.id, index)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onDeletePattern(channel.id, index)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No regex patterns configured</p>
@@ -992,6 +1009,10 @@ export default function ChannelConfiguration() {
   const [sortByGroup, setSortByGroup] = useState(false)
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
   const [bulkPattern, setBulkPattern] = useState('')
+  
+  // Playlist filtering state for regex patterns
+  const [selectedPlaylists, setSelectedPlaylists] = useState([])  // For individual regex dialog
+  const [bulkSelectedPlaylists, setBulkSelectedPlaylists] = useState([])  // For bulk regex dialog
   
   // Profile filter state
   const [profileFilterActive, setProfileFilterActive] = useState(false)
@@ -1337,8 +1358,15 @@ export default function ChannelConfiguration() {
       if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
         setNewPattern(channelPatterns.regex[patternIndex])
       }
+      // Load existing playlist selection (if any)
+      if (channelPatterns && channelPatterns.playlists) {
+        setSelectedPlaylists(channelPatterns.playlists)
+      } else {
+        setSelectedPlaylists([])  // Empty means all playlists
+      }
     } else {
       setNewPattern('')
+      setSelectedPlaylists([])  // Default to all playlists for new patterns
     }
     
     setTestResults(null)
@@ -1351,6 +1379,7 @@ export default function ChannelConfiguration() {
     setEditingPatternIndex(null)
     setNewPattern('')
     setTestResults(null)
+    setSelectedPlaylists([])  // Reset playlist selection
   }
 
   const handleTestPattern = useCallback(async () => {
@@ -1454,7 +1483,8 @@ export default function ChannelConfiguration() {
         channel_id: editingChannelId,
         name: channel?.name || '',
         regex: updatedRegex,
-        enabled: channelPatterns?.enabled !== false
+        enabled: channelPatterns?.enabled !== false,
+        playlists: selectedPlaylists.length > 0 ? selectedPlaylists : null  // null = all playlists
       })
 
       toast({
@@ -1555,7 +1585,8 @@ export default function ChannelConfiguration() {
     try {
       const response = await regexAPI.bulkAddPatterns({
         channel_ids: Array.from(selectedChannels),
-        regex_patterns: [bulkPattern]
+        regex_patterns: [bulkPattern],
+        playlists: bulkSelectedPlaylists.length > 0 ? bulkSelectedPlaylists : null  // null = all playlists
       })
       
       toast({
@@ -1568,6 +1599,7 @@ export default function ChannelConfiguration() {
       setSelectedChannels(new Set())
       setBulkDialogOpen(false)
       setBulkPattern('')
+      setBulkSelectedPlaylists([])  // Reset bulk playlist selection
     } catch (err) {
       toast({
         title: "Error",
@@ -2121,6 +2153,7 @@ export default function ChannelConfiguration() {
                             key={channel.id}
                             channel={channel}
                             group={group}
+                            groups={groups}
                             patterns={patterns}
                             channelSettings={settings}
                             selectedChannels={selectedChannels}
@@ -2611,6 +2644,57 @@ export default function ChannelConfiguration() {
               />
             </div>
 
+            {/* Playlist Selection */}
+            <div className="space-y-2">
+              <Label>Apply to Playlists (Groups)</Label>
+              <div className="text-xs text-muted-foreground mb-2">
+                Select which playlists this regex should match streams from. Leave empty for all playlists.
+              </div>
+              <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
+                {groups.length === 0 ? (
+                  <div className="text-sm text-muted-foreground italic">No playlists available</div>
+                ) : (
+                  <>
+                    <div className="flex items-center space-x-2 pb-2 border-b">
+                      <Checkbox
+                        id="select-all-playlists"
+                        checked={selectedPlaylists.length === 0}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedPlaylists([])  // Empty = all playlists
+                          } else {
+                            setSelectedPlaylists([groups[0].id])  // Select first playlist
+                          }
+                        }}
+                      />
+                      <label htmlFor="select-all-playlists" className="text-sm font-medium cursor-pointer">
+                        All Playlists
+                      </label>
+                    </div>
+                    {groups.map(group => (
+                      <div key={group.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`playlist-${group.id}`}
+                          checked={selectedPlaylists.includes(group.id)}
+                          disabled={selectedPlaylists.length === 0}  // Disabled when "All" is selected
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedPlaylists([...selectedPlaylists, group.id])
+                            } else {
+                              setSelectedPlaylists(selectedPlaylists.filter(id => id !== group.id))
+                            }
+                          }}
+                        />
+                        <label htmlFor={`playlist-${group.id}`} className={`text-sm cursor-pointer ${selectedPlaylists.length === 0 ? 'text-muted-foreground' : ''}`}>
+                          {group.name}
+                        </label>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Live Test Results */}
             {testingPattern && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground animate-in fade-in duration-200">
@@ -2694,6 +2778,57 @@ export default function ChannelConfiguration() {
               </p>
             </div>
             
+            {/* Playlist Selection for Bulk */}
+            <div className="space-y-2">
+              <Label>Apply to Playlists (Groups)</Label>
+              <div className="text-xs text-muted-foreground mb-2">
+                Select which playlists this regex should match streams from. Leave empty for all playlists.
+              </div>
+              <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
+                {groups.length === 0 ? (
+                  <div className="text-sm text-muted-foreground italic">No playlists available</div>
+                ) : (
+                  <>
+                    <div className="flex items-center space-x-2 pb-2 border-b">
+                      <Checkbox
+                        id="bulk-select-all-playlists"
+                        checked={bulkSelectedPlaylists.length === 0}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setBulkSelectedPlaylists([])  // Empty = all playlists
+                          } else {
+                            setBulkSelectedPlaylists([groups[0].id])  // Select first playlist
+                          }
+                        }}
+                      />
+                      <label htmlFor="bulk-select-all-playlists" className="text-sm font-medium cursor-pointer">
+                        All Playlists
+                      </label>
+                    </div>
+                    {groups.map(group => (
+                      <div key={group.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`bulk-playlist-${group.id}`}
+                          checked={bulkSelectedPlaylists.includes(group.id)}
+                          disabled={bulkSelectedPlaylists.length === 0}  // Disabled when "All" is selected
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setBulkSelectedPlaylists([...bulkSelectedPlaylists, group.id])
+                            } else {
+                              setBulkSelectedPlaylists(bulkSelectedPlaylists.filter(id => id !== group.id))
+                            }
+                          }}
+                        />
+                        <label htmlFor={`bulk-playlist-${group.id}`} className={`text-sm cursor-pointer ${bulkSelectedPlaylists.length === 0 ? 'text-muted-foreground' : ''}`}>
+                          {group.name}
+                        </label>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+            
             <div className="border rounded-md p-3 bg-muted/50">
               <div className="text-sm font-medium mb-2">Example:</div>
               <div className="text-xs text-muted-foreground space-y-1">
@@ -2708,6 +2843,7 @@ export default function ChannelConfiguration() {
             <Button variant="outline" onClick={() => {
               setBulkDialogOpen(false)
               setBulkPattern('')
+              setBulkSelectedPlaylists([])  // Reset bulk playlist selection
             }}>
               Cancel
             </Button>
