@@ -53,12 +53,13 @@ See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation
 - Updates channels immediately when M3U refreshes
 - Tracks update history in changelog
 - **M3U Priority System**: Configure stream selection priority
-  - **Global Priority Mode**: Single mode applies to all M3U accounts
+  - **Global Priority Mode**: Default mode that applies to all M3U accounts unless overridden
     - Disabled: Priority ignored, streams selected by quality only
     - Same Resolution Only: Priority applied within same resolution groups
     - All Streams: Always prefer higher priority accounts regardless of quality
-  - Per-account priority values (0-100)
-  - Priority fields disabled when mode is "disabled"
+  - Per-account priority values (0-100) set in Dispatcharr
+  - Per-account priority mode override (optional): Can override global setting for specific accounts
+  - Priority fields disabled when global mode is "disabled"
   - Only enabled/active playlists shown in priority UI
 
 ### Intelligent Stream Quality Checking
