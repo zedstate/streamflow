@@ -1904,7 +1904,7 @@ export default function ChannelConfiguration() {
                     <div className="divide-y">
                       {paginatedChannels.map(channel => {
                         const group = groups.find(g => g.id === channel.channel_group_id)
-                        const channelSettings = settings.find(s => s.channel_id === channel.id)
+                        const settings = channelSettings[channel.id]
                         
                         return (
                           <RegexTableRow 
@@ -1912,11 +1912,11 @@ export default function ChannelConfiguration() {
                             channel={channel}
                             group={group}
                             patterns={patterns}
-                            channelSettings={channelSettings}
+                            channelSettings={settings}
                             selectedChannels={selectedChannels}
                             onToggleChannel={handleToggleChannel}
                             onEditRegex={handleEditRegex}
-                            onUpdateSettings={handleUpdateChannelSettings}
+                            onUpdateSettings={handleUpdateSettings}
                           />
                         )
                       })}
