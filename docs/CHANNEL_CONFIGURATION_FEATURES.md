@@ -18,90 +18,219 @@ Organize and reorder channels using drag-and-drop functionality.
 
 ### Regex Configuration Tab Features
 
-### 1. Search/Filter Field
-- **Location**: Top of the table, below the page description
-- **Functionality**: Real-time filtering of channels
-- **Search by**:
+#### 1. Table-Based Layout
+The Regex Configuration tab now features a clean, table-based interface for managing patterns:
+
+**Column Headers**:
+- **Select**: Checkbox for multi-select functionality
+- **#**: Channel number
+- **Channel Name**: Name of the channel
+- **Channel Group**: Group the channel belongs to
+- **Regex Patterns**: Count of configured patterns
+- **Actions**: Edit button to manage patterns
+
+#### 2. Multi-Select Functionality
+- **Individual Selection**: Click checkbox on any row to select/deselect a channel
+- **Select All**: Check the header checkbox to select all visible channels on current page
+- **Deselect All**: Uncheck the header checkbox or use "Deselect All" button
+- **Selection Counter**: Badge showing number of selected channels
+
+#### 3. Group Filtering and Sorting
+- **Filter by Group**: Dropdown to show only channels from a specific group
+  - "All Groups" option to show channels from all groups
+  - Individual group options for focused management
+- **Sort by Group**: Checkbox to organize channels by group name
+  - Maintains channel number order within each group
+  - Makes it easy to work with channels from the same group
+
+#### 4. Mass Regex Assignment
+Add a single regex pattern to multiple channels at once:
+
+1. **Select Channels**: Use checkboxes to select target channels
+2. **Click "Add Regex to Selected"**: Opens bulk assignment dialog
+3. **Enter Pattern**: Type your regex pattern
+4. **Use Variables**: Include `{CHANNEL_NAME}` to create reusable patterns
+5. **Apply**: Pattern is added to all selected channels
+
+**Pattern Variable Support**:
+- `{CHANNEL_NAME}` is replaced with each channel's actual name at match time
+- Example: Pattern `.*{CHANNEL_NAME}.*` becomes:
+  - `.*ESPN.*` for channel "ESPN"
+  - `.*CNN.*` for channel "CNN"
+  - `.*ABC.*` for channel "ABC"
+- One pattern works for multiple channels with different names
+- Reduces duplication and makes pattern management easier
+
+#### 5. Search/Filter Field
+- **Location**: Top of the page
+- **Search across**:
   - Channel Number (e.g., "101", "5")
   - Channel Name (e.g., "ESPN", "CNN")
-- **Case insensitive**: Search works regardless of case
+  - Channel Group (e.g., "Sports", "News")
+- **Real-time filtering**: Table updates as you type
+- **Case insensitive**: Works regardless of case
 
-**Example Usage**:
-- Type "ESPN" to see all ESPN channels
-- Type "5" to see channels numbered with 5 (5, 50, 105, etc.)
+#### 6. Pagination
+- **Items per page**: Choose 10, 20, 50, or 100 channels per page
+- **Page navigation**: First, Previous, Page numbers, Next, Last
+- **Current page indicator**: Shows which page you're on
+- **Results counter**: Displays "Showing X-Y of Z channels"
 
-### 2. Separate Columns
-The channel information is now split into two separate columns for better readability:
-- **Channel Number**: Shows the channel number (e.g., #101)
-- **Channel Name**: Shows the channel name (e.g., ESPN)
+#### 7. Pattern Management Per Channel
+Click the Edit button (✏️) on any channel to:
+- **View existing patterns**: See all configured regex patterns
+- **Add new patterns**: Create additional patterns for the channel
+- **Edit patterns**: Modify existing regex rules
+- **Delete patterns**: Remove unwanted patterns
+- **Test patterns live**: See which streams match in real-time
 
-**Before**: `#101 - ESPN` (single column)
-**After**: `#101` | `ESPN` (two columns)
+### Example Workflows
 
-### 3. Sortable Columns
-All main columns can be sorted by clicking the column header:
+#### Workflow 1: Add Pattern to Multiple News Channels
+1. Set "Filter Group" to "News"
+2. Click "Select All" to select all news channels
+3. Click "Add Regex to Selected"
+4. Enter pattern: `.*{CHANNEL_NAME}.*|.*NEWS.*`
+5. Click "Add to X Channels"
+6. Pattern is now applied to all selected news channels
 
-#### Channel Number
-- **Default**: Ascending (1, 2, 3...)
-- **Click once**: Descending (999, 998, 997...)
-- **Click again**: Ascending (1, 2, 3...)
+#### Workflow 2: Find and Configure Channels Without Patterns
+1. Sort channels by regex pattern count (table shows pattern count in badge)
+2. Select channels showing "No patterns"
+3. Use bulk assignment to add a general pattern
+4. Refine individual patterns as needed
 
-#### Channel Name
-- **Alphabetically**: A-Z or Z-A
-- **Case insensitive sorting**
-
-#### Patterns
-- **Sorts by**: Number of regex patterns configured
-- **Useful for**: Finding channels with no patterns or most patterns
-
-#### Status
-- **Sorts by**: Enabled (1) vs Disabled (0)
-- **Useful for**: Grouping enabled/disabled channels
-
-### 4. Visual Indicators
-- **Sort arrows**: Up/down arrows appear on active sorted column
-- **Hover effect**: Column headers highlight on hover
-- **Active indicator**: Sorted column is visually distinguished
+#### Workflow 3: Organize by Group and Configure
+1. Enable "Sort by Group" checkbox
+2. Channels are now grouped and sorted
+3. Set "Filter Group" to focus on one group
+4. Configure patterns for that group
+5. Move to next group and repeat
 
 ## UI Components
 
 ### Table Layout
 ```
-+----------------+---------------+------------------+----------+---------+
-| Channel Number | Channel Name  | Patterns         | Status   | Actions |
-+----------------+---------------+------------------+----------+---------+
-| #5             | ABC News      | .*ABC.*         | Enabled  | ✏️ 🗑️   |
-| #101           | ESPN          | .*ESPN.*        | Enabled  | ✏️ 🗑️   |
-| #505           | CNN           | No patterns     | -        | ➕      |
-+----------------+---------------+------------------+----------+---------+
++--------+-----+--------------+---------------+------------------+---------+
+| Select | #   | Channel Name | Channel Group | Regex Patterns   | Actions |
++--------+-----+--------------+---------------+------------------+---------+
+| ☐      | 5   | ABC News     | News          | 2 patterns       | ✏️      |
+| ☑      | 101 | ESPN         | Sports        | 1 pattern        | ✏️      |
+| ☑      | 505 | CNN          | News          | No patterns      | ✏️      |
++--------+-----+--------------+---------------+------------------+---------+
+```
+
+### Filter and Selection Bar
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Filter Group: [All Groups ▼]  ☐ Sort by Group                            │
+│                                                                            │
+│ 2 selected  [Select All]  [Deselect All]  [➕ Add Regex to Selected]    │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Bulk Pattern Dialog
+```
+┌─ Add Regex Pattern to Multiple Channels ───────────────────────────────────┐
+│ This pattern will be added to 2 selected channels.                         │
+│ Use {CHANNEL_NAME} to insert each channel's name into the pattern.        │
+│                                                                             │
+│ Regex Pattern                                                               │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │ .*{CHANNEL_NAME}.*                                                      │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│ Example:                                                                    │
+│ Pattern: .*{CHANNEL_NAME}.*                                                │
+│ For channel "ESPN", matches: .*ESPN.*                                      │
+│ For channel "CNN", matches: .*CNN.*                                        │
+│                                                                             │
+│                                      [Cancel]  [Add to 2 Channels]         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Search Field
 ```
-┌────────────────────────────────────────────────┐
-│ 🔍 Search by channel number or name...        │
-└────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────┐
+│ 🔍 Search channels by name, number, or ID...      │
+└────────────────────────────────────────────────────┘
 ```
 
 ## Technical Implementation
 
 ### State Management
 ```javascript
+// Multi-select state
+const [selectedChannels, setSelectedChannels] = useState(new Set());
+
+// Filtering and sorting
 const [searchQuery, setSearchQuery] = useState('');
-const [orderBy, setOrderBy] = useState('channel_number');
-const [order, setOrder] = useState('asc');
+const [filterByGroup, setFilterByGroup] = useState('all');
+const [sortByGroup, setSortByGroup] = useState(false);
+
+// Bulk assignment
+const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+const [bulkPattern, setBulkPattern] = useState('');
 ```
 
-### Sorting Logic
-- **Channel Number**: Numeric comparison
-- **Channel Name**: String comparison (case insensitive)
-- **Patterns**: Count of regex patterns
-- **Status**: Boolean (enabled = 1, disabled = 0)
+### Backend API
+
+#### Bulk Assignment Endpoint
+```
+POST /api/regex-patterns/bulk
+Content-Type: application/json
+
+{
+  "channel_ids": [1, 2, 3],
+  "regex_patterns": [".*{CHANNEL_NAME}.*"]
+}
+
+Response:
+{
+  "message": "Successfully added patterns to 3 channel(s)",
+  "success_count": 3,
+  "total_channels": 3
+}
+```
+
+#### Pattern Variable Substitution
+The backend substitutes `{CHANNEL_NAME}` at match time:
+```python
+def _substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
+    """Substitute channel name variables in a regex pattern."""
+    escaped_channel_name = re.escape(channel_name)
+    return pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+```
 
 ### Filtering Logic
-- Searches both channel number and name fields
-- Case insensitive matching
-- Partial match support (searches for substring)
+```javascript
+const displayChannels = orderedChannels.filter(channel => {
+  // Apply group filter
+  if (filterByGroup !== 'all' && channel.channel_group_id !== parseInt(filterByGroup)) {
+    return false;
+  }
+  
+  // Apply search filter
+  if (searchQuery) {
+    const query = searchQuery.toLowerCase();
+    const matchesName = channel.name.toLowerCase().includes(query);
+    const matchesNumber = String(channel.channel_number).includes(query);
+    const matchesGroup = groupName.toLowerCase().includes(query);
+    return matchesName || matchesNumber || matchesGroup;
+  }
+  
+  return true;
+});
+
+// Sort by group if enabled
+if (sortByGroup) {
+  displayChannels.sort((a, b) => {
+    const groupA = getGroupName(a.channel_group_id);
+    const groupB = getGroupName(b.channel_group_id);
+    return groupA.localeCompare(groupB) || (a.channel_number - b.channel_number);
+  });
+}
+```
 
 ## User Workflow Examples
 
@@ -123,11 +252,13 @@ const [order, setOrder] = useState('asc');
 
 ## Benefits
 
-1. **Faster Navigation**: Quickly find channels without scrolling
-2. **Better Organization**: Sort by any column to group related items
-3. **Clear Separation**: Channel number and name are distinct
-4. **Improved UX**: Intuitive sorting with visual feedback
-5. **Scalability**: Works well with hundreds of channels
+1. **Efficient Mass Configuration**: Add patterns to hundreds of channels in seconds
+2. **Reusable Patterns**: One pattern with `{CHANNEL_NAME}` works for many channels
+3. **Better Organization**: Group filtering and sorting for focused management
+4. **Faster Navigation**: Multi-select and bulk operations save time
+5. **Clear Visual Feedback**: Table layout makes it easy to see pattern status
+6. **Scalability**: Works efficiently with hundreds of channels
+7. **Reduced Duplication**: Pattern variables eliminate redundant configurations
 
 ## Group Management Tab Features
 
@@ -227,9 +358,11 @@ All existing functionality is preserved:
 ## Future Enhancements
 
 Potential improvements:
-- Multi-column sorting in Regex Configuration
-- Advanced filters (status, pattern count ranges)
-- Bulk pattern operations across multiple channels
+- Advanced filters (pattern count ranges, last modified date)
+- Bulk pattern deletion across multiple channels
+- Pattern templates library for common use cases
 - Export/import group settings
 - Per-group regex templates
 - Channel group creation and editing from UI
+- Pattern validation and suggestions
+- Regex pattern testing against historical stream data

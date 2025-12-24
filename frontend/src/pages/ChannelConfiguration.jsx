@@ -1734,19 +1734,15 @@ export default function ChannelConfiguration() {
                           <Checkbox
                             checked={paginatedChannels.every(ch => selectedChannels.has(ch.id))}
                             onCheckedChange={(checked) => {
-                              if (checked) {
-                                paginatedChannels.forEach(ch => {
-                                  setSelectedChannels(prev => new Set(prev).add(ch.id))
-                                })
-                              } else {
-                                paginatedChannels.forEach(ch => {
-                                  setSelectedChannels(prev => {
-                                    const newSet = new Set(prev)
-                                    newSet.delete(ch.id)
-                                    return newSet
-                                  })
-                                })
-                              }
+                              const newSet = new Set(selectedChannels)
+                              paginatedChannels.forEach(ch => {
+                                if (checked) {
+                                  newSet.add(ch.id)
+                                } else {
+                                  newSet.delete(ch.id)
+                                }
+                              })
+                              setSelectedChannels(newSet)
                             }}
                           />
                         </div>
