@@ -63,18 +63,17 @@ class TestPriorityStreamOrdering(unittest.TestCase):
         # Create mock M3U accounts
         # p1 with priority 100 (high priority)
         # p2 with priority 0 (low priority)
+        # Note: priority_mode is NOT set here - should fall back to global setting
         mock_m3u_account_p1 = {
             'id': 1,
             'name': 'p1',
-            'priority': 100,
-            'priority_mode': 'all_streams'  # Should get from global setting
+            'priority': 100
         }
         
         mock_m3u_account_p2 = {
             'id': 2,
             'name': 'p2',
-            'priority': 0,
-            'priority_mode': 'all_streams'  # Should get from global setting
+            'priority': 0
         }
         
         # Create mock streams
@@ -170,18 +169,17 @@ class TestPriorityStreamOrdering(unittest.TestCase):
         mock_get_udi.return_value = mock_udi
         
         # Create mock M3U accounts
+        # Note: priority_mode is NOT set here - should fall back to global setting
         mock_m3u_account_p1 = {
             'id': 1,
             'name': 'p1',
-            'priority': 100,
-            'priority_mode': 'disabled'  # Should get from global setting
+            'priority': 100
         }
         
         mock_m3u_account_p2 = {
             'id': 2,
             'name': 'p2',
-            'priority': 0,
-            'priority_mode': 'disabled'  # Should get from global setting
+            'priority': 0
         }
         
         # Create mock streams
