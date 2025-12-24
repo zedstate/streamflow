@@ -12,7 +12,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye } from 'lucide-react'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
+import { Switch } from '@/components/ui/switch.jsx'
 import ProfileManagement from '@/components/ProfileManagement.jsx'
 import {
   DndContext,
@@ -407,6 +409,149 @@ function SortableChannelItem({ channel }) {
           <div className="font-medium truncate">{channel.name}</div>
           <div className="text-xs text-muted-foreground">ID: {channel.id}</div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings }) {
+  const [logoUrl, setLogoUrl] = useState(null)
+  const [logoError, setLogoError] = useState(false)
+  const { toast } = useToast()
+  
+  const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
+  const patternCount = channelPatterns?.regex?.length || 0
+  const matchingMode = channelSettings?.matching_mode || 'enabled'
+  const checkingMode = channelSettings?.checking_mode || 'enabled'
+  
+  // Load channel logo
+  useEffect(() => {
+    const loadLogo = () => {
+      // Check localStorage cache first
+      const cachedUrl = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
+      if (cachedUrl) {
+        setLogoUrl(cachedUrl)
+        return
+      }
+      
+      // Fetch logo if logo_id is available
+      if (channel.logo_id) {
+        const logoUrl = channelsAPI.getLogoCached(channel.logo_id)
+        setLogoUrl(logoUrl)
+        localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, logoUrl)
+      }
+    }
+    loadLogo()
+  }, [channel.id, channel.logo_id])
+  
+  const handleMatchingModeToggle = async () => {
+    try {
+      const newMode = matchingMode === 'enabled' ? 'disabled' : 'enabled'
+      await onUpdateSettings(channel.id, { matching_mode: newMode })
+      toast({
+        title: "Success",
+        description: `Stream matching ${newMode} for ${channel.name}`
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update matching mode",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleCheckingModeToggle = async () => {
+    try {
+      const newMode = checkingMode === 'enabled' ? 'disabled' : 'enabled'
+      await onUpdateSettings(channel.id, { checking_mode: newMode })
+      toast({
+        title: "Success",
+        description: `Stream checking ${newMode} for ${channel.name}`
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update checking mode",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  return (
+    <div key={channel.id} className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_100px] gap-4 p-4 hover:bg-muted/50 transition-colors">
+      <div className="flex items-center justify-center">
+        <Checkbox
+          checked={selectedChannels.has(channel.id)}
+          onCheckedChange={() => onToggleChannel(channel.id)}
+        />
+      </div>
+      <div className="flex items-center text-sm font-medium">
+        {channel.channel_number || '-'}
+      </div>
+      <div className="flex items-center">
+        <div className="w-16 h-10 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
+          {logoUrl && !logoError ? (
+            <img 
+              src={logoUrl} 
+              alt={channel.name} 
+              className="w-full h-full object-contain"
+              onError={() => setLogoError(true)}
+            />
+          ) : (
+            <span className="text-lg font-bold text-muted-foreground">
+              {channel.name?.charAt(0) || '?'}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center">
+        <span className="font-medium truncate">{channel.name}</span>
+      </div>
+      <div className="flex items-center text-sm text-muted-foreground truncate">
+        {group?.name || '-'}
+      </div>
+      <div className="flex items-center">
+        {patternCount > 0 ? (
+          <Badge variant="secondary">{patternCount} pattern{patternCount > 1 ? 's' : ''}</Badge>
+        ) : (
+          <span className="text-sm text-muted-foreground">No patterns</span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel>Channel Actions</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onEditRegex(channel.id, null)}>
+              <Eye className="mr-2 h-4 w-4" />
+              <span>View/Edit Regex Rules</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Settings</DropdownMenuLabel>
+            <DropdownMenuItem onClick={handleMatchingModeToggle} className="justify-between">
+              <span>Stream Matching</span>
+              <Switch 
+                checked={matchingMode === 'enabled'} 
+                onClick={(e) => e.stopPropagation()}
+                className="pointer-events-none"
+              />
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleCheckingModeToggle} className="justify-between">
+              <span>Stream Checking</span>
+              <Switch 
+                checked={checkingMode === 'enabled'}
+                onClick={(e) => e.stopPropagation()}
+                className="pointer-events-none"
+              />
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   )
@@ -1729,7 +1874,7 @@ export default function ChannelConfiguration() {
                 <Card>
                   <CardContent className="p-0">
                     <div className="border-b bg-muted/50">
-                      <div className="grid grid-cols-[50px_80px_1fr_200px_150px_100px] gap-4 p-4 font-medium text-sm">
+                      <div className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_100px] gap-4 p-4 font-medium text-sm">
                         <div className="flex items-center justify-center">
                           <Checkbox
                             checked={paginatedChannels.every(ch => selectedChannels.has(ch.id))}
@@ -1747,6 +1892,7 @@ export default function ChannelConfiguration() {
                           />
                         </div>
                         <div>#</div>
+                        <div>Logo</div>
                         <div>Channel Name</div>
                         <div>Channel Group</div>
                         <div>Regex Patterns</div>
@@ -1758,43 +1904,20 @@ export default function ChannelConfiguration() {
                     <div className="divide-y">
                       {paginatedChannels.map(channel => {
                         const group = groups.find(g => g.id === channel.channel_group_id)
-                        const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
-                        const patternCount = channelPatterns?.regex?.length || 0
+                        const channelSettings = settings.find(s => s.channel_id === channel.id)
                         
                         return (
-                          <div key={channel.id} className="grid grid-cols-[50px_80px_1fr_200px_150px_100px] gap-4 p-4 hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center justify-center">
-                              <Checkbox
-                                checked={selectedChannels.has(channel.id)}
-                                onCheckedChange={() => handleToggleChannel(channel.id)}
-                              />
-                            </div>
-                            <div className="flex items-center text-sm font-medium">
-                              {channel.channel_number || '-'}
-                            </div>
-                            <div className="flex items-center">
-                              <span className="font-medium truncate">{channel.name}</span>
-                            </div>
-                            <div className="flex items-center text-sm text-muted-foreground truncate">
-                              {group?.name || '-'}
-                            </div>
-                            <div className="flex items-center">
-                              {patternCount > 0 ? (
-                                <Badge variant="secondary">{patternCount} pattern{patternCount > 1 ? 's' : ''}</Badge>
-                              ) : (
-                                <span className="text-sm text-muted-foreground">No patterns</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleEditRegex(channel.id, null)}
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
+                          <RegexTableRow 
+                            key={channel.id}
+                            channel={channel}
+                            group={group}
+                            patterns={patterns}
+                            channelSettings={channelSettings}
+                            selectedChannels={selectedChannels}
+                            onToggleChannel={handleToggleChannel}
+                            onEditRegex={handleEditRegex}
+                            onUpdateSettings={handleUpdateChannelSettings}
+                          />
                         )
                       })}
                     </div>
