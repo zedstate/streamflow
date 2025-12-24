@@ -37,34 +37,6 @@ const STEPS = [
   },
 ]
 
-const PIPELINE_MODES = [
-  { 
-    value: 'pipeline_1', 
-    label: 'Pipeline 1 - Continuous',
-    hint: 'Continuously checks streams and updates playlists. Best for always-up-to-date streams.'
-  },
-  { 
-    value: 'pipeline_1_5', 
-    label: 'Pipeline 1.5 - Continuous + Scheduled',
-    hint: 'Combines continuous checking with scheduled global actions. Balanced approach.'
-  },
-  { 
-    value: 'pipeline_2', 
-    label: 'Pipeline 2 - Update Only',
-    hint: 'Only updates playlists, no automatic checking. Manual control over stream quality.'
-  },
-  { 
-    value: 'pipeline_2_5', 
-    label: 'Pipeline 2.5 - Update + Scheduled',
-    hint: 'Updates playlists with scheduled global checks. Good for regular maintenance.'
-  },
-  { 
-    value: 'pipeline_3', 
-    label: 'Pipeline 3 - Scheduled Only',
-    hint: 'Only scheduled actions, no automatic updates. Full manual control.'
-  },
-]
-
 export default function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
   const [activeStep, setActiveStep] = useState(0)
   const [setupStatus, setSetupStatus] = useState(initialSetupStatus)
@@ -113,7 +85,13 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
 
   // Stream checker config
   const [streamCheckerConfig, setStreamCheckerConfig] = useState({
-    pipeline_mode: 'pipeline_1_5',
+    automation_controls: {
+      auto_m3u_updates: true,
+      auto_stream_matching: true,
+      auto_quality_checking: true,
+      scheduled_global_action: false,
+      remove_non_matching_streams: false
+    },
     global_check_schedule: {
       enabled: true,
       cron_expression: '0 3 * * *',
@@ -142,23 +120,6 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     }
     loadDispatcharrConfig()
   }, [initialSetupStatus])
-
-  // Update enabled features based on pipeline mode
-  useEffect(() => {
-    const pipelineMode = streamCheckerConfig.pipeline_mode
-    const hasAutoUpdates = ['pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5'].includes(pipelineMode)
-    const hasAutoChecking = ['pipeline_1', 'pipeline_1_5'].includes(pipelineMode)
-    
-    setConfig(prev => ({
-      ...prev,
-      enabled_features: {
-        auto_playlist_update: hasAutoUpdates,
-        auto_stream_discovery: hasAutoUpdates,
-        auto_quality_reordering: hasAutoChecking,
-        changelog_tracking: true
-      }
-    }))
-  }, [streamCheckerConfig.pipeline_mode])
 
   // Load channels and patterns when entering step 1
   // Only depends on activeStep to avoid unnecessary reloads
@@ -796,28 +757,121 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
         return (
           <div className="space-y-6">
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="pipeline_mode">Pipeline Mode</Label>
-                <Select
-                  value={streamCheckerConfig.pipeline_mode}
-                  onValueChange={(value) => setStreamCheckerConfig({ ...streamCheckerConfig, pipeline_mode: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PIPELINE_MODES.map(mode => (
-                      <SelectItem key={mode.value} value={mode.value}>
-                        {mode.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {PIPELINE_MODES.find(m => m.value === streamCheckerConfig.pipeline_mode)?.hint && (
-                  <p className="text-xs text-muted-foreground">
-                    {PIPELINE_MODES.find(m => m.value === streamCheckerConfig.pipeline_mode).hint}
-                  </p>
-                )}
+              <div className="space-y-4">
+                <Label className="text-base font-semibold">Automation Features</Label>
+                <p className="text-sm text-muted-foreground">
+                  Configure which automation features to enable
+                </p>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="auto_m3u_updates" className="text-sm font-medium">
+                      Automatic M3U Updates
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically refresh M3U playlists from configured sources
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto_m3u_updates"
+                    checked={streamCheckerConfig.automation_controls?.auto_m3u_updates ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        auto_m3u_updates: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="auto_stream_matching" className="text-sm font-medium">
+                      Automatic Stream Matching
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically match streams to channels using regex patterns
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto_stream_matching"
+                    checked={streamCheckerConfig.automation_controls?.auto_stream_matching ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        auto_stream_matching: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="auto_quality_checking" className="text-sm font-medium">
+                      Automatic Quality Checking
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically analyze and reorder streams by quality
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto_quality_checking"
+                    checked={streamCheckerConfig.automation_controls?.auto_quality_checking ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        auto_quality_checking: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="scheduled_global_action" className="text-sm font-medium">
+                      Scheduled Global Action
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Run complete automation cycle on a schedule
+                    </p>
+                  </div>
+                  <Switch
+                    id="scheduled_global_action"
+                    checked={streamCheckerConfig.automation_controls?.scheduled_global_action ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        scheduled_global_action: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="remove_non_matching_streams" className="text-sm font-medium">
+                      Remove Non-Matching Streams
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Remove streams that no longer match regex patterns
+                    </p>
+                  </div>
+                  <Switch
+                    id="remove_non_matching_streams"
+                    checked={streamCheckerConfig.automation_controls?.remove_non_matching_streams ?? false}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        remove_non_matching_streams: checked
+                      }
+                    })}
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">

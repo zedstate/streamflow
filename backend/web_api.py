@@ -2640,30 +2640,38 @@ def update_stream_checker_config():
         service = get_stream_checker_service()
         service.update_config(data)
         
-        # Auto-start or stop services based on pipeline mode when wizard is complete
-        if 'pipeline_mode' in data and check_wizard_complete():
-            pipeline_mode = data['pipeline_mode']
+        # Auto-start or stop services based on automation_controls when wizard is complete
+        if 'automation_controls' in data and check_wizard_complete():
+            automation_controls = data['automation_controls']
             manager = get_automation_manager()
             
-            if pipeline_mode == 'disabled':
-                # Stop services if pipeline is disabled
+            # Check if any automation is enabled
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', False) or
+                automation_controls.get('auto_stream_matching', False) or
+                automation_controls.get('auto_quality_checking', False) or
+                automation_controls.get('scheduled_global_action', False)
+            )
+            
+            if not any_automation_enabled:
+                # Stop services if all automation is disabled
                 if service.running:
                     service.stop()
-                    logger.info("Stream checker service stopped (pipeline disabled)")
+                    logger.info("Stream checker service stopped (all automation disabled)")
                 if manager.running:
                     manager.stop_automation()
-                    logger.info("Automation service stopped (pipeline disabled)")
+                    logger.info("Automation service stopped (all automation disabled)")
                 # Stop background processors
                 stop_scheduled_event_processor()
                 stop_epg_refresh_processor()
             else:
-                # Start services if pipeline is active and they're not already running
+                # Start services if automation is enabled and they're not already running
                 if not service.running:
                     service.start()
-                    logger.info(f"Stream checker service auto-started after config update (mode: {pipeline_mode})")
+                    logger.info(f"Stream checker service auto-started after config update")
                 if not manager.running:
                     manager.start_automation()
-                    logger.info(f"Automation service auto-started after config update (mode: {pipeline_mode})")
+                    logger.info(f"Automation service auto-started after config update")
                 # Start background processors if not running
                 if not (scheduled_event_processor_thread and scheduled_event_processor_thread.is_alive()):
                     start_scheduled_event_processor()
@@ -3476,27 +3484,34 @@ if __name__ == '__main__':
     
     logger.info(f"Starting StreamFlow for Dispatcharr Web API on {args.host}:{args.port}")
     
-    # Auto-start stream checker service if enabled and pipeline mode is not disabled AND wizard is complete
+    # Auto-start stream checker service if enabled and automation is configured AND wizard is complete
     try:
         # Check if wizard has been completed
         if not check_wizard_complete():
             logger.info("Stream checker service will not start - setup wizard has not been completed")
         else:
             service = get_stream_checker_service()
-            pipeline_mode = service.config.get('pipeline_mode', 'pipeline_1_5')
+            automation_controls = service.config.get('automation_controls', {})
             
-            if pipeline_mode == 'disabled':
-                logger.info("Stream checker service is disabled via pipeline mode")
+            # Check if any automation is enabled
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', True) or
+                automation_controls.get('auto_stream_matching', True) or
+                automation_controls.get('auto_quality_checking', True) or
+                automation_controls.get('scheduled_global_action', False)
+            )
+            
+            if not any_automation_enabled:
+                logger.info("Stream checker service is disabled (all automation controls disabled)")
             elif service.config.get('enabled', True):
                 service.start()
-                logger.info(f"Stream checker service auto-started (mode: {pipeline_mode})")
+                logger.info(f"Stream checker service auto-started")
             else:
                 logger.info("Stream checker service is disabled in configuration")
     except Exception as e:
         logger.error(f"Failed to auto-start stream checker service: {e}")
     
-    # Auto-start automation service if pipeline mode is not disabled AND wizard is complete
-    # When any pipeline other than disabled is selected, automation should auto-start
+    # Auto-start automation service if automation is configured AND wizard is complete
     try:
         # Check if wizard has been completed
         if not check_wizard_complete():
@@ -3504,14 +3519,22 @@ if __name__ == '__main__':
         else:
             manager = get_automation_manager()
             service = get_stream_checker_service()
-            pipeline_mode = service.config.get('pipeline_mode', 'pipeline_1_5')
+            automation_controls = service.config.get('automation_controls', {})
             
-            if pipeline_mode == 'disabled':
-                logger.info("Automation service is disabled via pipeline mode")
+            # Check if any automation is enabled
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', True) or
+                automation_controls.get('auto_stream_matching', True) or
+                automation_controls.get('auto_quality_checking', True) or
+                automation_controls.get('scheduled_global_action', False)
+            )
+            
+            if not any_automation_enabled:
+                logger.info("Automation service is disabled (all automation controls disabled)")
             else:
-                # Auto-start automation for any active pipeline
+                # Auto-start automation
                 manager.start_automation()
-                logger.info(f"Automation service auto-started (mode: {pipeline_mode})")
+                logger.info(f"Automation service auto-started")
     except Exception as e:
         logger.error(f"Failed to auto-start automation service: {e}")
     
