@@ -192,11 +192,10 @@ export default function AutomationSettings() {
     )
   }
 
-  const pipelineMode = streamCheckerConfig?.pipeline_mode
   const automationControls = streamCheckerConfig?.automation_controls || {}
   
-  // Check if using individual controls (no pipeline set or disabled)
-  const usingIndividualControls = !pipelineMode || pipelineMode === 'disabled' || pipelineMode === ''
+  // Always use individual controls (legacy pipeline mode no longer supported)
+  const usingIndividualControls = true
   
   // Determine which settings to show based on pipeline mode or individual controls
   const showScheduleSettings = usingIndividualControls 
@@ -393,19 +392,27 @@ export default function AutomationSettings() {
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.scheduled_global_action', checked)}
                 />
               </div>
+
+              {/* Remove Non-Matching Streams */}
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="remove_non_matching_streams" className="text-base font-semibold cursor-pointer">
+                      Remove Non-Matching Streams
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically remove streams from channels if they no longer match the configured regex patterns. Useful when providers change stream names but keep the same URLs.
+                  </p>
+                </div>
+                <Switch
+                  id="remove_non_matching_streams"
+                  checked={automationControls.remove_non_matching_streams ?? false}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.remove_non_matching_streams', checked)}
+                />
+              </div>
             </CardContent>
           </Card>
-
-          {/* Migration Note for Existing Users */}
-          {pipelineMode && pipelineMode !== 'disabled' && (
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Legacy Pipeline Mode Active</AlertTitle>
-              <AlertDescription>
-                You are currently using Pipeline Mode: <strong>{pipelineMode}</strong>. The individual automation controls above show what this pipeline enables. To use individual toggles, set pipeline_mode to empty or disabled in the backend config and use the controls above instead.
-              </AlertDescription>
-            </Alert>
-          )}
 
           {/* Save Button */}
           <div className="flex justify-end">

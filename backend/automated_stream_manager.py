@@ -1038,8 +1038,22 @@ class AutomatedStreamManager:
         """
         log_function_call(logger, "validate_and_remove_non_matching_streams")
         
-        if not self.config.get("validate_existing_streams", False):
-            logger.debug("Stream validation is disabled in config")
+        # Check if removal is enabled in stream checker config
+        try:
+            from stream_checker_service import get_stream_checker_service
+            stream_checker = get_stream_checker_service()
+            removal_enabled = stream_checker.config.get('automation_controls', {}).get('remove_non_matching_streams', False)
+            
+            if not removal_enabled:
+                logger.debug("Stream removal is disabled in automation_controls")
+                return {
+                    "channels_checked": 0,
+                    "streams_removed": 0,
+                    "channels_modified": 0,
+                    "details": []
+                }
+        except Exception as e:
+            logger.warning(f"Could not check stream checker config: {e}, skipping validation")
             return {
                 "channels_checked": 0,
                 "streams_removed": 0,
