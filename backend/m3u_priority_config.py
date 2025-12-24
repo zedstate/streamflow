@@ -92,6 +92,8 @@ class M3UPriorityConfig:
     def get_priority_mode(self, account_id: int) -> str:
         """Get the priority mode for a specific M3U account.
         
+        Falls back to global_priority_mode if no account-specific mode is set.
+        
         Args:
             account_id: M3U account ID
             
@@ -99,7 +101,12 @@ class M3UPriorityConfig:
             Priority mode string ("disabled", "same_resolution", or "all_streams")
         """
         with self._lock:
-            return self._config.get('accounts', {}).get(str(account_id), 'disabled')
+            # Get account-specific priority mode, or fall back to global setting
+            account_mode = self._config.get('accounts', {}).get(str(account_id))
+            if account_mode is not None:
+                return account_mode
+            # Use global priority mode as default
+            return self._config.get('global_priority_mode', 'disabled')
     
     def set_priority_mode(self, account_id: int, priority_mode: str) -> bool:
         """Set the priority mode for a specific M3U account.
