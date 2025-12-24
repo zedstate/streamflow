@@ -619,11 +619,17 @@ def get_channel_logo_cached(logo_id):
         if not logo:
             return jsonify({"error": "Logo not found"}), 404
         
-        # Get the logo URL from Dispatcharr
-        # Prefer cache_url if available, otherwise use url
-        dispatcharr_base_url = os.getenv("DISPATCHARR_BASE_URL", "")
+        # Get the Dispatcharr base URL from config instead of environment variable
+        # This ensures we use the configured value from the UI
+        from dispatcharr_config import get_dispatcharr_config
+        dispatcharr_config = get_dispatcharr_config()
+        dispatcharr_base_url = dispatcharr_config.get_base_url()
+        
         if not dispatcharr_base_url:
-            return jsonify({"error": "DISPATCHARR_BASE_URL not configured"}), 500
+            # Fallback to environment variable for backward compatibility
+            dispatcharr_base_url = os.getenv("DISPATCHARR_BASE_URL", "")
+            if not dispatcharr_base_url:
+                return jsonify({"error": "DISPATCHARR_BASE_URL not configured"}), 500
             
         logo_url = logo.get('cache_url') or logo.get('url')
         

@@ -12,9 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
 import ProfileManagement from '@/components/ProfileManagement.jsx'
 import {
   DndContext,
@@ -414,11 +415,13 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern }) {
+function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern, expandedRowId, onToggleExpanded }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const { toast } = useToast()
+  
+  // Use parent-controlled expanded state
+  const expanded = expandedRowId === channel.id
   
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
   const patternCount = channelPatterns?.regex?.length || 0
@@ -526,7 +529,7 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
           <Button 
             variant="outline" 
             size="sm"
-            onClick={() => setExpanded(!expanded)}
+            onClick={() => onToggleExpanded(channel.id)}
           >
             <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
           </Button>
@@ -963,6 +966,13 @@ export default function ChannelConfiguration() {
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
   const [bulkPattern, setBulkPattern] = useState('')
   
+  // Profile filter state
+  const [profileFilterActive, setProfileFilterActive] = useState(false)
+  const [profileFilterInfo, setProfileFilterInfo] = useState(null)
+  
+  // Expanded row state - to ensure only one action menu is open at a time
+  const [expandedRowId, setExpandedRowId] = useState(null)
+  
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -1017,22 +1027,30 @@ export default function ChannelConfiguration() {
           
           channelsToLoad = allChannels.filter(ch => enabledChannelIds.has(ch.id))
           
-          // If no channels are found, it might be that profile channel data is not cached
-          // Show a message prompting user to refresh profiles
+          // Store profile filter information instead of showing toast
           if (channelsToLoad.length === 0 && allChannels.length > 0) {
-            toast({
-              title: "No Channels in Profile",
-              description: `No enabled channels found in profile "${profileConfig.selected_profile_name}". Try refreshing profiles in the Profile Management section.`,
-              variant: "default"
+            setProfileFilterActive(true)
+            setProfileFilterInfo({
+              profileName: profileConfig.selected_profile_name,
+              channelCount: channelsToLoad.length,
+              totalChannels: allChannels.length,
+              isEmpty: true,
+              message: `No enabled channels found in profile "${profileConfig.selected_profile_name}". Try refreshing profiles in the Profile Management section.`
             })
           } else {
-            toast({
-              title: "Profile Filter Active",
-              description: `Showing ${channelsToLoad.length} channels from profile "${profileConfig.selected_profile_name}" (including snapshot)`,
+            setProfileFilterActive(true)
+            setProfileFilterInfo({
+              profileName: profileConfig.selected_profile_name,
+              channelCount: channelsToLoad.length,
+              totalChannels: allChannels.length,
+              isEmpty: false,
+              message: `Showing ${channelsToLoad.length} of ${allChannels.length} channels from profile "${profileConfig.selected_profile_name}" (including snapshot)`
             })
           }
         } catch (err) {
           console.error('Failed to load profile channels:', err)
+          setProfileFilterActive(false)
+          setProfileFilterInfo(null)
           toast({
             title: "Warning",
             description: "Failed to filter by profile, showing all channels",
@@ -1044,6 +1062,8 @@ export default function ChannelConfiguration() {
         }
       } else {
         // Not using a specific profile - load all channels
+        setProfileFilterActive(false)
+        setProfileFilterInfo(null)
         const channelsResponse = await channelsAPI.getChannels()
         channelsToLoad = channelsResponse.data || []
       }
@@ -1485,6 +1505,11 @@ export default function ChannelConfiguration() {
     }
   }
 
+  // Handler for toggling expanded row - ensures only one row is expanded at a time
+  const handleToggleExpanded = (channelId) => {
+    setExpandedRowId(prevId => prevId === channelId ? null : channelId)
+  }
+
   // Helper function to check if channel should be visible based on group settings
   const isChannelVisibleByGroup = (channel) => {
     // If channel has no group, it's visible
@@ -1753,13 +1778,14 @@ export default function ChannelConfiguration() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Channel Configuration</h1>
-        <p className="text-muted-foreground">
-          View and manage channel regex patterns, settings, and ordering
-        </p>
-      </div>
+    <TooltipProvider>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Channel Configuration</h1>
+          <p className="text-muted-foreground">
+            View and manage channel regex patterns, settings, and ordering
+          </p>
+        </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-5">
@@ -1797,6 +1823,27 @@ export default function ChannelConfiguration() {
               <Badge variant="secondary">
                 {filteredChannels.length} of {channels.length} channels
               </Badge>
+            )}
+            
+            {/* Profile Filter Info */}
+            {profileFilterActive && profileFilterInfo && !searchQuery && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="gap-1 cursor-help">
+                    <Info className="h-3 w-3" />
+                    {profileFilterInfo.channelCount} channels
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-semibold mb-1">Profile Filter Active</p>
+                  <p className="text-sm">{profileFilterInfo.message}</p>
+                  {profileFilterInfo.isEmpty && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Go to the Profiles tab to refresh profile data.
+                    </p>
+                  )}
+                </TooltipContent>
+              </Tooltip>
             )}
             
             {/* Export/Import Buttons */}
@@ -1995,6 +2042,8 @@ export default function ChannelConfiguration() {
                             onEditRegex={handleEditRegex}
                             onUpdateSettings={handleUpdateSettings}
                             onDeletePattern={handleDeletePattern}
+                            expandedRowId={expandedRowId}
+                            onToggleExpanded={handleToggleExpanded}
                           />
                         )
                       })}
@@ -2581,5 +2630,6 @@ export default function ChannelConfiguration() {
         </DialogContent>
       </Dialog>
     </div>
+    </TooltipProvider>
   )
 }
