@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
@@ -37,6 +37,12 @@ import { CSS } from '@dnd-kit/utilities'
 // Constants for localStorage keys
 const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
+
+// Constants for grid layout
+const REGEX_TABLE_GRID_COLS = '50px 80px 80px 1fr 200px 150px 140px'
+
+// Constants for stream checker priorities
+const BULK_HEALTH_CHECK_PRIORITY = 10
 
 function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading, channelSettings, onUpdateSettings }) {
   const [stats, setStats] = useState(null)
@@ -415,13 +421,14 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern, expandedRowId, onToggleExpanded }) {
+function RegexTableRow({ channel, group, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
   const { toast } = useToast()
   
   // Use parent-controlled expanded state
   const expanded = expandedRowId === channel.id
+  const isChecking = checkingChannel === channel.id
   
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
   const patternCount = channelPatterns?.regex?.length || 0
@@ -486,7 +493,7 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
   
   return (
     <div key={channel.id}>
-      <div className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_100px] gap-4 p-4 hover:bg-muted/50 transition-colors">
+      <div className={`grid gap-4 p-4 hover:bg-muted/50 transition-colors`} style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS }}>
         <div className="flex items-center justify-center">
           <Checkbox
             checked={selectedChannels.has(channel.id)}
@@ -526,6 +533,26 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
           )}
         </div>
         <div className="flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => onCheckChannel(channel.id)}
+                disabled={isChecking}
+                className="text-blue-600 dark:text-green-500 border-blue-600 dark:border-green-500 hover:bg-blue-50 dark:hover:bg-green-950"
+              >
+                {isChecking ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Activity className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Health Check Channel</p>
+            </TooltipContent>
+          </Tooltip>
           <Button 
             variant="outline" 
             size="sm"
@@ -973,6 +1000,9 @@ export default function ChannelConfiguration() {
   // Expanded row state - to ensure only one action menu is open at a time
   const [expandedRowId, setExpandedRowId] = useState(null)
   
+  // Bulk health check state
+  const [bulkCheckingChannels, setBulkCheckingChannels] = useState(false)
+  
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -1254,6 +1284,47 @@ export default function ChannelConfiguration() {
       setCheckingChannel(null)
     }
   }
+
+  const handleBulkHealthCheck = async () => {
+    if (selectedChannels.size === 0) {
+      toast({
+        title: "No Channels Selected",
+        description: "Please select at least one channel",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      setBulkCheckingChannels(true)
+      
+      // Show starting notification
+      toast({
+        title: "Bulk Health Check Started",
+        description: `Queuing ${selectedChannels.size} channel${selectedChannels.size !== 1 ? 's' : ''} for checking...`,
+      })
+      
+      const response = await streamCheckerAPI.addToQueue({
+        channel_ids: Array.from(selectedChannels),
+        priority: BULK_HEALTH_CHECK_PRIORITY
+      })
+      
+      toast({
+        title: "Channels Queued",
+        description: response.data.message || `${selectedChannels.size} channel${selectedChannels.size !== 1 ? 's' : ''} queued for health check`,
+      })
+    } catch (err) {
+      console.error('Error queuing channels for health check:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to queue channels for health check",
+        variant: "destructive"
+      })
+    } finally {
+      setBulkCheckingChannels(false)
+    }
+  }
+
 
   const handleEditRegex = (channelId, patternIndex) => {
     setEditingChannelId(channelId)
@@ -1940,6 +2011,20 @@ export default function ChannelConfiguration() {
                       <Plus className="h-4 w-4 mr-2" />
                       Add Regex to Selected
                     </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleBulkHealthCheck}
+                      disabled={selectedChannels.size === 0 || bulkCheckingChannels}
+                      className="text-blue-600 dark:text-green-500 border-blue-600 dark:border-green-500 hover:bg-blue-50 dark:hover:bg-green-950"
+                      variant="outline"
+                    >
+                      {bulkCheckingChannels ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Activity className="h-4 w-4 mr-2" />
+                      )}
+                      Health Check Selected
+                    </Button>
                   </div>
                 </div>
               </CardContent>
@@ -1998,7 +2083,7 @@ export default function ChannelConfiguration() {
                 <Card>
                   <CardContent className="p-0">
                     <div className="border-b bg-muted/50">
-                      <div className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_100px] gap-4 p-4 font-medium text-sm">
+                      <div className={`gap-4 p-4 font-medium text-sm`} style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS, display: 'grid' }}>
                         <div className="flex items-center justify-center">
                           <Checkbox
                             checked={paginatedChannels.every(ch => selectedChannels.has(ch.id))}
@@ -2044,6 +2129,8 @@ export default function ChannelConfiguration() {
                             onDeletePattern={handleDeletePattern}
                             expandedRowId={expandedRowId}
                             onToggleExpanded={handleToggleExpanded}
+                            onCheckChannel={handleCheckChannel}
+                            checkingChannel={checkingChannel}
                           />
                         )
                       })}

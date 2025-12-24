@@ -101,6 +101,12 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - **Pattern Testing Interface**: Live testing of patterns against available streams
 - **Pattern Import/Export**: Share regex configurations across installations
 - **New Stream Detection**: Automatically detects and assigns new streams on playlist refresh
+- **Health Check Buttons**: Quick access to stream quality checks
+  - Individual channel health check button with Activity icon next to expand/collapse
+  - Bulk health check for all selected channels
+  - Color-coded buttons: blue in light mode, green in dark mode
+  - Loading states with spinner animations
+  - Tooltip guidance for better UX
 
 ## Quality Analysis
 
