@@ -38,6 +38,12 @@ import { CSS } from '@dnd-kit/utilities'
 const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 
+// Constants for grid layout
+const REGEX_TABLE_GRID_COLS = '50px 80px 80px 1fr 200px 150px 140px'
+
+// Constants for stream checker priorities
+const BULK_HEALTH_CHECK_PRIORITY = 10
+
 function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading, channelSettings, onUpdateSettings }) {
   const [stats, setStats] = useState(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -487,7 +493,7 @@ function RegexTableRow({ channel, group, patterns, channelSettings, selectedChan
   
   return (
     <div key={channel.id}>
-      <div className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_140px] gap-4 p-4 hover:bg-muted/50 transition-colors">
+      <div className={`grid gap-4 p-4 hover:bg-muted/50 transition-colors`} style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS }}>
         <div className="flex items-center justify-center">
           <Checkbox
             checked={selectedChannels.has(channel.id)}
@@ -1300,7 +1306,7 @@ export default function ChannelConfiguration() {
       
       const response = await streamCheckerAPI.addToQueue({
         channel_ids: Array.from(selectedChannels),
-        priority: 10
+        priority: BULK_HEALTH_CHECK_PRIORITY
       })
       
       toast({
@@ -2077,7 +2083,7 @@ export default function ChannelConfiguration() {
                 <Card>
                   <CardContent className="p-0">
                     <div className="border-b bg-muted/50">
-                      <div className="grid grid-cols-[50px_80px_80px_1fr_200px_150px_140px] gap-4 p-4 font-medium text-sm">
+                      <div className={`gap-4 p-4 font-medium text-sm`} style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS, display: 'grid' }}>
                         <div className="flex items-center justify-center">
                           <Checkbox
                             checked={paginatedChannels.every(ch => selectedChannels.has(ch.id))}
