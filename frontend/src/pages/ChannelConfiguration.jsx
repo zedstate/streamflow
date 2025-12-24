@@ -1306,7 +1306,8 @@ export default function ChannelConfiguration() {
       
       const response = await streamCheckerAPI.addToQueue({
         channel_ids: Array.from(selectedChannels),
-        priority: BULK_HEALTH_CHECK_PRIORITY
+        priority: BULK_HEALTH_CHECK_PRIORITY,
+        force_check: true  // Enable force check to bypass 2-hour immunity
       })
       
       toast({
@@ -2086,10 +2087,10 @@ export default function ChannelConfiguration() {
                       <div className={`gap-4 p-4 font-medium text-sm`} style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS, display: 'grid' }}>
                         <div className="flex items-center justify-center">
                           <Checkbox
-                            checked={paginatedChannels.every(ch => selectedChannels.has(ch.id))}
+                            checked={filteredChannels.length > 0 && filteredChannels.every(ch => selectedChannels.has(ch.id))}
                             onCheckedChange={(checked) => {
                               const newSet = new Set(selectedChannels)
-                              paginatedChannels.forEach(ch => {
+                              filteredChannels.forEach(ch => {
                                 if (checked) {
                                   newSet.add(ch.id)
                                 } else {

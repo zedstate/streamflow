@@ -718,11 +718,13 @@ def add_regex_pattern():
             return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
         
         matcher = get_regex_matcher()
+        playlists = data.get('playlists')  # Optional field for playlist filtering
         matcher.add_channel_pattern(
             data['channel_id'],
             data['name'],
             data['regex'],
-            data.get('enabled', True)
+            data.get('enabled', True),
+            playlists=playlists
         )
         
         return jsonify({"message": "Pattern added/updated successfully"})
@@ -765,6 +767,7 @@ def add_bulk_regex_patterns():
         
         channel_ids = data['channel_ids']
         regex_patterns = data['regex_patterns']
+        playlists = data.get('playlists')  # Optional playlist filtering
         
         if not isinstance(channel_ids, list) or len(channel_ids) == 0:
             return jsonify({"error": "channel_ids must be a non-empty list"}), 400
@@ -802,6 +805,7 @@ def add_bulk_regex_patterns():
                 patterns = matcher.get_patterns()
                 existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
                 existing_regex = existing_patterns.get('regex', [])
+                existing_playlists = existing_patterns.get('playlists')
                 
                 # Merge with new patterns (avoid duplicates)
                 merged_regex = list(existing_regex)
@@ -809,12 +813,16 @@ def add_bulk_regex_patterns():
                     if pattern not in merged_regex:
                         merged_regex.append(pattern)
                 
+                # Use provided playlists or keep existing
+                final_playlists = playlists if playlists is not None else existing_playlists
+                
                 # Add/update pattern
                 matcher.add_channel_pattern(
                     str(channel_id),
                     channel_name,
                     merged_regex,
-                    existing_patterns.get('enabled', True)
+                    existing_patterns.get('enabled', True),
+                    playlists=final_playlists
                 )
                 success_count += 1
             except Exception as e:
@@ -2569,12 +2577,13 @@ def add_to_stream_checker_queue():
             return jsonify({"error": "No data provided"}), 400
         
         service = get_stream_checker_service()
+        force_check = data.get('force_check', False)
         
         # Handle single channel or multiple channels
         if 'channel_id' in data:
             channel_id = data['channel_id']
             priority = data.get('priority', 10)
-            success = service.queue_channel(channel_id, priority)
+            success = service.queue_channel(channel_id, priority, force_check=force_check)
             if success:
                 return jsonify({"message": f"Channel {channel_id} queued successfully"})
             else:
@@ -2583,7 +2592,7 @@ def add_to_stream_checker_queue():
         elif 'channel_ids' in data:
             channel_ids = data['channel_ids']
             priority = data.get('priority', 10)
-            added = service.queue_channels(channel_ids, priority)
+            added = service.queue_channels(channel_ids, priority, force_check=force_check)
             return jsonify({"message": f"Queued {added} channels successfully", "added": added})
         
         else:

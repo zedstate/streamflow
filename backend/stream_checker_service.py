@@ -2708,12 +2708,37 @@ class StreamCheckerService:
             }
         }
     
-    def queue_channel(self, channel_id: int, priority: int = 10) -> bool:
-        """Manually queue a channel for checking."""
+    def queue_channel(self, channel_id: int, priority: int = 10, force_check: bool = False) -> bool:
+        """Manually queue a channel for checking.
+        
+        Args:
+            channel_id: ID of the channel to queue
+            priority: Priority for queue ordering (higher = earlier)
+            force_check: If True, marks channel for force checking (bypasses 2-hour immunity)
+            
+        Returns:
+            True if channel was successfully queued, False otherwise
+        """
+        if force_check:
+            self.update_tracker.mark_channel_for_force_check(channel_id)
+            logger.info(f"Marked channel {channel_id} for force check (bypasses 2-hour immunity)")
         return self.check_queue.add_channel(channel_id, priority)
     
-    def queue_channels(self, channel_ids: List[int], priority: int = 10) -> int:
-        """Manually queue multiple channels for checking."""
+    def queue_channels(self, channel_ids: List[int], priority: int = 10, force_check: bool = False) -> int:
+        """Manually queue multiple channels for checking.
+        
+        Args:
+            channel_ids: List of channel IDs to queue
+            priority: Priority for queue ordering (higher = earlier)
+            force_check: If True, marks all channels for force checking (bypasses 2-hour immunity)
+            
+        Returns:
+            Number of channels successfully queued
+        """
+        if force_check:
+            for channel_id in channel_ids:
+                self.update_tracker.mark_channel_for_force_check(channel_id)
+            logger.info(f"Marked {len(channel_ids)} channels for force check (bypasses 2-hour immunity)")
         return self.check_queue.add_channels(channel_ids, priority)
     
     def check_single_channel(self, channel_id: int, program_name: Optional[str] = None) -> Dict:
