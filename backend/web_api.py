@@ -1224,14 +1224,10 @@ def diagnose_profiles():
         base_url = config.get_base_url()
         
         # Check if profiles exist in storage
-        try:
-            storage_profiles = udi.storage.load_channel_profiles()
-            storage_count = len(storage_profiles) if storage_profiles else 0
-        except Exception as e:
-            storage_count = f"Error: {e}"
+        storage_count = udi.get_storage_count('channel_profiles')
         
         # Get last refresh time
-        last_refresh = udi.cache.get_last_refresh('channel_profiles')
+        last_refresh = udi.get_cache_last_refresh('channel_profiles')
         
         diagnostic_info = {
             "udi_initialized": is_initialized,
@@ -1391,8 +1387,7 @@ def get_profile_channels(profile_id):
                 'channels': channels_data
             }
             # Store in UDI for future use
-            udi.storage.save_profile_channels_by_id(profile_id, profile_channels_to_cache)
-            udi._profile_channels_cache[profile_id] = profile_channels_to_cache
+            udi.update_profile_channels(profile_id, profile_channels_to_cache)
             
             return jsonify(profile_channels_to_cache)
     
