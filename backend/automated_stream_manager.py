@@ -326,8 +326,11 @@ class RegexChannelMatcher:
                 return False, f"Pattern must be a non-empty string"
             
             try:
-                # Try to compile the pattern to check if it's valid
-                re.compile(pattern)
+                # Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
+                # This prevents the regex engine from interpreting {} as quantifiers
+                # Use a simple placeholder that won't interfere with regex syntax
+                validation_pattern = pattern.replace('{CHANNEL_NAME}', 'PLACEHOLDER')
+                re.compile(validation_pattern)
             except re.error as e:
                 return False, f"Invalid regex pattern '{pattern}': {str(e)}"
         
