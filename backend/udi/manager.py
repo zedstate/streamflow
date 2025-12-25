@@ -841,7 +841,11 @@ class UDIManager:
             
             # Save to storage
             if hasattr(self.storage, 'save_profile_channels_by_id'):
-                return self.storage.save_profile_channels_by_id(profile_id, profile_channels_data)
+                try:
+                    return self.storage.save_profile_channels_by_id(profile_id, profile_channels_data)
+                except Exception as e:
+                    logger.error(f"Error saving profile channels to storage: {e}")
+                    return False
             return True
     
     # === Status Methods ===
@@ -887,22 +891,23 @@ class UDIManager:
         Returns:
             Count of entities in storage, or 0 on error
         """
+        # Mapping of entity types to storage loader methods
+        entity_loaders = {
+            'channels': self.storage.load_channels,
+            'streams': self.storage.load_streams,
+            'channel_groups': self.storage.load_channel_groups,
+            'logos': self.storage.load_logos,
+            'm3u_accounts': self.storage.load_m3u_accounts,
+            'channel_profiles': self.storage.load_channel_profiles
+        }
+        
+        loader = entity_loaders.get(entity_type)
+        if not loader:
+            logger.warning(f"Unknown entity type: {entity_type}")
+            return 0
+        
         try:
-            if entity_type == 'channels':
-                data = self.storage.load_channels()
-            elif entity_type == 'streams':
-                data = self.storage.load_streams()
-            elif entity_type == 'channel_groups':
-                data = self.storage.load_channel_groups()
-            elif entity_type == 'logos':
-                data = self.storage.load_logos()
-            elif entity_type == 'm3u_accounts':
-                data = self.storage.load_m3u_accounts()
-            elif entity_type == 'channel_profiles':
-                data = self.storage.load_channel_profiles()
-            else:
-                logger.warning(f"Unknown entity type: {entity_type}")
-                return 0
+            data = loader()
             return len(data) if data else 0
         except Exception as e:
             logger.error(f"Error getting storage count for {entity_type}: {e}")
