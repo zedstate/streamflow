@@ -150,3 +150,36 @@ This fix ensures that the `{CHANNEL_NAME}` variable works correctly in both:
 2. **Actual stream matching** (was already working)
 
 Users can now confidently use `{CHANNEL_NAME}` in their patterns and verify the results in real-time before applying them to channels.
+
+---
+
+## Additional Fix: Regex Validation Error (2025-12-25)
+
+### New Issue
+Users reported that patterns containing `{CHANNEL_NAME}` were being rejected during validation with errors like "bad escape" or "invalid quantifier".
+
+### Root Cause
+In regex syntax, curly braces `{}` have a special meaning (quantifiers like `{2,5}`). When validation code tried to compile patterns containing `{CHANNEL_NAME}` before substitution, the regex engine interpreted `{CHANNEL_NAME}` as an invalid quantifier, not as a placeholder variable.
+
+This affected:
+- `validate_regex_patterns()` in `automated_stream_manager.py`
+- Multiple validation points in `scheduling_service.py`
+
+### Solution
+Updated all regex validation code to temporarily substitute `{CHANNEL_NAME}` with a placeholder (e.g., `PLACEHOLDER`) before compiling the pattern for validation. This allows the regex engine to validate the pattern structure without treating the curly braces as quantifiers.
+
+**Example fix in `automated_stream_manager.py`:**
+```python
+# Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
+# This prevents the regex engine from interpreting {} as quantifiers
+validation_pattern = pattern.replace('{CHANNEL_NAME}', 'PLACEHOLDER')
+re.compile(validation_pattern)
+```
+
+### Testing
+Added comprehensive tests to verify patterns with `{CHANNEL_NAME}` can be validated, including:
+- Simple patterns: `.*{CHANNEL_NAME}.*`
+- Complex patterns: `^(?:PL|\s|PL-VIP|\s|PL(?: VIP)?:\s)((?:TVP )?({CHANNEL_NAME})(?: POLSKA)?(?: TV)?(?:.PL)?)(?:.TV)?(?:\s+(HD|4K|FHD|RAW|ᴴᴰ ◉|ᵁᴴᴰ))?$`
+- Multiple occurrences: `{CHANNEL_NAME}.*{CHANNEL_NAME}`
+
+All tests pass successfully.

@@ -727,8 +727,11 @@ class SchedulingService:
                 raise ValueError("No valid channels found for this rule")
             
             # Validate regex pattern
+            # Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
+            # This prevents the regex engine from interpreting {} as quantifiers
             try:
-                re.compile(rule_data['regex_pattern'])
+                validation_pattern = rule_data['regex_pattern'].replace('{CHANNEL_NAME}', 'PLACEHOLDER')
+                re.compile(validation_pattern)
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
             
@@ -923,7 +926,10 @@ class SchedulingService:
             # Update regex pattern if provided
             if 'regex_pattern' in rule_data:
                 try:
-                    re.compile(rule_data['regex_pattern'])
+                    # Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
+                    # This prevents the regex engine from interpreting {} as quantifiers
+                    validation_pattern = rule_data['regex_pattern'].replace('{CHANNEL_NAME}', 'PLACEHOLDER')
+                    re.compile(validation_pattern)
                     rule['regex_pattern'] = rule_data['regex_pattern']
                 except re.error as e:
                     raise ValueError(f"Invalid regex pattern: {e}")
@@ -975,10 +981,17 @@ class SchedulingService:
             List of matching programs
         """
         # Validate regex pattern
+        # Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
+        # This prevents the regex engine from interpreting {} as quantifiers
         try:
-            pattern = re.compile(regex_pattern, re.IGNORECASE)
+            validation_pattern = regex_pattern.replace('{CHANNEL_NAME}', 'PLACEHOLDER')
+            re.compile(validation_pattern, re.IGNORECASE)
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}")
+        
+        # Compile the actual pattern for matching
+        # Note: {CHANNEL_NAME} is not substituted here as this is for EPG program matching
+        pattern = re.compile(regex_pattern, re.IGNORECASE)
         
         # Get programs for channel
         programs = self.get_programs_by_channel(channel_id)
@@ -1072,10 +1085,17 @@ class SchedulingService:
                     })
             
             try:
-                pattern = re.compile(regex_pattern, re.IGNORECASE)
+                # Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
+                # This prevents the regex engine from interpreting {} as quantifiers
+                validation_pattern = regex_pattern.replace('{CHANNEL_NAME}', 'PLACEHOLDER')
+                re.compile(validation_pattern, re.IGNORECASE)
             except re.error as e:
                 logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
                 continue
+            
+            # Compile the actual pattern for matching
+            # Note: {CHANNEL_NAME} is not substituted here as this is for EPG program matching
+            pattern = re.compile(regex_pattern, re.IGNORECASE)
             
             # Process each channel in the rule
             for channel_info in channels_info:
