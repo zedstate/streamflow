@@ -44,6 +44,9 @@ const REGEX_TABLE_GRID_COLS = '50px 80px 80px 1fr 200px 150px 140px'
 // Constants for stream checker priorities
 const BULK_HEALTH_CHECK_PRIORITY = 10
 
+// M3U account filtering - exclude 'custom' account as it's not a real source
+const CUSTOM_ACCOUNT_NAME = 'custom'
+
 function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading, channelSettings, onUpdateSettings }) {
   const [stats, setStats] = useState(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -633,13 +636,13 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
             {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
               <div className="space-y-2">
                 {channelPatterns.regex.map((pattern, index) => {
-                  // Get playlist names if playlists are specified
-                  const playlistNames = channelPatterns.playlists && channelPatterns.playlists.length > 0
-                    ? channelPatterns.playlists.map(id => {
-                        const g = groups?.find(gr => gr.id === id)
-                        return g ? g.name : `Playlist ${id}`
+                  // Get M3U account names if m3u_accounts are specified
+                  const accountNames = channelPatterns.m3u_accounts && channelPatterns.m3u_accounts.length > 0
+                    ? channelPatterns.m3u_accounts.map(id => {
+                        const acc = m3uAccounts?.find(account => account.id === id)
+                        return acc ? acc.name : `Account ${id}`
                       }).join(', ')
-                    : 'All Playlists'
+                    : 'All M3U Accounts'
                   
                   return (
                     <div key={index} className="space-y-1">
@@ -647,7 +650,7 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
                         <div className="flex-1 space-y-1">
                           <code className="text-sm break-all">{pattern}</code>
                           <div className="text-xs text-muted-foreground">
-                            Playlists: {playlistNames}
+                            M3U Sources: {accountNames}
                           </div>
                         </div>
                         <div className="flex gap-1">
@@ -1010,9 +1013,10 @@ export default function ChannelConfiguration() {
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
   const [bulkPattern, setBulkPattern] = useState('')
   
-  // Playlist filtering state for regex patterns
-  const [selectedPlaylists, setSelectedPlaylists] = useState([])  // For individual regex dialog
-  const [bulkSelectedPlaylists, setBulkSelectedPlaylists] = useState([])  // For bulk regex dialog
+  // M3U account filtering state for regex patterns
+  const [m3uAccounts, setM3uAccounts] = useState([])  // All M3U accounts
+  const [selectedM3uAccounts, setSelectedM3uAccounts] = useState([])  // For individual regex dialog
+  const [bulkSelectedM3uAccounts, setBulkSelectedM3uAccounts] = useState([])  // For bulk regex dialog
   
   // Profile filter state
   const [profileFilterActive, setProfileFilterActive] = useState(false)
@@ -1119,12 +1123,13 @@ export default function ChannelConfiguration() {
         channelsToLoad = channelsResponse.data || []
       }
       
-      const [patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
+      const [patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse, m3uAccountsResponse] = await Promise.all([
         regexAPI.getPatterns(),
         channelSettingsAPI.getAllSettings(),
         channelsAPI.getGroups(),
         groupSettingsAPI.getAllSettings(),
-        channelOrderAPI.getOrder().catch(() => ({ data: { order: [] } })) // Handle case where no order is saved
+        channelOrderAPI.getOrder().catch(() => ({ data: { order: [] } })), // Handle case where no order is saved
+        m3uAPI.getAccounts().catch(() => ({ data: { accounts: [] } })) // Load M3U accounts
       ])
       
       setChannels(channelsToLoad)
@@ -1132,6 +1137,10 @@ export default function ChannelConfiguration() {
       setChannelSettings(settingsResponse.data || {})
       setGroups(groupsResponse.data || [])
       setGroupSettings(groupSettingsResponse.data || {})
+      
+      // Set M3U accounts (filter out custom account as it's not a real source)
+      const accounts = m3uAccountsResponse.data?.accounts || m3uAccountsResponse.data || []
+      setM3uAccounts(accounts.filter(acc => acc.name?.toLowerCase() !== CUSTOM_ACCOUNT_NAME))
       
       // Initialize ordered channels
       const channelData = channelsToLoad
@@ -1358,15 +1367,15 @@ export default function ChannelConfiguration() {
       if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
         setNewPattern(channelPatterns.regex[patternIndex])
       }
-      // Load existing playlist selection (if any)
-      if (channelPatterns && channelPatterns.playlists) {
-        setSelectedPlaylists(channelPatterns.playlists)
+      // Load existing M3U account selection (if any)
+      if (channelPatterns && channelPatterns.m3u_accounts) {
+        setSelectedM3uAccounts(channelPatterns.m3u_accounts)
       } else {
-        setSelectedPlaylists([])  // Empty means all playlists
+        setSelectedM3uAccounts([])  // Empty means all M3U accounts
       }
     } else {
       setNewPattern('')
-      setSelectedPlaylists([])  // Default to all playlists for new patterns
+      setSelectedM3uAccounts([])  // Default to all M3U accounts for new patterns
     }
     
     setTestResults(null)
@@ -1379,7 +1388,7 @@ export default function ChannelConfiguration() {
     setEditingPatternIndex(null)
     setNewPattern('')
     setTestResults(null)
-    setSelectedPlaylists([])  // Reset playlist selection
+    setSelectedM3uAccounts([])  // Reset M3U account selection
   }
 
   const handleTestPattern = useCallback(async () => {
@@ -1484,7 +1493,7 @@ export default function ChannelConfiguration() {
         name: channel?.name || '',
         regex: updatedRegex,
         enabled: channelPatterns?.enabled !== false,
-        playlists: selectedPlaylists.length > 0 ? selectedPlaylists : null  // null = all playlists
+        m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null  // null = all M3U accounts
       })
 
       toast({
@@ -1523,7 +1532,7 @@ export default function ChannelConfiguration() {
           name: channel?.name || '',
           regex: updatedRegex,
           enabled: channelPatterns.enabled !== false,
-          playlists: channelPatterns.playlists  // Preserve playlist filtering
+          m3u_accounts: channelPatterns.m3u_accounts  // Preserve M3U account filtering
         })
       }
 
@@ -1587,7 +1596,7 @@ export default function ChannelConfiguration() {
       const response = await regexAPI.bulkAddPatterns({
         channel_ids: Array.from(selectedChannels),
         regex_patterns: [bulkPattern],
-        playlists: bulkSelectedPlaylists.length > 0 ? bulkSelectedPlaylists : null  // null = all playlists
+        m3u_accounts: bulkSelectedM3uAccounts.length > 0 ? bulkSelectedM3uAccounts : null  // null = all M3U accounts
       })
       
       toast({
@@ -1600,7 +1609,7 @@ export default function ChannelConfiguration() {
       setSelectedChannels(new Set())
       setBulkDialogOpen(false)
       setBulkPattern('')
-      setBulkSelectedPlaylists([])  // Reset bulk playlist selection
+      setBulkSelectedM3uAccounts([])  // Reset bulk M3U account selection
     } catch (err) {
       toast({
         title: "Error",
@@ -2645,52 +2654,52 @@ export default function ChannelConfiguration() {
               />
             </div>
 
-            {/* Playlist Selection */}
+            {/* M3U Account Selection */}
             <div className="space-y-2">
-              <Label>Apply to Playlists (Groups)</Label>
+              <Label>Apply to M3U Accounts (Sources)</Label>
               <div className="text-xs text-muted-foreground mb-2">
-                Select which playlists this regex should match streams from. Leave empty for all playlists.
+                Select which M3U account sources this regex should match streams from. Leave empty for all sources.
               </div>
               <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
-                {groups.length === 0 ? (
-                  <div className="text-sm text-muted-foreground italic">No playlists available</div>
+                {m3uAccounts.length === 0 ? (
+                  <div className="text-sm text-muted-foreground italic">No M3U accounts available</div>
                 ) : (
                   <>
                     <div className="flex items-center space-x-2 pb-2 border-b">
                       <Checkbox
-                        id="select-all-playlists"
-                        checked={selectedPlaylists.length === 0}
+                        id="select-all-m3u-accounts"
+                        checked={selectedM3uAccounts.length === 0}
                         onCheckedChange={(checked) => {
                           if (checked) {
-                            setSelectedPlaylists([])  // Empty = all playlists
+                            setSelectedM3uAccounts([])  // Empty = all M3U accounts
                           } else {
-                            // When unchecking "All", select first playlist if available
-                            if (groups.length > 0) {
-                              setSelectedPlaylists([groups[0].id])
+                            // When unchecking "All", select first M3U account if available
+                            if (m3uAccounts.length > 0) {
+                              setSelectedM3uAccounts([m3uAccounts[0].id])
                             }
                           }
                         }}
                       />
-                      <label htmlFor="select-all-playlists" className="text-sm font-medium cursor-pointer">
-                        All Playlists
+                      <label htmlFor="select-all-m3u-accounts" className="text-sm font-medium cursor-pointer">
+                        All M3U Accounts
                       </label>
                     </div>
-                    {groups.map(group => (
-                      <div key={group.id} className="flex items-center space-x-2">
+                    {m3uAccounts.map(account => (
+                      <div key={account.id} className="flex items-center space-x-2">
                         <Checkbox
-                          id={`playlist-${group.id}`}
-                          checked={selectedPlaylists.includes(group.id)}
-                          disabled={selectedPlaylists.length === 0}  // Disabled when "All" is selected
+                          id={`m3u-account-${account.id}`}
+                          checked={selectedM3uAccounts.includes(account.id)}
+                          disabled={selectedM3uAccounts.length === 0}  // Disabled when "All" is selected
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              setSelectedPlaylists([...selectedPlaylists, group.id])
+                              setSelectedM3uAccounts([...selectedM3uAccounts, account.id])
                             } else {
-                              setSelectedPlaylists(selectedPlaylists.filter(id => id !== group.id))
+                              setSelectedM3uAccounts(selectedM3uAccounts.filter(id => id !== account.id))
                             }
                           }}
                         />
-                        <label htmlFor={`playlist-${group.id}`} className={`text-sm cursor-pointer ${selectedPlaylists.length === 0 ? 'text-muted-foreground' : ''}`}>
-                          {group.name}
+                        <label htmlFor={`m3u-account-${account.id}`} className={`text-sm cursor-pointer ${selectedM3uAccounts.length === 0 ? 'text-muted-foreground' : ''}`}>
+                          {account.name}
                         </label>
                       </div>
                     ))}
@@ -2782,52 +2791,52 @@ export default function ChannelConfiguration() {
               </p>
             </div>
             
-            {/* Playlist Selection for Bulk */}
+            {/* M3U Account Selection for Bulk */}
             <div className="space-y-2">
-              <Label>Apply to Playlists (Groups)</Label>
+              <Label>Apply to M3U Accounts (Sources)</Label>
               <div className="text-xs text-muted-foreground mb-2">
-                Select which playlists this regex should match streams from. Leave empty for all playlists.
+                Select which M3U account sources this regex should match streams from. Leave empty for all sources.
               </div>
               <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
-                {groups.length === 0 ? (
-                  <div className="text-sm text-muted-foreground italic">No playlists available</div>
+                {m3uAccounts.length === 0 ? (
+                  <div className="text-sm text-muted-foreground italic">No M3U accounts available</div>
                 ) : (
                   <>
                     <div className="flex items-center space-x-2 pb-2 border-b">
                       <Checkbox
-                        id="bulk-select-all-playlists"
-                        checked={bulkSelectedPlaylists.length === 0}
+                        id="bulk-select-all-m3u-accounts"
+                        checked={bulkSelectedM3uAccounts.length === 0}
                         onCheckedChange={(checked) => {
                           if (checked) {
-                            setBulkSelectedPlaylists([])  // Empty = all playlists
+                            setBulkSelectedM3uAccounts([])  // Empty = all M3U accounts
                           } else {
-                            // When unchecking "All", select first playlist if available
-                            if (groups.length > 0) {
-                              setBulkSelectedPlaylists([groups[0].id])
+                            // When unchecking "All", select first M3U account if available
+                            if (m3uAccounts.length > 0) {
+                              setBulkSelectedM3uAccounts([m3uAccounts[0].id])
                             }
                           }
                         }}
                       />
-                      <label htmlFor="bulk-select-all-playlists" className="text-sm font-medium cursor-pointer">
-                        All Playlists
+                      <label htmlFor="bulk-select-all-m3u-accounts" className="text-sm font-medium cursor-pointer">
+                        All M3U Accounts
                       </label>
                     </div>
-                    {groups.map(group => (
-                      <div key={group.id} className="flex items-center space-x-2">
+                    {m3uAccounts.map(account => (
+                      <div key={account.id} className="flex items-center space-x-2">
                         <Checkbox
-                          id={`bulk-playlist-${group.id}`}
-                          checked={bulkSelectedPlaylists.includes(group.id)}
-                          disabled={bulkSelectedPlaylists.length === 0}  // Disabled when "All" is selected
+                          id={`bulk-m3u-account-${account.id}`}
+                          checked={bulkSelectedM3uAccounts.includes(account.id)}
+                          disabled={bulkSelectedM3uAccounts.length === 0}  // Disabled when "All" is selected
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              setBulkSelectedPlaylists([...bulkSelectedPlaylists, group.id])
+                              setBulkSelectedM3uAccounts([...bulkSelectedM3uAccounts, account.id])
                             } else {
-                              setBulkSelectedPlaylists(bulkSelectedPlaylists.filter(id => id !== group.id))
+                              setBulkSelectedM3uAccounts(bulkSelectedM3uAccounts.filter(id => id !== account.id))
                             }
                           }}
                         />
-                        <label htmlFor={`bulk-playlist-${group.id}`} className={`text-sm cursor-pointer ${bulkSelectedPlaylists.length === 0 ? 'text-muted-foreground' : ''}`}>
-                          {group.name}
+                        <label htmlFor={`bulk-m3u-account-${account.id}`} className={`text-sm cursor-pointer ${bulkSelectedM3uAccounts.length === 0 ? 'text-muted-foreground' : ''}`}>
+                          {account.name}
                         </label>
                       </div>
                     ))}
@@ -2850,7 +2859,7 @@ export default function ChannelConfiguration() {
             <Button variant="outline" onClick={() => {
               setBulkDialogOpen(false)
               setBulkPattern('')
-              setBulkSelectedPlaylists([])  // Reset bulk playlist selection
+              setBulkSelectedM3uAccounts([])  // Reset bulk M3U account selection
             }}>
               Cancel
             </Button>

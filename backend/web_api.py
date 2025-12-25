@@ -718,13 +718,13 @@ def add_regex_pattern():
             return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
         
         matcher = get_regex_matcher()
-        playlists = data.get('playlists')  # Optional field for playlist filtering
+        m3u_accounts = data.get('m3u_accounts')  # Optional field for M3U account filtering
         matcher.add_channel_pattern(
             data['channel_id'],
             data['name'],
             data['regex'],
             data.get('enabled', True),
-            playlists=playlists
+            m3u_accounts=m3u_accounts
         )
         
         return jsonify({"message": "Pattern added/updated successfully"})
@@ -767,7 +767,7 @@ def add_bulk_regex_patterns():
         
         channel_ids = data['channel_ids']
         regex_patterns = data['regex_patterns']
-        playlists = data.get('playlists')  # Optional playlist filtering
+        m3u_accounts = data.get('m3u_accounts')  # Optional M3U account filtering
         
         if not isinstance(channel_ids, list) or len(channel_ids) == 0:
             return jsonify({"error": "channel_ids must be a non-empty list"}), 400
@@ -805,7 +805,7 @@ def add_bulk_regex_patterns():
                 patterns = matcher.get_patterns()
                 existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
                 existing_regex = existing_patterns.get('regex', [])
-                existing_playlists = existing_patterns.get('playlists')
+                existing_m3u_accounts = existing_patterns.get('m3u_accounts')
                 
                 # Merge with new patterns (avoid duplicates)
                 merged_regex = list(existing_regex)
@@ -813,8 +813,8 @@ def add_bulk_regex_patterns():
                     if pattern not in merged_regex:
                         merged_regex.append(pattern)
                 
-                # Use provided playlists or keep existing
-                final_playlists = playlists if playlists is not None else existing_playlists
+                # Use provided m3u_accounts or keep existing
+                final_m3u_accounts = m3u_accounts if m3u_accounts is not None else existing_m3u_accounts
                 
                 # Add/update pattern
                 matcher.add_channel_pattern(
@@ -822,7 +822,7 @@ def add_bulk_regex_patterns():
                     channel_name,
                     merged_regex,
                     existing_patterns.get('enabled', True),
-                    playlists=final_playlists
+                    m3u_accounts=final_m3u_accounts
                 )
                 success_count += 1
             except Exception as e:
