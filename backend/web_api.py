@@ -977,13 +977,22 @@ def test_regex_pattern_live():
             channel_id = pattern_info.get('channel_id', 'unknown')
             channel_name = pattern_info.get('channel_name', 'Unknown Channel')
             regex_patterns = pattern_info.get('regex', [])
+            m3u_accounts = pattern_info.get('m3u_accounts')  # Get M3U account filter (None or empty = all accounts)
             
             if not regex_patterns:
                 continue
             
             matched_streams = []
             
-            for stream in all_streams:
+            # Filter streams by M3U account if specified
+            streams_to_test = all_streams
+            if m3u_accounts:
+                logger.debug(f"Filtering streams by M3U accounts {m3u_accounts}: testing against subset of streams")
+                # Filter to only include streams from the specified M3U accounts
+                streams_to_test = [s for s in all_streams if s.get('m3u_account') in m3u_accounts]
+                logger.debug(f"Filtered to {len(streams_to_test)} of {len(all_streams)} streams")
+            
+            for stream in streams_to_test:
                 if not isinstance(stream, dict):
                     continue
                 
@@ -1024,15 +1033,18 @@ def test_regex_pattern_live():
                     matched_streams.append({
                         "stream_id": stream_id,
                         "stream_name": stream_name,
-                        "matched_pattern": matched_pattern
+                        "matched_pattern": matched_pattern,
+                        "m3u_account": stream.get('m3u_account')  # Include M3U account in results
                     })
             
             results.append({
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "patterns": regex_patterns,
+                "m3u_accounts": m3u_accounts,
                 "matched_streams": matched_streams,
-                "match_count": len(matched_streams)
+                "match_count": len(matched_streams),
+                "total_tested_streams": len(streams_to_test)
             })
         
         return jsonify({

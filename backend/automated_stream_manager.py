@@ -1120,7 +1120,7 @@ class AutomatedStreamManager:
             logger.info("=" * 80)
             
             udi = get_udi_manager()
-            all_channels = udi.get_all_channels()
+            all_channels = udi.get_channels()
             
             if not all_channels:
                 logger.info("No channels found")
