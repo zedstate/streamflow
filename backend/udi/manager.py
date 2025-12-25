@@ -823,6 +823,27 @@ class UDIManager:
             # Save to storage
             return self.storage.update_stream(stream_id, stream_data)
     
+    def update_profile_channels(self, profile_id: int, profile_channels_data: Dict[str, Any]) -> bool:
+        """Update profile channels data in the cache.
+        
+        This is called after fetching profile channels to keep the cache in sync.
+        
+        Args:
+            profile_id: The profile ID
+            profile_channels_data: The profile channels data (dict with 'profile' and 'channels' keys)
+            
+        Returns:
+            True if successful
+        """
+        with self._lock:
+            # Update in-memory cache
+            self._profile_channels_cache[profile_id] = profile_channels_data
+            
+            # Save to storage
+            if hasattr(self.storage, 'save_profile_channels_by_id'):
+                return self.storage.save_profile_channels_by_id(profile_id, profile_channels_data)
+            return True
+    
     # === Status Methods ===
     
     def get_status(self) -> Dict[str, Any]:
@@ -845,6 +866,47 @@ class UDIManager:
             'cache_status': self.cache.get_status(),
             'storage_path': str(self.storage.storage_dir)
         }
+    
+    def get_cache_last_refresh(self, entity_type: str) -> Optional[Any]:
+        """Get the last refresh time for a specific entity type from cache.
+        
+        Args:
+            entity_type: The entity type to query (e.g., 'channel_profiles')
+            
+        Returns:
+            The last refresh datetime or None if never refreshed
+        """
+        return self.cache.get_last_refresh(entity_type)
+    
+    def get_storage_count(self, entity_type: str) -> int:
+        """Get the count of entities in storage for a specific type.
+        
+        Args:
+            entity_type: The entity type to query (e.g., 'channel_profiles')
+            
+        Returns:
+            Count of entities in storage, or 0 on error
+        """
+        try:
+            if entity_type == 'channels':
+                data = self.storage.load_channels()
+            elif entity_type == 'streams':
+                data = self.storage.load_streams()
+            elif entity_type == 'channel_groups':
+                data = self.storage.load_channel_groups()
+            elif entity_type == 'logos':
+                data = self.storage.load_logos()
+            elif entity_type == 'm3u_accounts':
+                data = self.storage.load_m3u_accounts()
+            elif entity_type == 'channel_profiles':
+                data = self.storage.load_channel_profiles()
+            else:
+                logger.warning(f"Unknown entity type: {entity_type}")
+                return 0
+            return len(data) if data else 0
+        except Exception as e:
+            logger.error(f"Error getting storage count for {entity_type}: {e}")
+            return 0
     
     def is_initialized(self) -> bool:
         """Check if UDI Manager is initialized.

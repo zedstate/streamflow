@@ -1159,7 +1159,7 @@ class AutomatedStreamManager:
             }
             
             # Get all streams from UDI for lookup
-            all_streams = udi.get_all_streams()
+            all_streams = udi.get_streams(log_result=False)
             stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
             
             # Validate each channel's streams
