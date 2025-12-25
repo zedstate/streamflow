@@ -98,6 +98,7 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
   - Pattern example: `.*{CHANNEL_NAME}.*` matches any stream containing the channel name
   - One pattern works for multiple channels with different names
   - Variables are substituted at match time, not storage time
+  - **Note**: Patterns with `{CHANNEL_NAME}` are fully supported in validation, live preview, and actual matching
 - **Pattern Testing Interface**: Live testing of patterns against available streams
 - **Pattern Import/Export**: Share regex configurations across installations
 - **New Stream Detection**: Automatically detects and assigns new streams on playlist refresh
