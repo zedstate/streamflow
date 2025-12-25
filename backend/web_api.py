@@ -986,7 +986,7 @@ def test_regex_pattern_live():
             
             # Filter streams by M3U account if specified
             streams_to_test = all_streams
-            if m3u_accounts and len(m3u_accounts) > 0:
+            if m3u_accounts:
                 # Filter to only include streams from the specified M3U accounts
                 streams_to_test = [s for s in all_streams if s.get('m3u_account') in m3u_accounts]
                 logger.debug(f"Filtering streams by M3U accounts {m3u_accounts}: {len(streams_to_test)} of {len(all_streams)} streams")

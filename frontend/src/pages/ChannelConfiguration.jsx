@@ -1405,7 +1405,7 @@ export default function ChannelConfiguration() {
           channel_id: editingChannelId,
           channel_name: channel?.name || '',
           regex: [newPattern],
-          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null  // null = all M3U accounts
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : undefined
         }],
         max_matches: 50
       })
