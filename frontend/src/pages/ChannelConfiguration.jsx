@@ -44,6 +44,9 @@ const REGEX_TABLE_GRID_COLS = '50px 80px 80px 1fr 200px 150px 140px'
 // Constants for stream checker priorities
 const BULK_HEALTH_CHECK_PRIORITY = 10
 
+// M3U account filtering - exclude 'custom' account as it's not a real source
+const CUSTOM_ACCOUNT_NAME = 'custom'
+
 function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading, channelSettings, onUpdateSettings }) {
   const [stats, setStats] = useState(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -1137,7 +1140,7 @@ export default function ChannelConfiguration() {
       
       // Set M3U accounts (filter out custom account as it's not a real source)
       const accounts = m3uAccountsResponse.data?.accounts || m3uAccountsResponse.data || []
-      setM3uAccounts(accounts.filter(acc => acc.name?.toLowerCase() !== 'custom'))
+      setM3uAccounts(accounts.filter(acc => acc.name?.toLowerCase() !== CUSTOM_ACCOUNT_NAME))
       
       // Initialize ordered channels
       const channelData = channelsToLoad

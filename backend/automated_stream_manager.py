@@ -345,7 +345,10 @@ class RegexChannelMatcher:
             regex_patterns: List of regex patterns
             enabled: Whether the pattern is enabled
             m3u_accounts: Optional list of M3U account IDs that this regex should apply to.
-                         If None or empty, applies to all M3U accounts (backward compatible).
+                         Examples:
+                         - None: Field not stored, applies to all M3U accounts (backward compatible)
+                         - []: Empty list stored, explicitly means "all M3U accounts"
+                         - [1, 2, 3]: Only match streams from M3U accounts with these IDs
             
         Raises:
             ValueError: If any regex pattern is invalid
@@ -404,6 +407,13 @@ class RegexChannelMatcher:
             stream_name: Name of the stream to match
             stream_m3u_account: Optional M3U account ID of the stream.
                                If provided, only matches patterns that apply to this M3U account.
+                               
+        Examples:
+            - stream_m3u_account=None: Stream source unknown, matches all patterns (no filtering)
+            - stream_m3u_account=5: Stream is from M3U account 5, only matches patterns where:
+              * pattern has no m3u_accounts field (old configs, apply to all)
+              * pattern has m3u_accounts=[] (explicitly applies to all)
+              * pattern has m3u_accounts=[5] or m3u_accounts=[5, 6, ...] (includes account 5)
         
         Returns:
             List of channel IDs that match the stream
