@@ -1404,7 +1404,8 @@ export default function ChannelConfiguration() {
         patterns: [{
           channel_id: editingChannelId,
           channel_name: channel?.name || '',
-          regex: [newPattern]
+          regex: [newPattern],
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null  // null = all M3U accounts
         }],
         max_matches: 50
       })
@@ -1446,7 +1447,7 @@ export default function ChannelConfiguration() {
         setTestingPattern(false)
       }
     }
-  }, [newPattern, editingChannelId, channels, toast])
+  }, [newPattern, editingChannelId, channels, selectedM3uAccounts, toast])
 
   // Test pattern on every change with debouncing
   useEffect(() => {
@@ -1462,7 +1463,7 @@ export default function ChannelConfiguration() {
     return () => clearTimeout(timer)
     // Only depend on the actual values, not the function
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newPattern, editingChannelId, dialogOpen])
+  }, [newPattern, editingChannelId, dialogOpen, selectedM3uAccounts])
 
   const handleSavePattern = async () => {
     if (!newPattern.trim() || !editingChannelId) {

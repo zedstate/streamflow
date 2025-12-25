@@ -1097,7 +1097,8 @@ class StreamCheckerService:
             time_diff_minutes = abs((now - prev_scheduled_time).total_seconds() / 60)
             if time_diff_minutes <= 10:
                 # We're within the scheduled window on fresh start, run the check
-                logger.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
+                automation_controls = self.config.get('automation_controls', {})
+                logger.info(f"Starting scheduled global action (automation_controls: {automation_controls}, cron: {cron_expression})")
                 self._perform_global_action()
                 self.update_tracker.mark_global_check()
             else:
@@ -1113,7 +1114,8 @@ class StreamCheckerService:
         # This prevents running multiple times between scheduled intervals
         if prev_scheduled_time > last_check_time:
             # We've passed a scheduled time since the last check, so we should run
-            logger.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
+            automation_controls = self.config.get('automation_controls', {})
+            logger.info(f"Starting scheduled global action (automation_controls: {automation_controls}, cron: {cron_expression})")
             self._perform_global_action()
             # Mark that global check has been initiated to prevent duplicate queueing
             self.update_tracker.mark_global_check()
