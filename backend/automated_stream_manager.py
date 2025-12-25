@@ -955,11 +955,14 @@ class AutomatedStreamManager:
             # Prepare detailed changelog data
             detailed_assignments = []
             
+            # Get dead stream removal config once for this discovery run
+            dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+            
             # Assign streams to channels
             for channel_id, stream_ids in assignments.items():
                 if stream_ids:
                     try:
-                        added_count = add_streams_to_channel(int(channel_id), stream_ids)
+                        added_count = add_streams_to_channel(int(channel_id), stream_ids, allow_dead_streams=(not dead_stream_removal_enabled))
                         assignment_count[channel_id] = added_count
                         
                         # Verify streams were added correctly

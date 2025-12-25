@@ -1933,8 +1933,9 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
-            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
-            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
+            # Dead streams have already been filtered from analyzed_streams if removal is enabled
+            # If removal is disabled, allow them to remain in the channel
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=(not dead_stream_removal_enabled))
             
             # Verify the update
             self.progress.update(
@@ -2386,8 +2387,9 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
-            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
-            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
+            # Dead streams have already been filtered from analyzed_streams if removal is enabled
+            # If removal is disabled, allow them to remain in the channel
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=(not dead_stream_removal_enabled))
             
             # Verify the update was applied correctly
             self.progress.update(
