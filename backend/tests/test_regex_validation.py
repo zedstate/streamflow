@@ -236,16 +236,16 @@ class TestRegexValidation(unittest.TestCase):
         self.assertIsNotNone(error)
     
     def test_channel_name_variable_in_patterns(self):
-        """Test that patterns with {CHANNEL_NAME} variable are accepted."""
-        # These patterns should be valid because {CHANNEL_NAME} is a placeholder
+        """Test that patterns with CHANNEL_NAME variable are accepted."""
+        # These patterns should be valid because CHANNEL_NAME is a placeholder
         # that gets substituted before actual regex matching
         channel_name_patterns = [
-            ".*{CHANNEL_NAME}.*",
-            "{CHANNEL_NAME}",
-            "^{CHANNEL_NAME}$",
-            r"^(?:PL|\s|PL-VIP|\s|PL(?: VIP)?:\s)((?:TVP )?({CHANNEL_NAME})(?: POLSKA)?(?: TV)?(?:.PL)?)(?:.TV)?(?:\s+(HD|4K|FHD|RAW|ᴴᴰ ◉|ᵁᴴᴰ))?$",
-            "{CHANNEL_NAME}.*{CHANNEL_NAME}",  # Multiple occurrences
-            r"^{CHANNEL_NAME}\s+(?:HD|4K)$",
+            ".*CHANNEL_NAME.*",
+            "CHANNEL_NAME",
+            "^CHANNEL_NAME$",
+            r"^(?:PL|\s|PL-VIP|\s|PL(?: VIP)?:\s)((?:TVP )?(CHANNEL_NAME)(?: POLSKA)?(?: TV)?(?:.PL)?)(?:.TV)?(?:\s+(HD|4K|FHD|RAW|ᴴᴰ ◉|ᵁᴴᴰ))?$",
+            "CHANNEL_NAME.*CHANNEL_NAME",  # Multiple occurrences
+            r"^CHANNEL_NAME\s+(?:HD|4K)$",
         ]
         
         for pattern in channel_name_patterns:
@@ -259,11 +259,11 @@ class TestRegexValidation(unittest.TestCase):
             self.matcher.add_channel_pattern(
                 channel_id="test_channel_var",
                 name="Test Channel",
-                regex_patterns=[".*{CHANNEL_NAME}.*"],
+                regex_patterns=[".*CHANNEL_NAME.*"],
                 enabled=True
             )
         except ValueError as e:
-            self.fail(f"Should be able to add pattern with {{CHANNEL_NAME}} variable: {e}")
+            self.fail(f"Should be able to add pattern with CHANNEL_NAME variable: {e}")
     
     def test_complex_valid_patterns(self):
         """Test that complex but valid regex patterns are accepted."""

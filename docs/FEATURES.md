@@ -94,11 +94,11 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
   - Select All/Deselect All functionality
   - Group filtering to show only channels from specific groups
   - Group sorting for organized view
-- **Channel Name Variables**: Use `{CHANNEL_NAME}` in patterns to create reusable regex rules
-  - Pattern example: `.*{CHANNEL_NAME}.*` matches any stream containing the channel name
+- **Channel Name Variables**: Use `CHANNEL_NAME` in patterns to create reusable regex rules
+  - Pattern example: `.*CHANNEL_NAME.*` matches any stream containing the channel name
   - One pattern works for multiple channels with different names
   - Variables are substituted at match time, not storage time
-  - **Note**: Patterns with `{CHANNEL_NAME}` are fully supported in validation, live preview, and actual matching
+  - **Note**: Patterns with `CHANNEL_NAME` are fully supported in validation, live preview, and actual matching
 - **Pattern Testing Interface**: Live testing of patterns against available streams
 - **Pattern Import/Export**: Share regex configurations across installations
 - **New Stream Detection**: Automatically detects and assigns new streams on playlist refresh

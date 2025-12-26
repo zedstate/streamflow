@@ -326,10 +326,9 @@ class RegexChannelMatcher:
                 return False, f"Pattern must be a non-empty string"
             
             try:
-                # Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
-                # This prevents the regex engine from interpreting {} as quantifiers
+                # Temporarily substitute CHANNEL_NAME with a placeholder for validation
                 # Use a simple placeholder that won't interfere with regex syntax
-                validation_pattern = pattern.replace('{CHANNEL_NAME}', 'PLACEHOLDER')
+                validation_pattern = pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
                 re.compile(validation_pattern)
             except re.error as e:
                 return False, f"Invalid regex pattern '{pattern}': {str(e)}"
@@ -389,16 +388,16 @@ class RegexChannelMatcher:
         """Substitute channel name variables in a regex pattern.
         
         Args:
-            pattern: Regex pattern that may contain {CHANNEL_NAME}
+            pattern: Regex pattern that may contain CHANNEL_NAME
             channel_name: Name of the channel to substitute
             
         Returns:
             Pattern with variables substituted
         """
-        # Replace {CHANNEL_NAME} with the actual channel name
+        # Replace CHANNEL_NAME with the actual channel name
         # Escape special regex characters in channel name to avoid issues
         escaped_channel_name = re.escape(channel_name)
-        return pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+        return pattern.replace('CHANNEL_NAME', escaped_channel_name)
     
     def match_stream_to_channels(self, stream_name: str, stream_m3u_account: Optional[int] = None) -> List[str]:
         """Match a stream name to channel IDs based on regex patterns.

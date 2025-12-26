@@ -13,25 +13,25 @@ class TestChannelNameSubstitution(unittest.TestCase):
     def substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
         """Substitute channel name variables in a regex pattern."""
         escaped_channel_name = re.escape(channel_name)
-        return pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+        return pattern.replace('CHANNEL_NAME', escaped_channel_name)
     
     def test_basic_substitution(self):
         """Test basic channel name substitution."""
-        pattern = ".*{CHANNEL_NAME}.*"
+        pattern = ".*CHANNEL_NAME.*"
         channel_name = "ESPN"
         result = self.substitute_channel_variables(pattern, channel_name)
         self.assertEqual(result, ".*ESPN.*")
     
     def test_multiple_substitutions(self):
         """Test pattern with multiple channel name occurrences."""
-        pattern = "{CHANNEL_NAME}.*{CHANNEL_NAME}"
+        pattern = "CHANNEL_NAME.*CHANNEL_NAME"
         channel_name = "CNN"
         result = self.substitute_channel_variables(pattern, channel_name)
         self.assertEqual(result, "CNN.*CNN")
     
     def test_special_regex_characters(self):
         """Test that special regex characters in channel names are escaped."""
-        pattern = ".*{CHANNEL_NAME}.*"
+        pattern = ".*CHANNEL_NAME.*"
         channel_name = "ESPN+"
         result = self.substitute_channel_variables(pattern, channel_name)
         # + should be escaped to \+
@@ -45,7 +45,7 @@ class TestChannelNameSubstitution(unittest.TestCase):
     
     def test_complex_pattern(self):
         """Test more complex pattern with channel name variable."""
-        pattern = r"^(?:USA|UK)\s+{CHANNEL_NAME}(?:\s+HD)?$"
+        pattern = r"^(?:USA|UK)\s+CHANNEL_NAME(?:\s+HD)?$"
         channel_name = "Discovery"
         result = self.substitute_channel_variables(pattern, channel_name)
         self.assertEqual(result, r"^(?:USA|UK)\s+Discovery(?:\s+HD)?$")
@@ -59,7 +59,7 @@ class TestChannelNameSubstitution(unittest.TestCase):
     
     def test_matching_with_substitution(self):
         """Test that substituted patterns match correctly."""
-        pattern = ".*{CHANNEL_NAME}.*"
+        pattern = ".*CHANNEL_NAME.*"
         
         # Test with ESPN
         channel_name = "ESPN"
@@ -82,7 +82,7 @@ class TestChannelNameSubstitution(unittest.TestCase):
     
     def test_dots_in_channel_name(self):
         """Test channel names with dots are properly escaped."""
-        pattern = ".*{CHANNEL_NAME}.*"
+        pattern = ".*CHANNEL_NAME.*"
         channel_name = "ABC.com"
         result = self.substitute_channel_variables(pattern, channel_name)
         # Dots should be escaped to \.
@@ -95,7 +95,7 @@ class TestBulkAssignmentLogic(unittest.TestCase):
     def test_merge_patterns(self):
         """Test that bulk assignment merges patterns correctly."""
         existing_patterns = [".*ESPN.*"]
-        new_patterns = [".*{CHANNEL_NAME}.*"]
+        new_patterns = [".*CHANNEL_NAME.*"]
         
         # Simulate merge logic
         merged = list(existing_patterns)
@@ -105,7 +105,7 @@ class TestBulkAssignmentLogic(unittest.TestCase):
         
         self.assertEqual(len(merged), 2)
         self.assertIn(".*ESPN.*", merged)
-        self.assertIn(".*{CHANNEL_NAME}.*", merged)
+        self.assertIn(".*CHANNEL_NAME.*", merged)
     
     def test_avoid_duplicates(self):
         """Test that duplicate patterns are not added."""

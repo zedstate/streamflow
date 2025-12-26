@@ -31,10 +31,10 @@ Click "Add Regex to Selected" button to:
 3. Apply it to all selected channels at once
 
 ### 5. Channel Name Variables
-Use `{CHANNEL_NAME}` in patterns to create reusable regex rules:
+Use `CHANNEL_NAME` in patterns to create reusable regex rules:
 
 **Example**:
-- Pattern: `.*{CHANNEL_NAME}.*`
+- Pattern: `.*CHANNEL_NAME.*`
 - For channel "ESPN" becomes: `.*ESPN.*`
 - For channel "CNN" becomes: `.*CNN.*`
 - For channel "ABC" becomes: `.*ABC.*`
@@ -42,7 +42,7 @@ Use `{CHANNEL_NAME}` in patterns to create reusable regex rules:
 One pattern works for many channels!
 
 **Live Preview Support**:
-- The live regex preview automatically substitutes `{CHANNEL_NAME}` with the actual channel name
+- The live regex preview automatically substitutes `CHANNEL_NAME` with the actual channel name
 - You can see in real-time which streams will be matched when you test your pattern
 - This ensures your pattern works correctly before applying it to channels
 
@@ -58,7 +58,7 @@ One pattern works for many channels!
    - Click "Add Regex to Selected" button
 4. **Enter pattern**:
    - Type your regex pattern
-   - Use `{CHANNEL_NAME}` for channel-specific matching
+   - Use `CHANNEL_NAME` for channel-specific matching
 5. **Apply**:
    - Click "Add to X Channels"
    - Pattern is added to all selected channels
@@ -72,7 +72,7 @@ One pattern works for many channels!
    - Click "Select All" to select all channels in that group
 3. **Add pattern**:
    - Click "Add Regex to Selected"
-   - Enter pattern like: `.*{CHANNEL_NAME}.*|.*HD.*`
+   - Enter pattern like: `.*CHANNEL_NAME.*|.*HD.*`
 4. **Repeat** for other groups as needed
 
 ## Technical Details
@@ -82,11 +82,11 @@ One pattern works for many channels!
 #### 1. Pattern Variable Substitution
 File: `backend/automated_stream_manager.py`
 
-Added method to substitute `{CHANNEL_NAME}` at match time:
+Added method to substitute `CHANNEL_NAME` at match time:
 ```python
 def _substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
     escaped_channel_name = re.escape(channel_name)
-    return pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+    return pattern.replace('CHANNEL_NAME', escaped_channel_name)
 ```
 
 #### 2. Bulk Assignment Endpoint
@@ -97,7 +97,7 @@ New API endpoint:
 POST /api/regex-patterns/bulk
 {
   "channel_ids": [1, 2, 3],
-  "regex_patterns": [".*{CHANNEL_NAME}.*"]
+  "regex_patterns": [".*CHANNEL_NAME.*"]
 }
 ```
 
@@ -110,15 +110,15 @@ Features:
 #### 3. Live Regex Preview Endpoint
 File: `backend/web_api.py`
 
-Updated the `/api/test-regex-live` endpoint to support `{CHANNEL_NAME}` substitution:
+Updated the `/api/test-regex-live` endpoint to support `CHANNEL_NAME` substitution:
 ```python
-# Substitute {CHANNEL_NAME} variable with actual channel name
+# Substitute CHANNEL_NAME variable with actual channel name
 escaped_channel_name = re.escape(channel_name)
-substituted_pattern = pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+substituted_pattern = pattern.replace('CHANNEL_NAME', escaped_channel_name)
 ```
 
 **Key Features**:
-- Automatically substitutes `{CHANNEL_NAME}` before testing patterns
+- Automatically substitutes `CHANNEL_NAME` before testing patterns
 - Escapes special regex characters in channel names (e.g., `+`, `.`, `*`)
 - Provides real-time feedback on what streams will be matched
 - Works for both individual pattern editing and bulk assignment dialogs
@@ -175,7 +175,7 @@ File: `backend/tests/test_regex_live_preview.py`
 1. Channel name substitution in live preview
 2. User-reported pattern validation
 3. Special characters in channel names
-4. Multiple {CHANNEL_NAME} occurrences
+4. Multiple CHANNEL_NAME occurrences
 5. Patterns without variables
 6. Empty channel name handling
 7. Case sensitivity behavior
@@ -205,17 +205,17 @@ File: `backend/tests/test_regex_live_preview.py`
 
 ## Troubleshooting
 
-### Issue: {CHANNEL_NAME} shows 0 matches in live preview
+### Issue: CHANNEL_NAME shows 0 matches in live preview
 
-**Solution**: This has been fixed. The live preview now automatically substitutes `{CHANNEL_NAME}` with the actual channel name before testing.
+**Solution**: This has been fixed. The live preview now automatically substitutes `CHANNEL_NAME` with the actual channel name before testing.
 
 **What was the problem?**
 - The live preview endpoint wasn't substituting the variable
-- It treated `{CHANNEL_NAME}` as literal text
+- It treated `CHANNEL_NAME` as literal text
 - Actual stream matching worked correctly, but preview didn't
 
 **How it works now:**
-- Live preview substitutes `{CHANNEL_NAME}` before testing
+- Live preview substitutes `CHANNEL_NAME` before testing
 - You'll see the actual matches in real-time
 - Both individual and bulk regex dialogs work correctly
 
@@ -225,7 +225,7 @@ File: `backend/tests/test_regex_live_preview.py`
 
 **Example:**
 - Channel name: `ESPN+`
-- Pattern: `.*{CHANNEL_NAME}.*`
+- Pattern: `.*CHANNEL_NAME.*`
 - Becomes: `.*ESPN\+.*` (+ is escaped)
 
 This prevents regex errors and ensures patterns match correctly.
@@ -235,7 +235,7 @@ This prevents regex errors and ensures patterns match correctly.
 **Check these:**
 1. Verify you're using the latest version with the fix
 2. Make sure channel name is spelled correctly
-3. Test with a simpler pattern first (e.g., `.*{CHANNEL_NAME}.*`)
+3. Test with a simpler pattern first (e.g., `.*CHANNEL_NAME.*`)
 4. Check that the channel actually exists in your setup
 
 ## Documentation Updates
