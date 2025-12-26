@@ -1082,7 +1082,6 @@ class SchedulingService:
                     })
             
             try:
-                # Temporarily substitute {CHANNEL_NAME} with a placeholder for validation
                 # Temporarily substitute CHANNEL_NAME with a placeholder for validation
                 validation_pattern = regex_pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
                 re.compile(validation_pattern, re.IGNORECASE)
