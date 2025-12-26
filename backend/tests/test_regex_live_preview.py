@@ -11,18 +11,18 @@ class TestRegexLivePreview(unittest.TestCase):
     """Test the regex live preview with channel name substitution."""
     
     def substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
-        """Substitute {CHANNEL_NAME} variable with actual channel name.
+        """Substitute CHANNEL_NAME variable with actual channel name.
         
         This replicates the logic used in both:
         - automated_stream_manager.py (_substitute_channel_variables)
         - web_api.py (test_regex_pattern_live endpoint)
         """
         escaped_channel_name = re.escape(channel_name)
-        return pattern.replace('{CHANNEL_NAME}', escaped_channel_name)
+        return pattern.replace('CHANNEL_NAME', escaped_channel_name)
     
     def test_channel_name_substitution_in_live_preview(self):
-        """Test that {CHANNEL_NAME} is substituted correctly in live preview."""
-        pattern = ".*{CHANNEL_NAME}.*"
+        """Test that CHANNEL_NAME is substituted correctly in live preview."""
+        pattern = ".*CHANNEL_NAME.*"
         channel_name = "HBO 3"
         
         # Substitute the variable
@@ -41,17 +41,17 @@ class TestRegexLivePreview(unittest.TestCase):
     
     def test_user_reported_pattern(self):
         """Test the exact pattern reported by the user."""
-        # User's pattern with {CHANNEL_NAME}
-        pattern = r"^(?:PL|\s|PL-VIP|\s|PL(?: VIP)?:\s)((?:TVP )?({CHANNEL_NAME})(?: POLSKA)?(?: TV)?(?:.PL)?)(?:.TV)?(?:\s+(HD|4K|FHD|RAW|ᴴᴰ ◉|ᵁᴴᴰ))?$"
+        # User's pattern with CHANNEL_NAME
+        pattern = r"^(?:PL|\s|PL-VIP|\s|PL(?: VIP)?:\s)((?:TVP )?(CHANNEL_NAME)(?: POLSKA)?(?: TV)?(?:.PL)?)(?:.TV)?(?:\s+(HD|4K|FHD|RAW|ᴴᴰ ◉|ᵁᴴᴰ))?$"
         channel_name = "HBO 3"
         
         # Substitute the variable
         substituted = self.substitute_channel_variables(pattern, channel_name)
         
-        # The {CHANNEL_NAME} should be replaced with escaped channel name
+        # The CHANNEL_NAME should be replaced with escaped channel name
         # Check that the substitution happened by verifying channel name is in the pattern
         # (with escaped spaces if present)
-        self.assertNotIn("{CHANNEL_NAME}", substituted)
+        self.assertNotIn("CHANNEL_NAME", substituted)
         # Verify the pattern contains the channel name (ignoring escape sequences)
         self.assertTrue(
             "HBO" in substituted and "3" in substituted,
@@ -94,7 +94,7 @@ class TestRegexLivePreview(unittest.TestCase):
             ("ESPN*", r".*ESPN\*.*"),
         ]
         
-        pattern = ".*{CHANNEL_NAME}.*"
+        pattern = ".*CHANNEL_NAME.*"
         
         for channel_name, expected in test_cases:
             with self.subTest(channel_name=channel_name):
@@ -108,8 +108,8 @@ class TestRegexLivePreview(unittest.TestCase):
                     self.fail(f"Pattern for '{channel_name}' should be valid regex")
     
     def test_multiple_channel_name_occurrences(self):
-        """Test pattern with multiple {CHANNEL_NAME} variables."""
-        pattern = "{CHANNEL_NAME}.*{CHANNEL_NAME}"
+        """Test pattern with multiple CHANNEL_NAME variables."""
+        pattern = "CHANNEL_NAME.*CHANNEL_NAME"
         channel_name = "Discovery"
         
         result = self.substitute_channel_variables(pattern, channel_name)
@@ -121,7 +121,7 @@ class TestRegexLivePreview(unittest.TestCase):
         self.assertFalse(regex.search("Discovery Science"))
     
     def test_pattern_without_variable(self):
-        """Test that patterns without {CHANNEL_NAME} are unchanged."""
+        """Test that patterns without CHANNEL_NAME are unchanged."""
         pattern = ".*HBO.*|.*Cinemax.*"
         channel_name = "Premium Channels"
         
@@ -130,7 +130,7 @@ class TestRegexLivePreview(unittest.TestCase):
     
     def test_empty_channel_name(self):
         """Test handling of empty channel name."""
-        pattern = ".*{CHANNEL_NAME}.*"
+        pattern = ".*CHANNEL_NAME.*"
         channel_name = ""
         
         result = self.substitute_channel_variables(pattern, channel_name)
@@ -139,7 +139,7 @@ class TestRegexLivePreview(unittest.TestCase):
     
     def test_case_sensitivity(self):
         """Test that substitution works correctly with case sensitivity."""
-        pattern = ".*{CHANNEL_NAME}.*"
+        pattern = ".*CHANNEL_NAME.*"
         channel_name = "ESPN"
         
         substituted = self.substitute_channel_variables(pattern, channel_name)
