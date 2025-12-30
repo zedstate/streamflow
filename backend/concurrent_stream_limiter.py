@@ -356,7 +356,10 @@ def get_account_limiter() -> AccountStreamLimiter:
     global _account_limiter
     with _limiter_lock:
         if _account_limiter is None:
-            _account_limiter = AccountStreamLimiter()
+            # Import UDI manager here to avoid circular imports
+            from udi import get_udi_manager
+            udi_manager = get_udi_manager()
+            _account_limiter = AccountStreamLimiter(udi_manager=udi_manager)
         return _account_limiter
 
 
