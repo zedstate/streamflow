@@ -315,7 +315,6 @@ class SmartStreamScheduler:
                 return future
             
             # Submit all streams with stagger delay
-            cached_results = []  # Store results from cached stats
             for stream in streams:
                 if stagger_delay > 0 and futures:
                     time.sleep(stagger_delay)
@@ -324,7 +323,6 @@ class SmartStreamScheduler:
                 if future_or_result is not None:
                     if isinstance(future_or_result, dict):
                         # This is a cached result, not a future
-                        cached_results.append(future_or_result)
                         with lock:
                             results.append(future_or_result)
                             completed_count += 1

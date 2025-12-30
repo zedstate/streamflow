@@ -228,14 +228,20 @@ class TestStreamLimiterWithCurrentViewers(unittest.TestCase):
         """Test that cached stats are returned when quota is consumed by active viewers."""
         from concurrent_stream_limiter import SmartStreamScheduler
         
+        # Create a fresh UDI for this test with mock
+        mock_udi = Mock()
+        
+        # Create limiter with the mock UDI
+        limiter = AccountStreamLimiter(udi_manager=mock_udi)
+        
         # Set account limit to 2
-        self.limiter.set_account_limit(1, 2)
+        limiter.set_account_limit(1, 2)
         
         # Mock UDI to return 2 active streams (at limit)
-        self.mock_udi.get_active_streams_for_account.return_value = 2
+        mock_udi.get_active_streams_for_account.return_value = 2
         
         # Mock get_stream_by_id to return cached stats
-        self.mock_udi.get_stream_by_id.return_value = {
+        mock_udi.get_stream_by_id.return_value = {
             'id': 1,
             'name': 'Test Stream',
             'stream_stats': {
@@ -248,7 +254,7 @@ class TestStreamLimiterWithCurrentViewers(unittest.TestCase):
         }
         
         # Create scheduler with the limiter
-        scheduler = SmartStreamScheduler(self.limiter, global_limit=10)
+        scheduler = SmartStreamScheduler(limiter, global_limit=10)
         
         # Mock check function (should not be called for cached results)
         check_func = Mock(return_value={'status': 'OK'})
