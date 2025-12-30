@@ -1418,7 +1418,7 @@ export default function ChannelConfiguration() {
       if (result) {
         setTestResults({
           valid: true,
-          matches: result.matched_streams?.map(s => s.stream_name) || [],
+          matches: result.matched_streams || [],
           match_count: result.match_count || 0
         })
       } else {
@@ -2733,10 +2733,20 @@ export default function ChannelConfiguration() {
                           {testResults.matches.slice(0, 10).map((match, idx) => (
                             <div 
                               key={idx} 
-                              className="text-xs text-muted-foreground truncate animate-in fade-in slide-in-from-left-1 duration-200"
+                              className="text-xs text-muted-foreground animate-in fade-in slide-in-from-left-1 duration-200"
                               style={{ animationDelay: `${idx * 20}ms` }}
                             >
-                              • {match}
+                              <div className="flex items-start gap-2">
+                                <span className="flex-shrink-0">•</span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="truncate">{match.stream_name}</div>
+                                  {match.m3u_account_name && (
+                                    <div className="text-[10px] text-muted-foreground/70 italic">
+                                      Provider: {match.m3u_account_name}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           ))}
                           {testResults.matches.length > 10 && (
