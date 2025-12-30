@@ -450,7 +450,9 @@ class RegexChannelMatcher:
                 # Convert literal spaces in pattern to flexible whitespace regex (\s+)
                 # This allows matching streams with different whitespace characters
                 # (non-breaking spaces, tabs, double spaces, etc.)
-                search_pattern = re.sub(r' +', r'\\s+', search_pattern)
+                # BUT: Don't convert escaped spaces (from re.escape) - they should remain literal
+                # We replace only non-escaped spaces: spaces not preceded by backslash
+                search_pattern = re.sub(r'(?<!\\) +', r'\\s+', search_pattern)
                 
                 try:
                     if re.search(search_pattern, search_name):

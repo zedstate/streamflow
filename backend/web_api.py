@@ -921,7 +921,9 @@ def test_regex_pattern():
         
         # Convert literal spaces in pattern to flexible whitespace regex (\s+)
         # This allows matching streams with different whitespace characters
-        search_pattern = re.sub(r' +', r'\\s+', search_pattern)
+        # BUT: Don't convert escaped spaces - they should remain literal
+        # We replace only non-escaped spaces: spaces not preceded by backslash
+        search_pattern = re.sub(r'(?<!\\) +', r'\\s+', search_pattern)
         
         try:
             match = re.search(search_pattern, search_name)
@@ -1018,7 +1020,10 @@ def test_regex_pattern_live():
                     
                     # Convert literal spaces in pattern to flexible whitespace regex (\s+)
                     # This allows matching streams with different whitespace characters
-                    search_pattern = re.sub(r' +', r'\\s+', search_pattern)
+                    # (non-breaking spaces, tabs, double spaces, etc.)
+                    # BUT: Don't convert escaped spaces (from re.escape) - they should remain literal
+                    # We replace only non-escaped spaces: spaces not preceded by backslash
+                    search_pattern = re.sub(r'(?<!\\) +', r'\\s+', search_pattern)
                     
                     try:
                         if re.search(search_pattern, search_name):
