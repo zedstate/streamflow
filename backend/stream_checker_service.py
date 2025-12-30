@@ -1640,24 +1640,27 @@ class StreamCheckerService:
         
         # For each account, check if it has reached its max_streams limit
         for account_id in account_ids:
-            account = udi.get_m3u_account_by_id(account_id)
-            if account:
-                # Get max_streams from account
-                max_streams = account.get('max_streams', 0)
-                if max_streams > 0:  # 0 means unlimited
-                    # Count active streams for this account
-                    active_count = udi.get_active_streams_for_account(account_id)
-                    if active_count >= max_streams:
-                        logger.warning(f"M3U account {account.get('name', account_id)} has reached its limit ({active_count}/{max_streams} streams), skipping check for channel {channel_name}")
-                        return {
-                            'dead_streams_count': 0,
-                            'revived_streams_count': 0,
-                            'skipped': True,
-                            'skip_reason': 'max_streams_reached',
-                            'account_id': account_id,
-                            'active_count': active_count,
-                            'max_streams': max_streams
-                        }
+            try:
+                account = udi.get_m3u_account_by_id(account_id)
+                if account:
+                    # Get max_streams from account
+                    max_streams = account.get('max_streams', 0)
+                    if max_streams > 0:  # 0 means unlimited
+                        # Count active streams for this account
+                        active_count = udi.get_active_streams_for_account(account_id)
+                        if active_count >= max_streams:
+                            logger.warning(f"M3U account {account.get('name', account_id)} has reached its limit ({active_count}/{max_streams} streams), skipping check for channel {channel_name}")
+                            return {
+                                'dead_streams_count': 0,
+                                'revived_streams_count': 0,
+                                'skipped': True,
+                                'skip_reason': 'max_streams_reached',
+                                'account_id': account_id,
+                                'active_count': active_count,
+                                'max_streams': max_streams
+                            }
+            except Exception as e:
+                logger.warning(f"Error checking limits for account {account_id}: {e}, allowing check to proceed")
         
         # No limits reached, check can proceed
         return None
@@ -2881,7 +2884,7 @@ class StreamCheckerService:
                         'details': limit_check_result
                     }
             
-            # Step 1: Get current streams to identify M3U accounts (already fetched above for limit checking)
+            # Step 1: Identify M3U accounts for channel (reusing current_streams from limit check above)
             logger.info(f"Step 1/6: Identifying M3U accounts for channel {channel_name}...")
             account_ids = set()
             if current_streams:
