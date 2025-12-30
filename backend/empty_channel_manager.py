@@ -68,16 +68,18 @@ def disable_empty_channels_in_profile(profile_id: int,
         if check_enabled_only:
             try:
                 profile_channels = udi.get_profile_channels(profile_id)
-                if profile_channels:
+                if profile_channels and isinstance(profile_channels, dict):
                     # Get list of enabled channel IDs in this profile
                     enabled_channel_ids = set()
                     for ch in profile_channels.get('channels', []):
-                        if ch.get('enabled', False):
+                        if isinstance(ch, dict) and ch.get('enabled', False):
                             enabled_channel_ids.add(ch.get('channel_id'))
                     
                     # Filter to only enabled channels
                     channels_to_check = [ch for ch in channels_to_check if ch.get('id') in enabled_channel_ids]
                     logger.info(f"Checking {len(channels_to_check)} enabled channels in profile {profile_id}")
+                else:
+                    logger.warning(f"Could not fetch valid profile channels data for profile {profile_id}, checking all channels")
             except Exception as e:
                 logger.warning(f"Could not fetch profile {profile_id} to filter enabled channels: {e}")
         
