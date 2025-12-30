@@ -26,6 +26,10 @@ from collections import defaultdict
 # Used to convert literal spaces to flexible whitespace while preserving escaped spaces
 _WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
 
+# Placeholder for CHANNEL_NAME variable during regex validation
+# Used to substitute CHANNEL_NAME in patterns before compiling for validation
+_CHANNEL_NAME_PLACEHOLDER = 'PLACEHOLDER'
+
 # Import croniter for cron expression support
 try:
     from croniter import croniter
@@ -283,13 +287,67 @@ class RegexChannelMatcher:
         self.channel_patterns = self._load_patterns()
     
     def _load_patterns(self) -> Dict:
-        """Load regex patterns for channel matching."""
+        """Load regex patterns for channel matching.
+        
+        Handles corrupted JSON and invalid regex patterns gracefully by:
+        - Creating default config if JSON is invalid
+        - Removing patterns with invalid regex on load to prevent persistent errors
+        """
         if self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                logger.warning(f"Could not load {self.config_file}, creating default config")
+                    loaded_config = json.load(f)
+                
+                # Validate and sanitize patterns - remove any with invalid regex
+                if 'patterns' in loaded_config and isinstance(loaded_config['patterns'], dict):
+                    patterns_to_remove = []
+                    for channel_id, pattern_data in loaded_config['patterns'].items():
+                        if not isinstance(pattern_data, dict) or 'regex' not in pattern_data:
+                            patterns_to_remove.append(channel_id)
+                            continue
+                        
+                        regex_list = pattern_data.get('regex', [])
+                        if not isinstance(regex_list, list):
+                            patterns_to_remove.append(channel_id)
+                            continue
+                        
+                        # Check if any regex patterns are invalid
+                        has_invalid = False
+                        for pattern in regex_list:
+                            if not pattern or not isinstance(pattern, str):
+                                has_invalid = True
+                                break
+                            try:
+                                # Temporarily substitute CHANNEL_NAME for validation
+                                validation_pattern = pattern.replace('CHANNEL_NAME', _CHANNEL_NAME_PLACEHOLDER)
+                                re.compile(validation_pattern)
+                            except re.error as e:
+                                logger.warning(
+                                    f"Removing channel {channel_id} with invalid regex pattern '{pattern}': {e}. "
+                                    f"Please reconfigure this channel with valid patterns."
+                                )
+                                has_invalid = True
+                                break
+                        
+                        if has_invalid:
+                            patterns_to_remove.append(channel_id)
+                    
+                    # Remove invalid patterns
+                    if patterns_to_remove:
+                        for channel_id in patterns_to_remove:
+                            del loaded_config['patterns'][channel_id]
+                        
+                        # Save cleaned config back to disk
+                        # Note: We intentionally save during load to prevent invalid patterns
+                        # from persisting and causing repeated errors. This auto-cleanup ensures
+                        # users don't get stuck with corrupted configs even after container restart.
+                        logger.info(f"Removed {len(patterns_to_remove)} pattern(s) with invalid regex")
+                        self._save_patterns(loaded_config)
+                
+                return loaded_config
+                
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                logger.warning(f"Could not load {self.config_file}: {e}. Creating default config")
         
         # Create default configuration
         default_config = {
@@ -333,7 +391,7 @@ class RegexChannelMatcher:
             try:
                 # Temporarily substitute CHANNEL_NAME with a placeholder for validation
                 # Use a simple placeholder that won't interfere with regex syntax
-                validation_pattern = pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
+                validation_pattern = pattern.replace('CHANNEL_NAME', _CHANNEL_NAME_PLACEHOLDER)
                 re.compile(validation_pattern)
             except re.error as e:
                 return False, f"Invalid regex pattern '{pattern}': {str(e)}"
