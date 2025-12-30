@@ -1607,6 +1607,61 @@ class StreamCheckerService:
         except Exception as e:
             logger.error(f"Error triggering empty channel disabling: {e}", exc_info=True)
     
+    def _check_channel_limits(self, channel_id: int, channel_name: str, streams: List[Dict]) -> Optional[Dict]:
+        """Check if a channel can be checked based on viewer and playlist limits.
+        
+        Args:
+            channel_id: ID of the channel
+            channel_name: Name of the channel
+            streams: List of streams for the channel
+            
+        Returns:
+            None if check can proceed, or a result dict if check should be skipped
+        """
+        udi = get_udi_manager()
+        
+        # Check if channel has active viewers
+        has_active_viewers = any(stream.get('current_viewers', 0) > 0 for stream in streams)
+        if has_active_viewers:
+            logger.warning(f"Channel {channel_name} has active viewers, skipping check to avoid disruption")
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0,
+                'skipped': True,
+                'skip_reason': 'active_viewers'
+            }
+        
+        # Check if any associated M3U account/profile has reached max concurrent streams
+        account_ids = set()
+        for stream in streams:
+            m3u_account = stream.get('m3u_account')
+            if m3u_account:
+                account_ids.add(m3u_account)
+        
+        # For each account, check if it has reached its max_streams limit
+        for account_id in account_ids:
+            account = udi.get_m3u_account_by_id(account_id)
+            if account:
+                # Get max_streams from account
+                max_streams = account.get('max_streams', 0)
+                if max_streams > 0:  # 0 means unlimited
+                    # Count active streams for this account
+                    active_count = udi.get_active_streams_for_account(account_id)
+                    if active_count >= max_streams:
+                        logger.warning(f"M3U account {account.get('name', account_id)} has reached its limit ({active_count}/{max_streams} streams), skipping check for channel {channel_name}")
+                        return {
+                            'dead_streams_count': 0,
+                            'revived_streams_count': 0,
+                            'skipped': True,
+                            'skip_reason': 'max_streams_reached',
+                            'account_id': account_id,
+                            'active_count': active_count,
+                            'max_streams': max_streams
+                        }
+        
+        # No limits reached, check can proceed
+        return None
+    
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
         
@@ -1691,6 +1746,13 @@ class StreamCheckerService:
                 }
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
+            
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
+            limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
+            if limit_check_result is not None:
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return limit_check_result
             
             # Check if this is a force check (bypasses 2-hour immunity)
             force_check = self.update_tracker.should_force_check(channel_id)
@@ -2150,6 +2212,13 @@ class StreamCheckerService:
                 }
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
+            
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
+            limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
+            if limit_check_result is not None:
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return limit_check_result
             
             # Check if this is a force check (bypasses 2-hour immunity)
             force_check = self.update_tracker.should_force_check(channel_id)
@@ -2797,9 +2866,54 @@ class StreamCheckerService:
             
             logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
             
-            # Step 1: Get current streams to identify M3U accounts
-            logger.info(f"Step 1/6: Identifying M3U accounts for channel {channel_name}...")
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
             current_streams = fetch_channel_streams(channel_id)
+            if current_streams:
+                # Check if any stream has active viewers
+                has_active_viewers = any(stream.get('current_viewers', 0) > 0 for stream in current_streams)
+                if has_active_viewers:
+                    warning_msg = f"Channel {channel_name} has active viewers, skipping check to avoid disruption"
+                    logger.warning(warning_msg)
+                    return {
+                        'success': False,
+                        'error': warning_msg,
+                        'reason': 'active_viewers',
+                        'channel_id': channel_id,
+                        'channel_name': channel_name
+                    }
+                
+                # Check if any associated M3U account/profile has reached max concurrent streams
+                account_ids = set()
+                for stream in current_streams:
+                    m3u_account = stream.get('m3u_account')
+                    if m3u_account:
+                        account_ids.add(m3u_account)
+                
+                # For each account, check if it has reached its max_streams limit
+                for account_id in account_ids:
+                    account = udi.get_m3u_account_by_id(account_id)
+                    if account:
+                        # Get max_streams from account
+                        max_streams = account.get('max_streams', 0)
+                        if max_streams > 0:  # 0 means unlimited
+                            # Count active streams for this account
+                            active_count = udi.get_active_streams_for_account(account_id)
+                            if active_count >= max_streams:
+                                warning_msg = f"M3U account {account.get('name', account_id)} has reached its limit ({active_count}/{max_streams} streams), skipping check"
+                                logger.warning(warning_msg)
+                                return {
+                                    'success': False,
+                                    'error': warning_msg,
+                                    'reason': 'max_streams_reached',
+                                    'channel_id': channel_id,
+                                    'channel_name': channel_name,
+                                    'account_id': account_id,
+                                    'active_count': active_count,
+                                    'max_streams': max_streams
+                                }
+            
+            # Step 1: Get current streams to identify M3U accounts (already fetched above for limit checking)
+            logger.info(f"Step 1/6: Identifying M3U accounts for channel {channel_name}...")
             account_ids = set()
             if current_streams:
                 for stream in current_streams:
