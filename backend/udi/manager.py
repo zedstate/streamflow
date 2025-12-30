@@ -85,6 +85,11 @@ class UDIManager:
         self._valid_stream_ids: Set[int] = set()
         self._profiles_by_id: Dict[int, Dict[str, Any]] = {}
         
+        # Proxy status cache for real-time stream viewer information
+        self._proxy_status_cache: Dict[str, Any] = {}
+        self._proxy_status_last_fetch: float = 0
+        self._proxy_status_ttl: float = 5.0  # Cache proxy status for 5 seconds
+        
         logger.info("UDI Manager created")
     
     def initialize(self, force_refresh: bool = False) -> bool:
@@ -941,8 +946,67 @@ class UDIManager:
         
         return None
     
+    def _is_channel_status_active(self, status: Dict[str, Any]) -> bool:
+        """Check if a channel status indicates it's active.
+        
+        Args:
+            status: Channel status dictionary from proxy
+            
+        Returns:
+            True if channel is active, False otherwise
+        """
+        if not isinstance(status, dict):
+            return False
+            
+        # Check various indicators of activity
+        if status.get('current_stream'):
+            return True
+        if status.get('active'):
+            return True
+            
+        # Check if there are active clients
+        clients = status.get('clients')
+        if clients and len(clients) > 0:
+            return True
+            
+        return False
+    
+    def _get_proxy_status(self, force_refresh: bool = False) -> Dict[str, Any]:
+        """Get cached proxy status or fetch fresh if needed.
+        
+        Args:
+            force_refresh: If True, always fetch fresh data
+            
+        Returns:
+            Dictionary with proxy status information
+        """
+        current_time = time.time()
+        
+        # Check if cache is valid
+        if not force_refresh and self._proxy_status_cache:
+            age = current_time - self._proxy_status_last_fetch
+            if age < self._proxy_status_ttl:
+                logger.debug(f"Using cached proxy status (age: {age:.1f}s)")
+                return self._proxy_status_cache
+        
+        # Fetch fresh data
+        try:
+            logger.debug("Fetching fresh proxy status")
+            proxy_status = self.fetcher.fetch_proxy_status()
+            self._proxy_status_cache = proxy_status
+            self._proxy_status_last_fetch = current_time
+            return proxy_status
+        except Exception as e:
+            logger.warning(f"Failed to fetch proxy status: {e}")
+            # Return cached data even if expired, or empty dict
+            return self._proxy_status_cache if self._proxy_status_cache else {}
+    
     def _count_active_streams(self, account_id: int) -> int:
-        """Count streams with current_viewers > 0 for an account.
+        """Count streams with active viewers for an account.
+        
+        This method now uses real-time proxy status to determine which streams
+        are actually running, rather than relying on the potentially stale
+        current_viewers field in the database.
         
         Args:
             account_id: M3U account ID
@@ -950,12 +1014,45 @@ class UDIManager:
         Returns:
             Number of active streams
         """
+        # Get real-time proxy status
+        proxy_status = self._get_proxy_status()
+        
+        # Build a map of active channel IDs from proxy status
+        active_channels = {}
+        for channel_id_str, status in proxy_status.items():
+            if self._is_channel_status_active(status):
+                try:
+                    channel_id = int(channel_id_str)
+                    active_channels[channel_id] = status
+                except (ValueError, TypeError):
+                    logger.debug(f"Invalid channel ID in proxy status: {channel_id_str}")
+                    pass
+        
+        # Now count how many streams from this account are in active channels
         active_count = 0
-        for stream in self._streams_cache:
-            if stream.get('m3u_account') == account_id:
-                current_viewers = stream.get('current_viewers', 0)
-                if current_viewers > 0:
+        
+        for channel_id, status in active_channels.items():
+            # Find the channel
+            channel = self._channels_by_id.get(channel_id)
+            if not channel:
+                continue
+                
+            # Get the streams for this channel
+            stream_ids = channel.get('streams', [])
+            if not stream_ids:
+                continue
+                
+            # Check if any stream belongs to this account
+            for stream_id in stream_ids:
+                stream = self._streams_by_id.get(stream_id)
+                if stream and stream.get('m3u_account') == account_id:
                     active_count += 1
+                    # Only count once per channel - a channel can have multiple streams
+                    # from the same account, but we only count it as one active stream
+                    # for the account limit purposes
+                    break
+        
+        logger.debug(f"Account {account_id} has {active_count} active streams (from proxy status)")
         return active_count
     
     def _sum_total_viewers(self, account_id: int) -> int:
@@ -1016,6 +1113,33 @@ class UDIManager:
         active_count = self._count_active_streams(account_id)
         logger.debug(f"Account {account_id} has {active_count} active streams")
         return active_count
+    
+    def is_channel_active(self, channel_id: int) -> bool:
+        """Check if a channel currently has active viewers.
+        
+        Uses real-time proxy status to determine if the channel is currently streaming.
+        
+        Args:
+            channel_id: Channel ID to check
+            
+        Returns:
+            True if channel has active viewers, False otherwise
+        """
+        self._ensure_initialized()
+        
+        # Get real-time proxy status
+        proxy_status = self._get_proxy_status()
+        
+        # Check if this channel is in the proxy status
+        channel_id_str = str(channel_id)
+        if channel_id_str in proxy_status:
+            status = proxy_status[channel_id_str]
+            is_active = self._is_channel_status_active(status)
+            logger.debug(f"Channel {channel_id} is {'active' if is_active else 'inactive'} (from proxy status)")
+            return is_active
+        
+        logger.debug(f"Channel {channel_id} is not in proxy status, assuming inactive")
+        return False
     
     def get_total_viewers_for_profile(self, profile_id: int) -> int:
         """Calculate the total number of viewers for a specific M3U account profile.

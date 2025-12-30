@@ -525,6 +525,38 @@ class UDIFetcher:
         logger.info(f"Fetched channel data for {len(profile_channels)} profiles")
         return profile_channels
     
+    def fetch_proxy_status(self) -> Dict[str, Any]:
+        """Fetch real-time stream status from the proxy server.
+        
+        This fetches the actual running stream status from /proxy/ts/status endpoint,
+        which provides accurate information about which streams are currently active.
+        
+        Returns:
+            Dictionary with channel_id -> status mapping, or empty dict if unavailable
+        """
+        if not self.base_url:
+            logger.debug("DISPATCHARR_BASE_URL not set, cannot fetch proxy status")
+            return {}
+        
+        url = f"{self.base_url}/proxy/ts/status"
+        try:
+            status_data = self._fetch_url(url)
+            if isinstance(status_data, dict):
+                logger.debug(f"Fetched proxy status for {len(status_data)} channels")
+                return status_data
+            elif isinstance(status_data, list):
+                # If it returns a list, convert to dict keyed by channel_id
+                result = {}
+                for item in status_data:
+                    if isinstance(item, dict) and 'channel_id' in item:
+                        result[str(item['channel_id'])] = item
+                logger.debug(f"Fetched proxy status for {len(result)} channels (from list)")
+                return result
+        except Exception as e:
+            logger.debug(f"Could not fetch proxy status: {e}")
+        
+        return {}
+    
     def refresh_all(self) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch all data from Dispatcharr.
         

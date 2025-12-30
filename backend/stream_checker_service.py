@@ -1620,8 +1620,8 @@ class StreamCheckerService:
         """
         udi = get_udi_manager()
         
-        # Check if channel has active viewers
-        has_active_viewers = any(stream.get('current_viewers', 0) > 0 for stream in streams)
+        # Check if channel has active viewers using real-time proxy status
+        has_active_viewers = udi.is_channel_active(channel_id)
         if has_active_viewers:
             logger.warning(f"Channel {channel_name} has active viewers, skipping check to avoid disruption")
             return {
