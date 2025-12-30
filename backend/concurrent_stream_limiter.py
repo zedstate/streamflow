@@ -33,14 +33,20 @@ class AccountStreamLimiter:
     Manages concurrent stream limits per M3U account.
     
     Uses semaphores to enforce per-account concurrency limits while allowing
-    maximum parallelism across different accounts.
+    maximum parallelism across different accounts. Also considers active viewers
+    from the UDI when determining available slots.
     """
     
-    def __init__(self):
-        """Initialize the account stream limiter."""
+    def __init__(self, udi_manager=None):
+        """Initialize the account stream limiter.
+        
+        Args:
+            udi_manager: Optional UDI manager instance for checking active viewers
+        """
         self.account_semaphores: Dict[int, threading.Semaphore] = {}
         self.account_limits: Dict[int, int] = {}
         self.lock = threading.Lock()
+        self.udi_manager = udi_manager
         logger.info("AccountStreamLimiter initialized")
     
     def set_account_limit(self, account_id: int, max_streams: int):
@@ -78,37 +84,80 @@ class AccountStreamLimiter:
         """
         return self.account_limits.get(account_id, 0)
     
-    def acquire(self, account_id: Optional[int], timeout: float = None) -> bool:
+    def get_available_slots(self, account_id: int) -> int:
+        """
+        Get the number of available stream slots for an account.
+        
+        Considers both active viewers (from UDI) and currently checking streams.
+        
+        Args:
+            account_id: M3U account ID
+            
+        Returns:
+            Number of available slots (0 if at limit, -1 if unlimited)
+        """
+        limit = self.get_account_limit(account_id)
+        
+        if limit == 0:
+            # Unlimited
+            return -1
+        
+        # Get active streams from UDI if available
+        active_count = 0
+        if self.udi_manager:
+            try:
+                active_count = self.udi_manager.get_active_streams_for_account(account_id)
+            except Exception as e:
+                logger.warning(f"Could not get active streams for account {account_id}: {e}")
+        
+        # Available slots = limit - active streams
+        available = limit - active_count
+        return max(0, available)
+    
+    def acquire(self, account_id: Optional[int], timeout: float = None) -> tuple[bool, str]:
         """
         Acquire permission to check a stream from the given account.
+        
+        Considers active viewers (from UDI) when determining if a slot is available.
         
         Args:
             account_id: M3U account ID (None for custom streams)
             timeout: Maximum time to wait in seconds (None = wait forever)
             
         Returns:
-            True if acquired, False if timed out
+            Tuple of (acquired: bool, reason: str)
+            - (True, 'acquired') if slot was acquired
+            - (False, 'active_viewers') if limit reached due to active viewers
+            - (False, 'timeout') if timed out waiting for semaphore
         """
         if account_id is None:
             # Custom stream with no account - always allow
-            return True
+            return (True, 'acquired')
+        
+        # Check if we have available slots considering active viewers
+        available_slots = self.get_available_slots(account_id)
+        
+        if available_slots != -1 and available_slots <= 0:
+            # No slots available due to active viewers
+            logger.warning(f"Cannot acquire slot for account {account_id}: limit reached with active viewers")
+            return (False, 'active_viewers')
         
         with self.lock:
             semaphore = self.account_semaphores.get(account_id)
         
         if semaphore is None:
             # No limit set for this account (or unlimited)
-            return True
+            return (True, 'acquired')
         
         # Try to acquire the semaphore
         acquired = semaphore.acquire(blocking=True, timeout=timeout)
         
         if acquired:
             logger.debug(f"Acquired stream slot for account {account_id}")
+            return (True, 'acquired')
         else:
             logger.warning(f"Timeout acquiring stream slot for account {account_id}")
-        
-        return acquired
+            return (False, 'timeout')
     
     def release(self, account_id: Optional[int]):
         """
@@ -216,9 +265,36 @@ class SmartStreamScheduler:
                 
                 # Acquire account slot before submitting to executor
                 # This ensures we don't exceed per-account limits
-                if not self.account_limiter.acquire(account_id, timeout=300):
-                    logger.error(f"Timeout acquiring slot for account {account_id}, skipping stream {stream['id']}")
-                    return None
+                acquired, reason = self.account_limiter.acquire(account_id, timeout=300)
+                
+                if not acquired:
+                    if reason == 'active_viewers':
+                        # Quota fully consumed by active viewers - use cached stats
+                        logger.info(f"Skipping check for stream {stream['id']} - quota consumed by active viewers, using cached stats")
+                        
+                        # Get cached stream stats from UDI
+                        if self.account_limiter.udi_manager:
+                            try:
+                                cached_stream = self.account_limiter.udi_manager.get_stream_by_id(stream['id'])
+                                if cached_stream and cached_stream.get('stream_stats'):
+                                    # Return a result with cached stats
+                                    return {
+                                        'stream_id': stream['id'],
+                                        'stream_name': stream.get('name', 'Unknown'),
+                                        'stream_url': stream.get('url', ''),
+                                        'cached': True,
+                                        'skipped_reason': 'quota_consumed_by_active_viewers',
+                                        **cached_stream.get('stream_stats', {})
+                                    }
+                                else:
+                                    logger.warning(f"No cached stats available for stream {stream['id']}, skipping")
+                            except Exception as e:
+                                logger.error(f"Error retrieving cached stats for stream {stream['id']}: {e}")
+                        return None
+                    else:
+                        # Timeout - skip stream
+                        logger.error(f"Timeout acquiring slot for account {account_id}, skipping stream {stream['id']}")
+                        return None
                 
                 def wrapped_check():
                     """Wrapper that ensures semaphore is released."""
@@ -243,10 +319,18 @@ class SmartStreamScheduler:
                 if stagger_delay > 0 and futures:
                     time.sleep(stagger_delay)
                 
-                future = submit_stream_check(stream)
-                if future is not None:
-                    futures[future] = stream
-                    logger.debug(f"Submitted stream {stream['id']} for checking")
+                future_or_result = submit_stream_check(stream)
+                if future_or_result is not None:
+                    if isinstance(future_or_result, dict):
+                        # This is a cached result, not a future
+                        with lock:
+                            results.append(future_or_result)
+                            completed_count += 1
+                        logger.debug(f"Using cached stats for stream {stream['id']}")
+                    else:
+                        # This is a future for async check
+                        futures[future_or_result] = stream
+                        logger.debug(f"Submitted stream {stream['id']} for checking")
             
             # Process completed tasks as they finish (in completion order for better parallelism)
             from concurrent.futures import as_completed
@@ -310,7 +394,10 @@ def get_account_limiter() -> AccountStreamLimiter:
     global _account_limiter
     with _limiter_lock:
         if _account_limiter is None:
-            _account_limiter = AccountStreamLimiter()
+            # Import UDI manager here to avoid circular imports
+            from udi import get_udi_manager
+            udi_manager = get_udi_manager()
+            _account_limiter = AccountStreamLimiter(udi_manager=udi_manager)
         return _account_limiter
 
 
