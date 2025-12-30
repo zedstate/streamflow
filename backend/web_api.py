@@ -705,6 +705,9 @@ def get_regex_patterns():
     """Get all regex patterns for channel matching."""
     try:
         matcher = get_regex_matcher()
+        # Reload patterns from disk to ensure we have the latest configuration
+        # This handles cases where users manually edit the config file
+        matcher.reload_patterns()
         patterns = matcher.get_patterns()
         return jsonify(patterns)
     except Exception as e:
@@ -747,6 +750,8 @@ def delete_regex_pattern(channel_id):
     """Delete a regex pattern for a channel."""
     try:
         matcher = get_regex_matcher()
+        # Reload patterns from disk to ensure we have the latest configuration
+        matcher.reload_patterns()
         patterns = matcher.get_patterns()
         
         if 'patterns' in patterns and str(channel_id) in patterns['patterns']:
@@ -2246,6 +2251,8 @@ def get_setup_wizard_status():
         # Check if we have patterns configured
         if regex_file.exists():
             matcher = get_regex_matcher()
+            # Reload patterns from disk to ensure we have the latest configuration
+            matcher.reload_patterns()
             patterns = matcher.get_patterns()
             status["has_patterns"] = bool(patterns.get('patterns'))
         
