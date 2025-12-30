@@ -921,6 +921,59 @@ class UDIManager:
         """
         return self._initialized
     
+    def _find_account_for_profile(self, profile_id: int) -> Optional[int]:
+        """Find the M3U account ID that contains a specific profile.
+        
+        Args:
+            profile_id: M3U account profile ID
+            
+        Returns:
+            M3U account ID or None if profile not found
+        """
+        accounts = self.get_m3u_accounts()
+        
+        for account in accounts:
+            profiles = account.get('profiles', [])
+            if isinstance(profiles, list):
+                for profile in profiles:
+                    if profile.get('id') == profile_id:
+                        return account.get('id')
+        
+        return None
+    
+    def _count_active_streams(self, account_id: int) -> int:
+        """Count streams with current_viewers > 0 for an account.
+        
+        Args:
+            account_id: M3U account ID
+            
+        Returns:
+            Number of active streams
+        """
+        active_count = 0
+        for stream in self._streams_cache:
+            if stream.get('m3u_account') == account_id:
+                current_viewers = stream.get('current_viewers', 0)
+                if current_viewers > 0:
+                    active_count += 1
+        return active_count
+    
+    def _sum_total_viewers(self, account_id: int) -> int:
+        """Sum all current_viewers for an account.
+        
+        Args:
+            account_id: M3U account ID
+            
+        Returns:
+            Total number of viewers
+        """
+        total_viewers = 0
+        for stream in self._streams_cache:
+            if stream.get('m3u_account') == account_id:
+                current_viewers = stream.get('current_viewers', 0)
+                total_viewers += current_viewers
+        return total_viewers
+    
     def get_active_streams_for_profile(self, profile_id: int) -> int:
         """Calculate the number of active streams for a specific M3U account profile.
         
@@ -934,33 +987,15 @@ class UDIManager:
         """
         self._ensure_initialized()
         
-        # Get all M3U accounts to find which one has this profile
-        accounts = self.get_m3u_accounts()
-        
         # Find the account that contains this profile
-        target_account_id = None
-        for account in accounts:
-            profiles = account.get('profiles', [])
-            if isinstance(profiles, list):
-                for profile in profiles:
-                    if profile.get('id') == profile_id:
-                        target_account_id = account.get('id')
-                        break
-            if target_account_id:
-                break
+        account_id = self._find_account_for_profile(profile_id)
         
-        if not target_account_id:
+        if not account_id:
             logger.warning(f"Profile {profile_id} not found in any M3U account")
             return 0
         
-        # Count streams from this account that have active viewers
-        active_count = 0
-        for stream in self._streams_cache:
-            if stream.get('m3u_account') == target_account_id:
-                current_viewers = stream.get('current_viewers', 0)
-                if current_viewers > 0:
-                    active_count += 1
-        
+        # Count active streams for this account
+        active_count = self._count_active_streams(account_id)
         logger.debug(f"Profile {profile_id} has {active_count} active streams")
         return active_count
     
@@ -977,14 +1012,8 @@ class UDIManager:
         """
         self._ensure_initialized()
         
-        # Count streams from this account that have active viewers
-        active_count = 0
-        for stream in self._streams_cache:
-            if stream.get('m3u_account') == account_id:
-                current_viewers = stream.get('current_viewers', 0)
-                if current_viewers > 0:
-                    active_count += 1
-        
+        # Count active streams for this account
+        active_count = self._count_active_streams(account_id)
         logger.debug(f"Account {account_id} has {active_count} active streams")
         return active_count
     
@@ -1001,32 +1030,15 @@ class UDIManager:
         """
         self._ensure_initialized()
         
-        # Get all M3U accounts to find which one has this profile
-        accounts = self.get_m3u_accounts()
-        
         # Find the account that contains this profile
-        target_account_id = None
-        for account in accounts:
-            profiles = account.get('profiles', [])
-            if isinstance(profiles, list):
-                for profile in profiles:
-                    if profile.get('id') == profile_id:
-                        target_account_id = account.get('id')
-                        break
-            if target_account_id:
-                break
+        account_id = self._find_account_for_profile(profile_id)
         
-        if not target_account_id:
+        if not account_id:
             logger.warning(f"Profile {profile_id} not found in any M3U account")
             return 0
         
-        # Sum viewers from all streams in this account
-        total_viewers = 0
-        for stream in self._streams_cache:
-            if stream.get('m3u_account') == target_account_id:
-                current_viewers = stream.get('current_viewers', 0)
-                total_viewers += current_viewers
-        
+        # Sum viewers for this account
+        total_viewers = self._sum_total_viewers(account_id)
         logger.debug(f"Profile {profile_id} has {total_viewers} total viewers")
         return total_viewers
     
@@ -1043,13 +1055,8 @@ class UDIManager:
         """
         self._ensure_initialized()
         
-        # Sum viewers from all streams in this account
-        total_viewers = 0
-        for stream in self._streams_cache:
-            if stream.get('m3u_account') == account_id:
-                current_viewers = stream.get('current_viewers', 0)
-                total_viewers += current_viewers
-        
+        # Sum viewers for this account
+        total_viewers = self._sum_total_viewers(account_id)
         logger.debug(f"Account {account_id} has {total_viewers} total viewers")
         return total_viewers
     
