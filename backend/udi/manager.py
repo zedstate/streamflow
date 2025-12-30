@@ -955,8 +955,6 @@ class UDIManager:
         Returns:
             Dictionary with proxy status information
         """
-        import time
-        
         current_time = time.time()
         
         # Check if cache is valid
@@ -994,20 +992,16 @@ class UDIManager:
         # Get real-time proxy status
         proxy_status = self._get_proxy_status()
         
-        # Build a map of channel_id -> list of active stream URLs
+        # Build a map of active channel IDs from proxy status
         active_channels = {}
         for channel_id_str, status in proxy_status.items():
             if isinstance(status, dict):
-                # Extract active stream info (could be in different formats)
-                # Check for current_stream, active, or clients
-                is_active = False
-                
-                if status.get('current_stream'):
-                    is_active = True
-                elif status.get('active'):
-                    is_active = True
-                elif status.get('clients') and len(status.get('clients', [])) > 0:
-                    is_active = True
+                # Check if channel is active (current_stream, active flag, or has clients)
+                is_active = (
+                    status.get('current_stream') or 
+                    status.get('active') or 
+                    (status.get('clients') and len(status.get('clients', [])) > 0)
+                )
                     
                 if is_active:
                     try:
@@ -1018,9 +1012,6 @@ class UDIManager:
         
         # Now count how many streams from this account are in active channels
         active_count = 0
-        
-        # Get all channels
-        channels = self._channels_cache
         
         for channel_id, status in active_channels.items():
             # Find the channel
@@ -1038,7 +1029,10 @@ class UDIManager:
                 stream = self._streams_by_id.get(stream_id)
                 if stream and stream.get('m3u_account') == account_id:
                     active_count += 1
-                    break  # Only count once per channel
+                    # Only count once per channel - a channel can have multiple streams
+                    # from the same account, but we only count it as one active stream
+                    # for the account limit purposes
+                    break
         
         logger.debug(f"Account {account_id} has {active_count} active streams (from proxy status)")
         return active_count
