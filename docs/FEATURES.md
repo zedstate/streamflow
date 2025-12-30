@@ -88,6 +88,9 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 
 ### Stream Discovery
 - **Regex Pattern Matching**: Automatic stream-to-channel assignment based on patterns
+  - **Automatic Validation**: Invalid regex patterns are automatically detected and removed on load
+  - **Self-Healing Configuration**: Corrupted patterns won't persist across restarts
+  - **Clear Error Messages**: Log warnings indicate which patterns were removed and why
 - **Table-Based Interface**: Clean, sortable table layout for managing regex patterns across channels
 - **Mass Assignment**: Add a single regex pattern to multiple channels at once
   - Multi-select channels with checkboxes
