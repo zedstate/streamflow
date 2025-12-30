@@ -21,6 +21,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 
+# Pre-compiled regex pattern for whitespace conversion (performance optimization)
+# This pattern matches one or more spaces that are NOT preceded by a backslash
+# Used to convert literal spaces to flexible whitespace while preserving escaped spaces
+_WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
+
 # Import croniter for cron expression support
 try:
     from croniter import croniter
@@ -451,8 +456,8 @@ class RegexChannelMatcher:
                 # This allows matching streams with different whitespace characters
                 # (non-breaking spaces, tabs, double spaces, etc.)
                 # BUT: Don't convert escaped spaces (from re.escape) - they should remain literal
-                # We replace only non-escaped spaces: spaces not preceded by backslash
-                search_pattern = re.sub(r'(?<!\\) +', r'\\s+', search_pattern)
+                # We replace only non-escaped spaces using pre-compiled pattern for performance
+                search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                 
                 try:
                     if re.search(search_pattern, search_name):

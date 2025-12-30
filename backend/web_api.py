@@ -9,6 +9,7 @@ the automated stream management system.
 import json
 import logging
 import os
+import re
 import requests
 import threading
 import time
@@ -28,6 +29,11 @@ from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
 from profile_config import ProfileConfig
+
+# Pre-compiled regex pattern for whitespace conversion (performance optimization)
+# This pattern matches one or more spaces that are NOT preceded by a backslash
+# Used to convert literal spaces to flexible whitespace while preserving escaped spaces
+_WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -922,8 +928,8 @@ def test_regex_pattern():
         # Convert literal spaces in pattern to flexible whitespace regex (\s+)
         # This allows matching streams with different whitespace characters
         # BUT: Don't convert escaped spaces - they should remain literal
-        # We replace only non-escaped spaces: spaces not preceded by backslash
-        search_pattern = re.sub(r'(?<!\\) +', r'\\s+', search_pattern)
+        # We replace only non-escaped spaces using pre-compiled pattern for performance
+        search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
         
         try:
             match = re.search(search_pattern, search_name)
@@ -1022,8 +1028,8 @@ def test_regex_pattern_live():
                     # This allows matching streams with different whitespace characters
                     # (non-breaking spaces, tabs, double spaces, etc.)
                     # BUT: Don't convert escaped spaces (from re.escape) - they should remain literal
-                    # We replace only non-escaped spaces: spaces not preceded by backslash
-                    search_pattern = re.sub(r'(?<!\\) +', r'\\s+', search_pattern)
+                    # We replace only non-escaped spaces using pre-compiled pattern for performance
+                    search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                     
                     try:
                         if re.search(search_pattern, search_name):
