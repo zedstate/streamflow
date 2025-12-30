@@ -1025,6 +1025,7 @@ class UDIManager:
                     channel_id = int(channel_id_str)
                     active_channels[channel_id] = status
                 except (ValueError, TypeError):
+                    logger.debug(f"Invalid channel ID in proxy status: {channel_id_str}")
                     pass
         
         # Now count how many streams from this account are in active channels
