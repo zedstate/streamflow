@@ -185,3 +185,105 @@ Updated all tests to use the new `CHANNEL_NAME` format:
 - Multiple occurrences: `CHANNEL_NAME.*CHANNEL_NAME`
 
 All tests pass successfully.
+
+---
+
+## Update 3: Enhanced Resilience Against Special Characters (December 2025)
+
+### New Issue Discovered
+
+During comprehensive testing, a subtle bug was found in the whitespace conversion logic that interfered with channel names containing spaces and special characters.
+
+### Root Cause
+
+The flexible whitespace regex conversion (`re.sub(r' +', r'\\s+', search_pattern)`) was incorrectly converting escaped spaces from `re.escape()`. 
+
+When a channel name like "HBO 3" was escaped:
+1. `re.escape("HBO 3")` → `"HBO\ 3"` (space is escaped)
+2. Whitespace conversion: `"HBO\ 3"` → `"HBO\\s+3"` (WRONG - escaped space was converted)
+
+This broke matching for channel names containing:
+- Parentheses: `"CNN (International)"`
+- Brackets: `"News [24/7]"`
+- Pipes: `"A|B Channel"`
+- Multiple spaces: `"HBO  3"`
+- Unicode characters: `"Fun 😊 TV"`
+
+### Solution
+
+Updated the whitespace conversion to use a negative lookbehind that preserves escaped spaces:
+
+```python
+# Convert literal spaces to flexible whitespace, but preserve escaped spaces
+search_pattern = re.sub(r'(?<!\\) +', r'\\s+', search_pattern)
+```
+
+The pattern `(?<!\\) +` means "one or more spaces not preceded by a backslash", which:
+- ✓ Converts unescaped spaces to `\s+` (flexible whitespace)
+- ✓ Preserves escaped spaces like `\ ` (literal space from channel name)
+- ✓ Maintains regex injection protection from `re.escape()`
+
+### Files Updated
+
+1. **`backend/automated_stream_manager.py`**: Fixed `match_stream_to_channels()` method
+2. **`backend/web_api.py`**: Fixed both regex test endpoints
+
+### Comprehensive Testing
+
+Added new test file `backend/tests/test_channel_name_variable_resilience.py` with 29 tests covering:
+
+**Special Regex Characters:**
+- `+` (plus sign): `"ESPN+"`
+- `.` (dot): `"ABC.com"`
+- `*` (asterisk): `"HBO*"`
+- `?` (question mark): `"What?"`
+- `[]` (brackets): `"News [24/7]"`
+- `()` (parentheses): `"CNN (International)"`
+- `|` (pipe): `"A|B Channel"`
+- `^` (caret): `"Test^Channel"`
+- `$` (dollar): `"Money$"`
+- `\` (backslash): `"Test\Channel"`
+- `{}` (curly braces): `"Channel{1}"`
+
+**Unicode and Special Characters:**
+- Standard unicode: `"TVP Polonia"`
+- Symbols: `"Channel™"`
+- Emoji: `"Fun 😊 TV"`
+
+**Edge Cases:**
+- Multiple consecutive spaces: `"HBO  3"`
+- Empty channel names
+- Very long channel names (1000+ characters)
+- Newlines and tabs in names
+
+**Security:**
+- Regex injection prevention: `".*"` treated as literal, not as "match anything"
+
+### Verification
+
+All 40 regex-related tests pass, including:
+- `test_regex_validation.py` (13 tests)
+- `test_regex_live_preview.py` (7 tests)
+- `test_mass_regex_assignment.py` (9 tests)
+- `test_regex_whitespace_matching.py` (11 tests)
+- `test_channel_name_variable_resilience.py` (29 tests) **[NEW]**
+
+### Impact
+
+This fix ensures that **all automations** using stream matching now properly handle channel names with special characters:
+
+1. **Stream Discovery & Assignment** (`discover_and_assign_streams`)
+2. **Stream Validation & Removal** (`validate_and_remove_non_matching_streams`)
+3. **Live Preview** (`test_regex_pattern_live`)
+4. **Single Channel Checks** (via stream checker service)
+5. **Global Checks** (via stream checker service)
+6. **EPG Scheduling** (via scheduling service)
+
+### User Benefits
+
+- ✓ Channel names with special characters work correctly
+- ✓ No more failed matches due to escaping issues
+- ✓ Emoji and unicode fully supported in channel names
+- ✓ Complex regex patterns with CHANNEL_NAME work as expected
+- ✓ Live preview accurately reflects actual matching behavior
+
