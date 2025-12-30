@@ -359,14 +359,14 @@ class UDIStorage:
         """
         with self._profile_channels_lock:
             data = self._load_json(self.profile_channels_file)
-            # convert string keys back to integers and validate values are dictionaries
+            # Convert string keys back to integers and validate values are dictionaries
             if isinstance(data, dict):
                 result = {}
                 for k, v in data.items():
                     try:
-                        # convert key to integer
+                        # Convert key to integer
                         key = int(k) if isinstance(k, str) else k
-                        # validate value is a dictionary, skip if not
+                        # Validate value is a dictionary, skip if not
                         if isinstance(v, dict):
                             result[key] = v
                         else:
