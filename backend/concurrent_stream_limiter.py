@@ -114,7 +114,7 @@ class AccountStreamLimiter:
         available = limit - active_count
         return max(0, available)
     
-    def acquire(self, account_id: Optional[int], timeout: float = None) -> bool:
+    def acquire(self, account_id: Optional[int], timeout: float = None) -> tuple[bool, str]:
         """
         Acquire permission to check a stream from the given account.
         
@@ -125,11 +125,14 @@ class AccountStreamLimiter:
             timeout: Maximum time to wait in seconds (None = wait forever)
             
         Returns:
-            True if acquired, False if timed out or limit reached
+            Tuple of (acquired: bool, reason: str)
+            - (True, 'acquired') if slot was acquired
+            - (False, 'active_viewers') if limit reached due to active viewers
+            - (False, 'timeout') if timed out waiting for semaphore
         """
         if account_id is None:
             # Custom stream with no account - always allow
-            return True
+            return (True, 'acquired')
         
         # Check if we have available slots considering active viewers
         available_slots = self.get_available_slots(account_id)
@@ -137,24 +140,24 @@ class AccountStreamLimiter:
         if available_slots != -1 and available_slots <= 0:
             # No slots available due to active viewers
             logger.warning(f"Cannot acquire slot for account {account_id}: limit reached with active viewers")
-            return False
+            return (False, 'active_viewers')
         
         with self.lock:
             semaphore = self.account_semaphores.get(account_id)
         
         if semaphore is None:
             # No limit set for this account (or unlimited)
-            return True
+            return (True, 'acquired')
         
         # Try to acquire the semaphore
         acquired = semaphore.acquire(blocking=True, timeout=timeout)
         
         if acquired:
             logger.debug(f"Acquired stream slot for account {account_id}")
+            return (True, 'acquired')
         else:
             logger.warning(f"Timeout acquiring stream slot for account {account_id}")
-        
-        return acquired
+            return (False, 'timeout')
     
     def release(self, account_id: Optional[int]):
         """
@@ -262,9 +265,36 @@ class SmartStreamScheduler:
                 
                 # Acquire account slot before submitting to executor
                 # This ensures we don't exceed per-account limits
-                if not self.account_limiter.acquire(account_id, timeout=300):
-                    logger.error(f"Timeout acquiring slot for account {account_id}, skipping stream {stream['id']}")
-                    return None
+                acquired, reason = self.account_limiter.acquire(account_id, timeout=300)
+                
+                if not acquired:
+                    if reason == 'active_viewers':
+                        # Quota fully consumed by active viewers - use cached stats
+                        logger.info(f"Skipping check for stream {stream['id']} - quota consumed by active viewers, using cached stats")
+                        
+                        # Get cached stream stats from UDI
+                        if self.account_limiter.udi_manager:
+                            try:
+                                cached_stream = self.account_limiter.udi_manager.get_stream_by_id(stream['id'])
+                                if cached_stream and cached_stream.get('stream_stats'):
+                                    # Return a result with cached stats
+                                    return {
+                                        'stream_id': stream['id'],
+                                        'stream_name': stream.get('name', 'Unknown'),
+                                        'stream_url': stream.get('url', ''),
+                                        'cached': True,
+                                        'skipped_reason': 'quota_consumed_by_active_viewers',
+                                        **cached_stream.get('stream_stats', {})
+                                    }
+                                else:
+                                    logger.warning(f"No cached stats available for stream {stream['id']}, skipping")
+                            except Exception as e:
+                                logger.error(f"Error retrieving cached stats for stream {stream['id']}: {e}")
+                        return None
+                    else:
+                        # Timeout - skip stream
+                        logger.error(f"Timeout acquiring slot for account {account_id}, skipping stream {stream['id']}")
+                        return None
                 
                 def wrapped_check():
                     """Wrapper that ensures semaphore is released."""
@@ -285,14 +315,24 @@ class SmartStreamScheduler:
                 return future
             
             # Submit all streams with stagger delay
+            cached_results = []  # Store results from cached stats
             for stream in streams:
                 if stagger_delay > 0 and futures:
                     time.sleep(stagger_delay)
                 
-                future = submit_stream_check(stream)
-                if future is not None:
-                    futures[future] = stream
-                    logger.debug(f"Submitted stream {stream['id']} for checking")
+                future_or_result = submit_stream_check(stream)
+                if future_or_result is not None:
+                    if isinstance(future_or_result, dict):
+                        # This is a cached result, not a future
+                        cached_results.append(future_or_result)
+                        with lock:
+                            results.append(future_or_result)
+                            completed_count += 1
+                        logger.debug(f"Using cached stats for stream {stream['id']}")
+                    else:
+                        # This is a future for async check
+                        futures[future_or_result] = stream
+                        logger.debug(f"Submitted stream {stream['id']} for checking")
             
             # Process completed tasks as they finish (in completion order for better parallelism)
             from concurrent.futures import as_completed

@@ -186,8 +186,9 @@ class TestStreamLimiterWithCurrentViewers(unittest.TestCase):
         self.mock_udi.get_active_streams_for_account.return_value = 2
         
         # Should not be able to acquire
-        acquired = self.limiter.acquire(1, timeout=0.1)
+        acquired, reason = self.limiter.acquire(1, timeout=0.1)
         self.assertFalse(acquired, "Should not acquire when at limit")
+        self.assertEqual(reason, 'active_viewers', "Should fail due to active viewers")
     
     def test_acquire_succeeds_when_below_limit(self):
         """Test that acquire succeeds when below limit."""
@@ -198,8 +199,9 @@ class TestStreamLimiterWithCurrentViewers(unittest.TestCase):
         self.mock_udi.get_active_streams_for_account.return_value = 2
         
         # Should be able to acquire
-        acquired = self.limiter.acquire(1, timeout=0.1)
+        acquired, reason = self.limiter.acquire(1, timeout=0.1)
         self.assertTrue(acquired, "Should acquire when below limit")
+        self.assertEqual(reason, 'acquired', "Should succeed with 'acquired' reason")
         
         # Clean up
         if acquired:
@@ -214,12 +216,57 @@ class TestStreamLimiterWithCurrentViewers(unittest.TestCase):
         self.mock_udi.get_active_streams_for_account.side_effect = Exception("UDI error")
         
         # Should still work (treating as 0 active streams)
-        acquired = self.limiter.acquire(1, timeout=0.1)
+        acquired, reason = self.limiter.acquire(1, timeout=0.1)
         self.assertTrue(acquired, "Should acquire even with UDI error")
+        self.assertEqual(reason, 'acquired', "Should succeed with 'acquired' reason")
         
         # Clean up
         if acquired:
             self.limiter.release(1)
+    
+    def test_cached_stats_returned_when_quota_consumed(self):
+        """Test that cached stats are returned when quota is consumed by active viewers."""
+        from concurrent_stream_limiter import SmartStreamScheduler
+        
+        # Set account limit to 2
+        self.limiter.set_account_limit(1, 2)
+        
+        # Mock UDI to return 2 active streams (at limit)
+        self.mock_udi.get_active_streams_for_account.return_value = 2
+        
+        # Mock get_stream_by_id to return cached stats
+        self.mock_udi.get_stream_by_id.return_value = {
+            'id': 1,
+            'name': 'Test Stream',
+            'stream_stats': {
+                'resolution': '1920x1080',
+                'bitrate_kbps': 5000,
+                'fps': 30,
+                'video_codec': 'h264',
+                'audio_codec': 'aac'
+            }
+        }
+        
+        # Create scheduler with the limiter
+        scheduler = SmartStreamScheduler(self.limiter, global_limit=10)
+        
+        # Mock check function (should not be called for cached results)
+        check_func = Mock(return_value={'status': 'OK'})
+        
+        # Test stream
+        streams = [{'id': 1, 'name': 'Test Stream', 'url': 'http://test.com', 'm3u_account': 1}]
+        
+        # Run check
+        results = scheduler.check_streams_with_limits(streams, check_func)
+        
+        # Should have 1 result with cached stats
+        self.assertEqual(len(results), 1, "Should have 1 result")
+        self.assertTrue(results[0].get('cached'), "Result should be marked as cached")
+        self.assertEqual(results[0].get('resolution'), '1920x1080', "Should have cached resolution")
+        self.assertEqual(results[0].get('skipped_reason'), 'quota_consumed_by_active_viewers')
+        
+        # Check function should not have been called
+        check_func.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -34,6 +34,11 @@ class TestAccountStreamLimiter(unittest.TestCase):
         """Set up test fixtures."""
         self.limiter = AccountStreamLimiter()
     
+    def _acquire(self, account_id, timeout=None):
+        """Helper to acquire and return just the boolean result."""
+        acquired, _ = self.limiter.acquire(account_id, timeout=timeout)
+        return acquired
+    
     def test_set_account_limit(self):
         """Test setting account limits."""
         self.limiter.set_account_limit(1, 2)
@@ -48,7 +53,7 @@ class TestAccountStreamLimiter(unittest.TestCase):
         
         # Should be able to acquire many times
         for _ in range(100):
-            self.assertTrue(self.limiter.acquire(1))
+            self.assertTrue(self._acquire(1))
         
         # Releases should not fail
         for _ in range(100):
@@ -59,29 +64,29 @@ class TestAccountStreamLimiter(unittest.TestCase):
         self.limiter.set_account_limit(1, 1)
         
         # First acquire should succeed
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
         
         # Second acquire should timeout
-        self.assertFalse(self.limiter.acquire(1, timeout=0.1))
+        self.assertFalse(self._acquire(1, timeout=0.1))
         
         # After release, should be able to acquire again
         self.limiter.release(1)
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
     
     def test_multiple_stream_limit(self):
         """Test account with max_streams=2."""
         self.limiter.set_account_limit(1, 2)
         
         # First two acquires should succeed
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
         
         # Third acquire should timeout
-        self.assertFalse(self.limiter.acquire(1, timeout=0.1))
+        self.assertFalse(self._acquire(1, timeout=0.1))
         
         # After one release, should be able to acquire one more
         self.limiter.release(1)
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
     
     def test_multiple_accounts_independent(self):
         """Test that different accounts have independent limits."""
@@ -89,19 +94,19 @@ class TestAccountStreamLimiter(unittest.TestCase):
         self.limiter.set_account_limit(2, 2)
         
         # Account 1: max 1 stream
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
-        self.assertFalse(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
+        self.assertFalse(self._acquire(1, timeout=0.1))
         
         # Account 2: max 2 streams (should still work)
-        self.assertTrue(self.limiter.acquire(2, timeout=0.1))
-        self.assertTrue(self.limiter.acquire(2, timeout=0.1))
-        self.assertFalse(self.limiter.acquire(2, timeout=0.1))
+        self.assertTrue(self._acquire(2, timeout=0.1))
+        self.assertTrue(self._acquire(2, timeout=0.1))
+        self.assertFalse(self._acquire(2, timeout=0.1))
     
     def test_custom_stream_always_allowed(self):
         """Test that custom streams (None account) are always allowed."""
         # Even without setting any limits
         for _ in range(100):
-            self.assertTrue(self.limiter.acquire(None))
+            self.assertTrue(self._acquire(None))
         
         # Releases should not fail
         for _ in range(100):
