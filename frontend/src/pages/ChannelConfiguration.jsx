@@ -424,7 +424,7 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, groups, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel }) {
+function RegexTableRow({ channel, group, groups, patterns, channelSettings, selectedChannels, onToggleChannel, onEditRegex, onUpdateSettings, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel, m3uAccounts }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
   const { toast } = useToast()
@@ -2176,6 +2176,7 @@ export default function ChannelConfiguration() {
                             onToggleExpanded={handleToggleExpanded}
                             onCheckChannel={handleCheckChannel}
                             checkingChannel={checkingChannel}
+                            m3uAccounts={m3uAccounts}
                           />
                         )
                       })}
