@@ -33,14 +33,20 @@ class AccountStreamLimiter:
     Manages concurrent stream limits per M3U account.
     
     Uses semaphores to enforce per-account concurrency limits while allowing
-    maximum parallelism across different accounts.
+    maximum parallelism across different accounts. Also considers active viewers
+    from the UDI when determining available slots.
     """
     
-    def __init__(self):
-        """Initialize the account stream limiter."""
+    def __init__(self, udi_manager=None):
+        """Initialize the account stream limiter.
+        
+        Args:
+            udi_manager: Optional UDI manager instance for checking active viewers
+        """
         self.account_semaphores: Dict[int, threading.Semaphore] = {}
         self.account_limits: Dict[int, int] = {}
         self.lock = threading.Lock()
+        self.udi_manager = udi_manager
         logger.info("AccountStreamLimiter initialized")
     
     def set_account_limit(self, account_id: int, max_streams: int):
@@ -78,20 +84,60 @@ class AccountStreamLimiter:
         """
         return self.account_limits.get(account_id, 0)
     
+    def get_available_slots(self, account_id: int) -> int:
+        """
+        Get the number of available stream slots for an account.
+        
+        Considers both active viewers (from UDI) and currently checking streams.
+        
+        Args:
+            account_id: M3U account ID
+            
+        Returns:
+            Number of available slots (0 if at limit, -1 if unlimited)
+        """
+        limit = self.get_account_limit(account_id)
+        
+        if limit == 0:
+            # Unlimited
+            return -1
+        
+        # Get active streams from UDI if available
+        active_count = 0
+        if self.udi_manager:
+            try:
+                active_count = self.udi_manager.get_active_streams_for_account(account_id)
+            except Exception as e:
+                logger.warning(f"Could not get active streams for account {account_id}: {e}")
+        
+        # Available slots = limit - active streams
+        available = limit - active_count
+        return max(0, available)
+    
     def acquire(self, account_id: Optional[int], timeout: float = None) -> bool:
         """
         Acquire permission to check a stream from the given account.
+        
+        Considers active viewers (from UDI) when determining if a slot is available.
         
         Args:
             account_id: M3U account ID (None for custom streams)
             timeout: Maximum time to wait in seconds (None = wait forever)
             
         Returns:
-            True if acquired, False if timed out
+            True if acquired, False if timed out or limit reached
         """
         if account_id is None:
             # Custom stream with no account - always allow
             return True
+        
+        # Check if we have available slots considering active viewers
+        available_slots = self.get_available_slots(account_id)
+        
+        if available_slots != -1 and available_slots <= 0:
+            # No slots available due to active viewers
+            logger.warning(f"Cannot acquire slot for account {account_id}: limit reached with active viewers")
+            return False
         
         with self.lock:
             semaphore = self.account_semaphores.get(account_id)
