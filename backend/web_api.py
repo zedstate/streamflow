@@ -959,7 +959,7 @@ def test_regex_pattern():
 def test_regex_pattern_live():
     """Test regex patterns against all available streams to see what would be matched."""
     try:
-        from api_utils import get_streams
+        from api_utils import get_streams, get_m3u_accounts
         import re
         
         data = request.get_json()
@@ -982,6 +982,11 @@ def test_regex_pattern_live():
                 "total_streams": 0,
                 "message": "No streams available"
             })
+        
+        # Get M3U accounts to map account IDs to names
+        m3u_accounts_list = get_m3u_accounts() or []
+        m3u_account_map = {acc.get('id'): acc.get('name', f'Account {acc.get("id")}') 
+                          for acc in m3u_accounts_list if acc.get('id') is not None}
         
         results = []
         
@@ -1046,11 +1051,13 @@ def test_regex_pattern_live():
                         continue
                 
                 if matched and len(matched_streams) < max_matches_per_pattern:
+                    m3u_account_id = stream.get('m3u_account')
                     matched_streams.append({
                         "stream_id": stream_id,
                         "stream_name": stream_name,
                         "matched_pattern": matched_pattern,
-                        "m3u_account": stream.get('m3u_account')  # Include M3U account in results
+                        "m3u_account": m3u_account_id,
+                        "m3u_account_name": m3u_account_map.get(m3u_account_id) if m3u_account_id else None
                     })
             
             results.append({

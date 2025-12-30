@@ -62,6 +62,12 @@ Add a single regex pattern to multiple channels at once:
 - One pattern works for multiple channels with different names
 - Reduces duplication and makes pattern management easier
 - **Live Preview**: The live regex preview automatically substitutes `CHANNEL_NAME` with the actual channel name, so you can see what streams will be matched in real-time
+  - **Provider Differentiation**: When streams have the same name but come from different M3U providers, the preview shows the provider name below each stream (in italics) so you can distinguish between them
+  - Example: If two providers both offer "ESPN HD", you'll see:
+    - ESPN HD
+    - *Provider: Premium Sports*
+    - ESPN HD
+    - *Provider: Basic Package*
 - **Special Characters**: Channel names with special regex characters (like `+`, `.`, `*`, etc.) are automatically escaped to prevent regex errors
 
 #### 5. Search/Filter Field
