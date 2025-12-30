@@ -946,6 +946,31 @@ class UDIManager:
         
         return None
     
+    def _is_channel_status_active(self, status: Dict[str, Any]) -> bool:
+        """Check if a channel status indicates it's active.
+        
+        Args:
+            status: Channel status dictionary from proxy
+            
+        Returns:
+            True if channel is active, False otherwise
+        """
+        if not isinstance(status, dict):
+            return False
+            
+        # Check various indicators of activity
+        if status.get('current_stream'):
+            return True
+        if status.get('active'):
+            return True
+            
+        # Check if there are active clients
+        clients = status.get('clients')
+        if clients and len(clients) > 0:
+            return True
+            
+        return False
+    
     def _get_proxy_status(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Get cached proxy status or fetch fresh if needed.
         
@@ -995,20 +1020,12 @@ class UDIManager:
         # Build a map of active channel IDs from proxy status
         active_channels = {}
         for channel_id_str, status in proxy_status.items():
-            if isinstance(status, dict):
-                # Check if channel is active (current_stream, active flag, or has clients)
-                is_active = (
-                    status.get('current_stream') or 
-                    status.get('active') or 
-                    (status.get('clients') and len(status.get('clients', [])) > 0)
-                )
-                    
-                if is_active:
-                    try:
-                        channel_id = int(channel_id_str)
-                        active_channels[channel_id] = status
-                    except (ValueError, TypeError):
-                        pass
+            if self._is_channel_status_active(status):
+                try:
+                    channel_id = int(channel_id_str)
+                    active_channels[channel_id] = status
+                except (ValueError, TypeError):
+                    pass
         
         # Now count how many streams from this account are in active channels
         active_count = 0
@@ -1116,15 +1133,9 @@ class UDIManager:
         channel_id_str = str(channel_id)
         if channel_id_str in proxy_status:
             status = proxy_status[channel_id_str]
-            if isinstance(status, dict):
-                # Check if channel is active
-                is_active = (
-                    status.get('current_stream') or 
-                    status.get('active') or 
-                    (status.get('clients') and len(status.get('clients', [])) > 0)
-                )
-                logger.debug(f"Channel {channel_id} is {'active' if is_active else 'inactive'} (from proxy status)")
-                return is_active
+            is_active = self._is_channel_status_active(status)
+            logger.debug(f"Channel {channel_id} is {'active' if is_active else 'inactive'} (from proxy status)")
+            return is_active
         
         logger.debug(f"Channel {channel_id} is not in proxy status, assuming inactive")
         return False
