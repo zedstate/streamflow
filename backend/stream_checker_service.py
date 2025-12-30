@@ -1205,7 +1205,7 @@ class StreamCheckerService:
             logger.info("Step 4/6: Validating existing streams against regex patterns...")
             try:
                 if automation_manager is not None:
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams(force=True)
                     if validation_results.get("streams_removed", 0) > 0:
                         logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
                     else:
@@ -2861,8 +2861,8 @@ class StreamCheckerService:
                     from automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
-                    # Run validation for this channel
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    # Run validation for this channel with force=True to bypass config check
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams(force=True)
                     if validation_results.get("streams_removed", 0) > 0:
                         logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams")
                     else:

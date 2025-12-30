@@ -67,11 +67,11 @@ def disable_empty_channels_in_profile(profile_id: int,
         # currently enabled in the profile (the snapshot represents the desired state)
         if check_enabled_only:
             try:
-                profile = udi.get_channel_profile_by_id(profile_id)
-                if profile:
+                profile_channels = udi.get_profile_channels(profile_id)
+                if profile_channels:
                     # Get list of enabled channel IDs in this profile
                     enabled_channel_ids = set()
-                    for ch in profile.get('channels', []):
+                    for ch in profile_channels.get('channels', []):
                         if ch.get('enabled', False):
                             enabled_channel_ids.add(ch.get('channel_id'))
                     

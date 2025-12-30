@@ -13,7 +13,7 @@ logger = setup_logging(__name__)
 
 
 # Valid entity types for caching
-VALID_ENTITY_TYPES = ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles']
+VALID_ENTITY_TYPES = ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles', 'profile_channels']
 
 
 # Default TTL values in seconds
@@ -23,6 +23,7 @@ DEFAULT_CHANNEL_GROUPS_TTL = 3600  # 1 hour
 DEFAULT_LOGOS_TTL = 3600  # 1 hour
 DEFAULT_M3U_ACCOUNTS_TTL = 3600  # 1 hour
 DEFAULT_CHANNEL_PROFILES_TTL = 3600  # 1 hour
+DEFAULT_PROFILE_CHANNELS_TTL = 3600  # 1 hour
 
 
 class UDICache:
@@ -35,7 +36,8 @@ class UDICache:
         channel_groups_ttl: int = DEFAULT_CHANNEL_GROUPS_TTL,
         logos_ttl: int = DEFAULT_LOGOS_TTL,
         m3u_accounts_ttl: int = DEFAULT_M3U_ACCOUNTS_TTL,
-        channel_profiles_ttl: int = DEFAULT_CHANNEL_PROFILES_TTL
+        channel_profiles_ttl: int = DEFAULT_CHANNEL_PROFILES_TTL,
+        profile_channels_ttl: int = DEFAULT_PROFILE_CHANNELS_TTL
     ):
         """Initialize cache settings.
         
@@ -46,6 +48,7 @@ class UDICache:
             logos_ttl: TTL in seconds for logos cache
             m3u_accounts_ttl: TTL in seconds for M3U accounts cache
             channel_profiles_ttl: TTL in seconds for channel profiles cache
+            profile_channels_ttl: TTL in seconds for profile channels cache
         """
         self.ttl = {
             'channels': channels_ttl,
@@ -53,7 +56,8 @@ class UDICache:
             'channel_groups': channel_groups_ttl,
             'logos': logos_ttl,
             'm3u_accounts': m3u_accounts_ttl,
-            'channel_profiles': channel_profiles_ttl
+            'channel_profiles': channel_profiles_ttl,
+            'profile_channels': profile_channels_ttl
         }
         
         # Track when each entity type was last refreshed
@@ -63,7 +67,8 @@ class UDICache:
             'channel_groups': None,
             'logos': None,
             'm3u_accounts': None,
-            'channel_profiles': None
+            'channel_profiles': None,
+            'profile_channels': None
         }
         
         # Track when cache was manually invalidated
@@ -73,7 +78,8 @@ class UDICache:
             'channel_groups': False,
             'logos': False,
             'm3u_accounts': False,
-            'channel_profiles': False
+            'channel_profiles': False,
+            'profile_channels': False
         }
     
     def mark_refreshed(self, entity_type: str, timestamp: Optional[datetime] = None) -> None:

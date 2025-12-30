@@ -1141,10 +1141,14 @@ class AutomatedStreamManager:
                 })
             return {}
     
-    def validate_and_remove_non_matching_streams(self) -> Dict[str, Any]:
+    def validate_and_remove_non_matching_streams(self, force: bool = False) -> Dict[str, Any]:
         """
         Validate existing streams in channels against regex patterns.
         Remove streams that no longer match their channel's patterns.
+        
+        Args:
+            force: If True, bypass the automation_controls config check.
+                   Used when called from single channel checks or manual operations.
         
         Returns:
             Dict containing validation statistics:
@@ -1155,28 +1159,29 @@ class AutomatedStreamManager:
         """
         log_function_call(logger, "validate_and_remove_non_matching_streams")
         
-        # Check if removal is enabled in stream checker config
-        try:
-            from stream_checker_service import get_stream_checker_service
-            stream_checker = get_stream_checker_service()
-            removal_enabled = stream_checker.config.get('automation_controls', {}).get('remove_non_matching_streams', False)
-            
-            if not removal_enabled:
-                logger.debug("Stream removal is disabled in automation_controls")
+        # Check if removal is enabled in stream checker config (unless forced)
+        if not force:
+            try:
+                from stream_checker_service import get_stream_checker_service
+                stream_checker = get_stream_checker_service()
+                removal_enabled = stream_checker.config.get('automation_controls', {}).get('remove_non_matching_streams', False)
+                
+                if not removal_enabled:
+                    logger.debug("Stream removal is disabled in automation_controls")
+                    return {
+                        "channels_checked": 0,
+                        "streams_removed": 0,
+                        "channels_modified": 0,
+                        "details": []
+                    }
+            except Exception as e:
+                logger.warning(f"Could not check stream checker config: {e}, skipping validation")
                 return {
                     "channels_checked": 0,
                     "streams_removed": 0,
                     "channels_modified": 0,
                     "details": []
                 }
-        except Exception as e:
-            logger.warning(f"Could not check stream checker config: {e}, skipping validation")
-            return {
-                "channels_checked": 0,
-                "streams_removed": 0,
-                "channels_modified": 0,
-                "details": []
-            }
         
         try:
             logger.info("=" * 80)
