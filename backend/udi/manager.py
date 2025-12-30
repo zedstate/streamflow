@@ -1043,26 +1043,6 @@ class UDIManager:
         logger.debug(f"Account {account_id} has {active_count} active streams (from proxy status)")
         return active_count
     
-    def _count_active_streams_legacy(self, account_id: int) -> int:
-        """Count streams with current_viewers > 0 for an account (legacy method).
-        
-        This is the old method that uses database current_viewers field.
-        Kept for backward compatibility.
-        
-        Args:
-            account_id: M3U account ID
-            
-        Returns:
-            Number of active streams
-        """
-        active_count = 0
-        for stream in self._streams_cache:
-            if stream.get('m3u_account') == account_id:
-                current_viewers = stream.get('current_viewers', 0)
-                if current_viewers > 0:
-                    active_count += 1
-        return active_count
-    
     def _sum_total_viewers(self, account_id: int) -> int:
         """Sum all current_viewers for an account.
         
