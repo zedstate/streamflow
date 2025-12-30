@@ -212,6 +212,54 @@ class TestProxyStatusIntegration(unittest.TestCase):
         with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
             active_count = self.udi.get_active_streams_for_account(1)
             self.assertEqual(active_count, 1, "Should detect active stream from clients field")
+    
+    def test_is_channel_active(self):
+        """Test checking if a specific channel is active."""
+        # Mock proxy status with channel 100 active
+        mock_proxy_status = {
+            '100': {
+                'channel_id': 100,
+                'current_stream': 'http://example.com/stream1',
+                'active': True
+            }
+        }
+        
+        with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
+            # Channel 100 should be active
+            is_active = self.udi.is_channel_active(100)
+            self.assertTrue(is_active, "Channel 100 should be active")
+            
+            # Channel 101 should not be active
+            is_active = self.udi.is_channel_active(101)
+            self.assertFalse(is_active, "Channel 101 should not be active")
+    
+    def test_is_channel_active_with_clients(self):
+        """Test checking if a channel is active based on clients field."""
+        # Mock proxy status with channel 100 having active clients
+        mock_proxy_status = {
+            '100': {
+                'channel_id': 100,
+                'clients': [{'id': 'client1'}]
+            }
+        }
+        
+        with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
+            is_active = self.udi.is_channel_active(100)
+            self.assertTrue(is_active, "Channel 100 should be active due to clients")
+    
+    def test_is_channel_active_empty_clients(self):
+        """Test that empty clients list means channel is not active."""
+        # Mock proxy status with channel 100 having empty clients
+        mock_proxy_status = {
+            '100': {
+                'channel_id': 100,
+                'clients': []
+            }
+        }
+        
+        with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
+            is_active = self.udi.is_channel_active(100)
+            self.assertFalse(is_active, "Channel 100 should not be active with empty clients")
 
 
 if __name__ == '__main__':
