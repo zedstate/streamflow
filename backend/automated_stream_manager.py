@@ -1146,9 +1146,16 @@ class AutomatedStreamManager:
         Validate existing streams in channels against regex patterns.
         Remove streams that no longer match their channel's patterns.
         
+        This function respects the automation_controls.remove_non_matching_streams setting
+        unless force=True is passed. This ensures consistent behavior across:
+        - Automation cycles (step 1.5 in the pipeline)
+        - Single channel checks
+        - Global actions
+        
         Args:
             force: If True, bypass the automation_controls config check.
-                   Used when called from single channel checks or manual operations.
+                   Reserved for future use or special cases where removal must happen
+                   regardless of user settings. Default is False to respect user config.
         
         Returns:
             Dict containing validation statistics:
