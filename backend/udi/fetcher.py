@@ -530,7 +530,7 @@ class UDIFetcher:
         
         Handles multiple response formats:
         - New format: {"channels": [...], "count": N}
-        - Legacy dict format: {"channel_id": {...}, ...}
+        - Legacy dict format: {channel_id_str: {...}, ...}
         - Legacy list format: [{...}, {...}]
         
         Args:
@@ -551,10 +551,11 @@ class UDIFetcher:
                 logger.debug(f"Processed {len(result)} channels from channels array")
                 return result
         
-        # Legacy format: dict keyed by channel_id
-        if isinstance(status_data, dict):
-            # If it has channel_id keys directly, it's already in the right format
-            if status_data and any('channel_id' in v for v in status_data.values() if isinstance(v, dict)):
+        # Legacy format: dict keyed by channel_id (e.g., {"100": {...}, "101": {...}})
+        # Check if it's a dict and doesn't have special keys like 'channels' or 'count'
+        if isinstance(status_data, dict) and not any(k in status_data for k in ['channels', 'count']):
+            # Verify it's a legacy format by checking if values are channel objects
+            if status_data and all(isinstance(v, dict) for v in status_data.values()):
                 logger.debug(f"Using legacy dict format with {len(status_data)} channels")
                 return status_data
         
