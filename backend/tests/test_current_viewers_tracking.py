@@ -49,6 +49,17 @@ class TestCurrentViewersTracking(unittest.TestCase):
             }
         ]
         
+        # Test channels (needed for proxy status to work)
+        self.udi._channels_cache = [
+            {'id': 100, 'name': 'Channel 100', 'streams': [2]},  # Stream 2 from Account 1
+            {'id': 101, 'name': 'Channel 101', 'streams': [3]},  # Stream 3 from Account 1
+            {'id': 102, 'name': 'Channel 102', 'streams': [4]},  # Stream 4 from Account 2
+            {'id': 103, 'name': 'Channel 103', 'streams': [6]},  # Stream 6 from Account 2
+        ]
+        
+        # Build channel index
+        self.udi._channels_by_id = {ch['id']: ch for ch in self.udi._channels_cache}
+        
         # Test streams with current_viewers
         self.udi._streams_cache = [
             # Account 1 streams
@@ -60,16 +71,28 @@ class TestCurrentViewersTracking(unittest.TestCase):
             {'id': 5, 'name': 'Stream 5', 'm3u_account': 2, 'current_viewers': 0},
             {'id': 6, 'name': 'Stream 6', 'm3u_account': 2, 'current_viewers': 1},
         ]
+        
+        # Build stream index
+        self.udi._streams_by_id = {s['id']: s for s in self.udi._streams_cache}
     
     def test_get_active_streams_for_account(self):
         """Test counting active streams for an account."""
-        # Account 1 has 2 streams with viewers > 0
-        active_count = self.udi.get_active_streams_for_account(1)
-        self.assertEqual(active_count, 2, "Account 1 should have 2 active streams")
+        # Mock proxy status showing channels 100, 101 (account 1), and 102, 103 (account 2) are active
+        mock_proxy_status = {
+            '100': {'channel_id': '100', 'state': 'active'},  # Stream 2 from Account 1
+            '101': {'channel_id': '101', 'state': 'active'},  # Stream 3 from Account 1
+            '102': {'channel_id': '102', 'state': 'active'},  # Stream 4 from Account 2
+            '103': {'channel_id': '103', 'state': 'active'},  # Stream 6 from Account 2
+        }
         
-        # Account 2 has 2 streams with viewers > 0
-        active_count = self.udi.get_active_streams_for_account(2)
-        self.assertEqual(active_count, 2, "Account 2 should have 2 active streams")
+        with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
+            # Account 1 has 2 active streams (channels 100 and 101)
+            active_count = self.udi.get_active_streams_for_account(1)
+            self.assertEqual(active_count, 2, "Account 1 should have 2 active streams")
+            
+            # Account 2 has 2 active streams (channels 102 and 103)
+            active_count = self.udi.get_active_streams_for_account(2)
+            self.assertEqual(active_count, 2, "Account 2 should have 2 active streams")
     
     def test_get_total_viewers_for_account(self):
         """Test summing total viewers for an account."""
@@ -83,13 +106,22 @@ class TestCurrentViewersTracking(unittest.TestCase):
     
     def test_get_active_streams_for_profile(self):
         """Test counting active streams for a profile."""
-        # Profile 101 belongs to account 1, which has 2 active streams
-        active_count = self.udi.get_active_streams_for_profile(101)
-        self.assertEqual(active_count, 2, "Profile 101 should have 2 active streams")
+        # Mock proxy status showing channels 100, 101 (account 1), and 102, 103 (account 2) are active
+        mock_proxy_status = {
+            '100': {'channel_id': '100', 'state': 'active'},  # Stream 2 from Account 1
+            '101': {'channel_id': '101', 'state': 'active'},  # Stream 3 from Account 1
+            '102': {'channel_id': '102', 'state': 'active'},  # Stream 4 from Account 2
+            '103': {'channel_id': '103', 'state': 'active'},  # Stream 6 from Account 2
+        }
         
-        # Profile 201 belongs to account 2, which has 2 active streams
-        active_count = self.udi.get_active_streams_for_profile(201)
-        self.assertEqual(active_count, 2, "Profile 201 should have 2 active streams")
+        with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
+            # Profile 101 belongs to account 1, which has 2 active streams
+            active_count = self.udi.get_active_streams_for_profile(101)
+            self.assertEqual(active_count, 2, "Profile 101 should have 2 active streams")
+            
+            # Profile 201 belongs to account 2, which has 2 active streams
+            active_count = self.udi.get_active_streams_for_profile(201)
+            self.assertEqual(active_count, 2, "Profile 201 should have 2 active streams")
     
     def test_get_total_viewers_for_profile(self):
         """Test summing total viewers for a profile."""
@@ -116,6 +148,7 @@ class TestCurrentViewersTracking(unittest.TestCase):
         
         total_viewers = self.udi.get_total_viewers_for_profile(999)
         self.assertEqual(total_viewers, 0, "Nonexistent profile should return 0 viewers")
+
 
 
 class TestStreamLimiterWithCurrentViewers(unittest.TestCase):

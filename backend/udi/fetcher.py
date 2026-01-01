@@ -531,6 +531,18 @@ class UDIFetcher:
         This fetches the actual running stream status from /proxy/ts/status endpoint,
         which provides accurate information about which streams are currently active.
         
+        The endpoint returns a structure like:
+        {
+            "channels": [
+                {
+                    "channel_id": "...",
+                    "state": "active",
+                    ...
+                }
+            ],
+            "count": N
+        }
+        
         Returns:
             Dictionary with channel_id -> status mapping, or empty dict if unavailable
         """
@@ -541,11 +553,23 @@ class UDIFetcher:
         url = f"{self.base_url}/proxy/ts/status"
         try:
             status_data = self._fetch_url(url)
-            if isinstance(status_data, dict):
+            
+            # Handle the new API response format with nested channels array
+            if isinstance(status_data, dict) and 'channels' in status_data:
+                channels_list = status_data.get('channels', [])
+                if isinstance(channels_list, list):
+                    result = {}
+                    for item in channels_list:
+                        if isinstance(item, dict) and 'channel_id' in item:
+                            result[str(item['channel_id'])] = item
+                    logger.debug(f"Fetched proxy status for {len(result)} channels (from channels array)")
+                    return result
+            # Legacy format: dict keyed by channel_id
+            elif isinstance(status_data, dict):
                 logger.debug(f"Fetched proxy status for {len(status_data)} channels")
                 return status_data
+            # Legacy format: flat list
             elif isinstance(status_data, list):
-                # If it returns a list, convert to dict keyed by channel_id
                 result = {}
                 for item in status_data:
                     if isinstance(item, dict) and 'channel_id' in item:

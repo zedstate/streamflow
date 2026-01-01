@@ -260,6 +260,53 @@ class TestProxyStatusIntegration(unittest.TestCase):
         with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
             is_active = self.udi.is_channel_active(100)
             self.assertFalse(is_active, "Channel 100 should not be active with empty clients")
+    
+    def test_is_channel_active_with_state_field(self):
+        """Test checking if a channel is active based on state field (new API format)."""
+        # Mock proxy status with channel 100 having state='active'
+        mock_proxy_status = {
+            '100': {
+                'channel_id': '100',
+                'state': 'active',
+                'url': 'http://example.com/stream',
+                'stream_profile': '1',
+                'owner': '8ab76bb6f5f3:174',
+                'buffer_index': 1446,
+                'client_count': 1,
+                'uptime': 693.8248314857483,
+                'stream_id': 11554,
+                'stream_name': 'Test Stream',
+                'total_bytes': 365813760,
+                'avg_bitrate_kbps': 4217.9379393689405,
+                'clients': [
+                    {
+                        'client_id': 'client_1767279803960_3331',
+                        'user_agent': 'VLC/3.0.21 LibVLC/3.0.21',
+                        'ip_address': '79.116.168.102',
+                        'access_type': 'M3U',
+                        'connected_since': 693.7255585193634
+                    }
+                ]
+            }
+        }
+        
+        with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
+            is_active = self.udi.is_channel_active(100)
+            self.assertTrue(is_active, "Channel 100 should be active due to state='active'")
+    
+    def test_is_channel_not_active_with_state_field(self):
+        """Test that channel is not active when state is not 'active'."""
+        # Mock proxy status with channel 100 having state='idle' or other value
+        mock_proxy_status = {
+            '100': {
+                'channel_id': '100',
+                'state': 'idle'
+            }
+        }
+        
+        with patch.object(self.udi.fetcher, 'fetch_proxy_status', return_value=mock_proxy_status):
+            is_active = self.udi.is_channel_active(100)
+            self.assertFalse(is_active, "Channel 100 should not be active when state is not 'active'")
 
 
 if __name__ == '__main__':

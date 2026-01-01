@@ -958,7 +958,12 @@ class UDIManager:
         if not isinstance(status, dict):
             return False
             
-        # Check various indicators of activity
+        # Check the 'state' field (newer API format)
+        state = status.get('state')
+        if state == 'active':
+            return True
+            
+        # Check various indicators of activity (legacy formats)
         if status.get('current_stream'):
             return True
         if status.get('active'):
