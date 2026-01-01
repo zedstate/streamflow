@@ -1486,7 +1486,7 @@ class StreamCheckerService:
             # This ensures changelog and verification read the correct, up-to-date data
             updated_stream_data = existing_stream_data.copy()
             updated_stream_data['stream_stats'] = updated_stats
-            udi.update_stream(stream_id, updated_stream_data)
+            udi.update_stream(int(stream_id), updated_stream_data)
             logger.debug(f"Updated UDI cache for stream {stream_id} with new stats")
             
             return True
