@@ -1418,7 +1418,17 @@ class StreamCheckerService:
     
     
     def _update_stream_stats(self, stream_data: Dict) -> bool:
-        """Update stream stats for a single stream on the server."""
+        """Update stream stats for a single stream on the server and sync with UDI cache.
+        
+        This method:
+        1. Constructs the stats payload from analyzed stream data
+        2. Merges with existing stats on Dispatcharr
+        3. PATCHes the updated stats to Dispatcharr
+        4. Updates the UDI cache to keep it in sync
+        
+        This ensures that the UDI cache always reflects the latest stats written to Dispatcharr,
+        preventing inconsistencies between changelog data and actual Dispatcharr data.
+        """
         base_url = _get_base_url()
         if not base_url:
             logger.error("DISPATCHARR_BASE_URL not set.")
@@ -1471,6 +1481,14 @@ class StreamCheckerService:
             patch_payload = {"stream_stats": updated_stats}
             logger.info(f"Updating stream {stream_id} stats with: {stream_stats_payload}")
             patch_request(stream_url, patch_payload)
+            
+            # Update UDI cache with the new stats to keep it in sync with Dispatcharr
+            # This ensures changelog and verification read the correct, up-to-date data
+            updated_stream_data = existing_stream_data.copy()
+            updated_stream_data['stream_stats'] = updated_stats
+            udi.update_stream(int(stream_id), updated_stream_data)
+            logger.debug(f"Updated UDI cache for stream {stream_id} with new stats")
+            
             return True
         
         except Exception as e:
