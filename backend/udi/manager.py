@@ -1012,55 +1012,44 @@ class UDIManager:
     def _count_active_streams(self, account_id: int) -> int:
         """Count streams with active viewers for an account.
         
-        This method now uses real-time proxy status to determine which streams
-        are actually running, rather than relying on the potentially stale
-        current_viewers field in the database.
+        This method uses real-time proxy status from /proxy/ts/status to determine 
+        which streams are actually running. It correlates the m3u_profile_id from 
+        active channels to find which profiles (and their parent accounts) are in use.
         
         Args:
             account_id: M3U account ID
             
         Returns:
-            Number of active streams
+            Number of active streams for this account
         """
         # Get real-time proxy status
         proxy_status = self._get_proxy_status()
         
-        # Build a map of active channel IDs from proxy status
-        active_channels = {}
-        for channel_id_str, status in proxy_status.items():
-            if self._is_channel_status_active(status):
-                try:
-                    channel_id = int(channel_id_str)
-                    active_channels[channel_id] = status
-                except (ValueError, TypeError):
-                    logger.debug(f"Invalid channel ID in proxy status: {channel_id_str}")
-                    pass
-        
-        # Now count how many streams from this account are in active channels
+        # Count active channels that are using profiles from this account
         active_count = 0
         
-        for channel_id, status in active_channels.items():
-            # Find the channel
-            channel = self._channels_by_id.get(channel_id)
-            if not channel:
+        for channel_id_str, status in proxy_status.items():
+            if not self._is_channel_status_active(status):
                 continue
-                
-            # Get the streams for this channel
-            stream_ids = channel.get('streams', [])
-            if not stream_ids:
+            
+            # Get the m3u_profile_id from the proxy status
+            profile_id = status.get('m3u_profile_id')
+            if not profile_id:
+                logger.debug(f"Channel {channel_id_str} has no m3u_profile_id in proxy status")
                 continue
-                
-            # Check if any stream belongs to this account
-            for stream_id in stream_ids:
-                stream = self._streams_by_id.get(stream_id)
-                if stream and stream.get('m3u_account') == account_id:
-                    active_count += 1
-                    # Only count once per channel - a channel can have multiple streams
-                    # from the same account, but we only count it as one active stream
-                    # for the account limit purposes
-                    break
+            
+            # Find which account owns this profile
+            profile_account_id = self._find_account_for_profile(profile_id)
+            if profile_account_id is None:
+                logger.debug(f"Profile {profile_id} not found in any M3U account")
+                continue
+            
+            # If this profile belongs to the account we're checking, count it
+            if profile_account_id == account_id:
+                active_count += 1
+                logger.debug(f"Channel {channel_id_str} is using profile {profile_id} from account {account_id}")
         
-        logger.debug(f"Account {account_id} has {active_count} active streams (from proxy status)")
+        logger.debug(f"Account {account_id} has {active_count} active streams")
         return active_count
     
     def _sum_total_viewers(self, account_id: int) -> int:
@@ -1082,13 +1071,13 @@ class UDIManager:
     def get_active_streams_for_profile(self, profile_id: int) -> int:
         """Calculate the number of active streams for a specific M3U account profile.
         
-        This counts all streams that have current_viewers > 0 for the given profile.
+        Uses real-time proxy status to count channels that are actively using this profile.
         
         Args:
             profile_id: M3U account profile ID
             
         Returns:
-            Number of active streams (current_viewers > 0)
+            Number of active streams using this profile
         """
         self._ensure_initialized()
         
@@ -1107,13 +1096,14 @@ class UDIManager:
     def get_active_streams_for_account(self, account_id: int) -> int:
         """Calculate the number of active streams for an M3U account.
         
-        This counts all streams that have current_viewers > 0 for the given account.
+        Uses real-time proxy status to count channels that are actively using
+        profiles from this account.
         
         Args:
             account_id: M3U account ID
             
         Returns:
-            Number of active streams (current_viewers > 0)
+            Number of active streams for this account
         """
         self._ensure_initialized()
         
