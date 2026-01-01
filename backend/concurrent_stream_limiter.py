@@ -32,9 +32,11 @@ class AccountStreamLimiter:
     """
     Manages concurrent stream limits per M3U account.
     
-    Uses semaphores to enforce per-account concurrency limits while allowing
+    Uses tracking counters to enforce per-account concurrency limits while allowing
     maximum parallelism across different accounts. Also considers active viewers
     from the UDI when determining available slots.
+    
+    The limiter ensures: active_viewers + checking_streams <= max_streams
     """
     
     def __init__(self, udi_manager=None):
@@ -43,7 +45,6 @@ class AccountStreamLimiter:
         Args:
             udi_manager: Optional UDI manager instance for checking active viewers
         """
-        self.account_semaphores: Dict[int, threading.Semaphore] = {}
         self.account_limits: Dict[int, int] = {}
         self.account_checking_counts: Dict[int, int] = {}  # Track streams currently being checked
         self.lock = threading.Lock()
@@ -66,16 +67,7 @@ class AccountStreamLimiter:
             if account_id not in self.account_checking_counts:
                 self.account_checking_counts[account_id] = 0
             
-            # Create or update semaphore
-            if max_streams > 0:
-                # Create semaphore with the specified limit
-                self.account_semaphores[account_id] = threading.Semaphore(max_streams)
-                logger.debug(f"Set limit for account {account_id}: {max_streams} concurrent streams")
-            else:
-                # Unlimited - remove semaphore if it exists
-                if account_id in self.account_semaphores:
-                    del self.account_semaphores[account_id]
-                logger.debug(f"Set limit for account {account_id}: unlimited concurrent streams")
+            logger.debug(f"Set limit for account {account_id}: {max_streams} concurrent streams" if max_streams > 0 else f"Set limit for account {account_id}: unlimited concurrent streams")
     
     def get_account_limit(self, account_id: int) -> int:
         """
@@ -115,8 +107,12 @@ class AccountStreamLimiter:
             except Exception as e:
                 logger.warning(f"Could not get active streams for account {account_id}: {e}")
         
-        # Available slots = limit - active streams
-        available = limit - active_count
+        # Get currently checking streams
+        with self.lock:
+            checking_count = self.account_checking_counts.get(account_id, 0)
+        
+        # Available slots = limit - active streams - checking streams
+        available = limit - active_count - checking_count
         return max(0, available)
     
     def acquire(self, account_id: Optional[int], timeout: float = None) -> tuple[bool, str]:
@@ -222,9 +218,8 @@ class AccountStreamLimiter:
                 )
     
     def clear(self):
-        """Clear all account limits and semaphores."""
+        """Clear all account limits and checking counts."""
         with self.lock:
-            self.account_semaphores.clear()
             self.account_limits.clear()
             self.account_checking_counts.clear()
         logger.info("Cleared all account limits")
