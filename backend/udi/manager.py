@@ -42,6 +42,9 @@ from m3u_priority_config import get_m3u_priority_config
 
 logger = setup_logging(__name__)
 
+# Constants for channel status
+CHANNEL_STATE_ACTIVE = 'active'
+
 
 class UDIManager:
     """
@@ -960,7 +963,7 @@ class UDIManager:
             
         # Check the 'state' field (newer API format)
         state = status.get('state')
-        if state == 'active':
+        if state == CHANNEL_STATE_ACTIVE:
             return True
             
         # Check various indicators of activity (legacy formats)
