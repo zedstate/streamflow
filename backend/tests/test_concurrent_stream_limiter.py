@@ -304,6 +304,60 @@ class TestSmartStreamScheduler(unittest.TestCase):
         # Overall, should be able to run 3 streams concurrently (A1+B1+B2)
         self.assertEqual(max_concurrent[0], 3)
     
+    def test_active_viewers_limit_concurrent_checks(self):
+        """Test that active viewers reduce available slots for concurrent checks.
+        
+        This is the scenario from the problem statement:
+        - M3U account has max_streams=2
+        - 1 stream is currently being played (active viewer)
+        - Channel check runs with concurrent checking enabled
+        - Only 1 stream should be checked at a time (respecting the limit)
+        """
+        # Create a mock UDI manager that reports 1 active stream
+        mock_udi = Mock()
+        mock_udi.get_active_streams_for_account.return_value = 1
+        
+        # Create limiter with mock UDI
+        limiter = AccountStreamLimiter(udi_manager=mock_udi)
+        limiter.set_account_limit(1, 2)  # max_streams=2
+        
+        scheduler = SmartStreamScheduler(limiter, global_limit=10)
+        
+        max_concurrent = [0]
+        current_concurrent = [0]
+        lock = threading.Lock()
+        
+        def mock_check(**kwargs):
+            with lock:
+                current_concurrent[0] += 1
+                if current_concurrent[0] > max_concurrent[0]:
+                    max_concurrent[0] = current_concurrent[0]
+            
+            time.sleep(0.2)  # Simulate work
+            
+            with lock:
+                current_concurrent[0] -= 1
+            
+            return {'stream_id': kwargs['stream_id'], 'status': 'OK'}
+        
+        # All streams from the same account
+        streams = [
+            {'id': 1, 'name': 'Stream 1', 'url': 'http://test.com/1', 'm3u_account': 1},
+            {'id': 2, 'name': 'Stream 2', 'url': 'http://test.com/2', 'm3u_account': 1},
+            {'id': 3, 'name': 'Stream 3', 'url': 'http://test.com/3', 'm3u_account': 1},
+        ]
+        
+        results = scheduler.check_streams_with_limits(
+            streams=streams,
+            check_function=mock_check
+        )
+        
+        self.assertEqual(len(results), 3)
+        # With 1 active viewer and max_streams=2, only 1 check should run at a time
+        # (1 active + 1 checking = 2/2 limit)
+        self.assertEqual(max_concurrent[0], 1, 
+                        "Should only check 1 stream at a time when 1 active viewer exists")
+    
     def test_progress_callback(self):
         """Test that progress callback is called correctly."""
         self.limiter.set_account_limit(1, 2)
