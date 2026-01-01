@@ -1071,13 +1071,13 @@ class UDIManager:
     def get_active_streams_for_profile(self, profile_id: int) -> int:
         """Calculate the number of active streams for a specific M3U account profile.
         
-        This counts all streams that have current_viewers > 0 for the given profile.
+        Uses real-time proxy status to count channels that are actively using this profile.
         
         Args:
             profile_id: M3U account profile ID
             
         Returns:
-            Number of active streams (current_viewers > 0)
+            Number of active streams using this profile
         """
         self._ensure_initialized()
         
@@ -1096,13 +1096,14 @@ class UDIManager:
     def get_active_streams_for_account(self, account_id: int) -> int:
         """Calculate the number of active streams for an M3U account.
         
-        This counts all streams that have current_viewers > 0 for the given account.
+        Uses real-time proxy status to count channels that are actively using
+        profiles from this account.
         
         Args:
             account_id: M3U account ID
             
         Returns:
-            Number of active streams (current_viewers > 0)
+            Number of active streams for this account
         """
         self._ensure_initialized()
         
