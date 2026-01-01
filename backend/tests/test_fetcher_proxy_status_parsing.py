@@ -2,8 +2,8 @@
 """
 Tests for proxy status response parsing in UDIFetcher.
 
-This test suite verifies that the fetcher correctly parses different formats
-of the /proxy/ts/status endpoint response.
+This test suite verifies that the fetcher correctly parses the standard
+format of the /proxy/ts/status endpoint response.
 """
 
 import sys
@@ -26,8 +26,8 @@ class TestFetcherProxyStatusParsing(unittest.TestCase):
         # Ensure base_url is set for tests
         self.fetcher.base_url = "http://test-dispatcharr.local"
     
-    def test_parse_new_format_with_channels_array(self):
-        """Test parsing the new API format with nested channels array."""
+    def test_parse_standard_format_with_channels_array(self):
+        """Test parsing the standard API format with nested channels array."""
         # This is the actual format returned by /proxy/ts/status
         mock_response = {
             "channels": [
@@ -85,27 +85,31 @@ class TestFetcherProxyStatusParsing(unittest.TestCase):
             self.assertEqual(channel_data['state'], 'active')
             self.assertEqual(channel_data['stream_name'], 'M+ LALIGA --> ELCANO')
             self.assertEqual(channel_data['client_count'], 1)
+            self.assertEqual(channel_data['m3u_profile_id'], 6)
             self.assertIsInstance(channel_data['clients'], list)
             self.assertEqual(len(channel_data['clients']), 1)
     
-    def test_parse_new_format_multiple_channels(self):
-        """Test parsing new format with multiple channels."""
+    def test_parse_standard_format_multiple_channels(self):
+        """Test parsing standard format with multiple channels."""
         mock_response = {
             "channels": [
                 {
-                    "channel_id": "100",
+                    "channel_id": "uuid-100",
                     "state": "active",
-                    "stream_name": "Channel 100"
+                    "stream_name": "Channel 100",
+                    "m3u_profile_id": 5
                 },
                 {
-                    "channel_id": "200",
+                    "channel_id": "uuid-200",
                     "state": "active",
-                    "stream_name": "Channel 200"
+                    "stream_name": "Channel 200",
+                    "m3u_profile_id": 6
                 },
                 {
-                    "channel_id": "300",
+                    "channel_id": "uuid-300",
                     "state": "idle",
-                    "stream_name": "Channel 300"
+                    "stream_name": "Channel 300",
+                    "m3u_profile_id": 5
                 }
             ],
             "count": 3
@@ -116,59 +120,17 @@ class TestFetcherProxyStatusParsing(unittest.TestCase):
             
             self.assertIsInstance(result, dict)
             self.assertEqual(len(result), 3)
-            self.assertIn("100", result)
-            self.assertIn("200", result)
-            self.assertIn("300", result)
+            self.assertIn("uuid-100", result)
+            self.assertIn("uuid-200", result)
+            self.assertIn("uuid-300", result)
             
-            # Verify state is preserved
-            self.assertEqual(result["100"]["state"], "active")
-            self.assertEqual(result["200"]["state"], "active")
-            self.assertEqual(result["300"]["state"], "idle")
-    
-    def test_parse_legacy_dict_format(self):
-        """Test parsing legacy dict format (keyed by channel_id)."""
-        mock_response = {
-            "100": {
-                "channel_id": 100,
-                "active": True,
-                "current_stream": "http://example.com/stream"
-            },
-            "200": {
-                "channel_id": 200,
-                "active": True,
-                "clients": [{"id": "client1"}]
-            }
-        }
-        
-        with patch.object(self.fetcher, '_fetch_url', return_value=mock_response):
-            result = self.fetcher.fetch_proxy_status()
-            
-            self.assertIsInstance(result, dict)
-            self.assertEqual(len(result), 2)
-            self.assertEqual(result, mock_response)
-    
-    def test_parse_legacy_list_format(self):
-        """Test parsing legacy list format."""
-        mock_response = [
-            {
-                "channel_id": 100,
-                "active": True,
-                "current_stream": "http://example.com/stream"
-            },
-            {
-                "channel_id": 200,
-                "active": True,
-                "clients": [{"id": "client1"}]
-            }
-        ]
-        
-        with patch.object(self.fetcher, '_fetch_url', return_value=mock_response):
-            result = self.fetcher.fetch_proxy_status()
-            
-            self.assertIsInstance(result, dict)
-            self.assertEqual(len(result), 2)
-            self.assertIn("100", result)
-            self.assertIn("200", result)
+            # Verify state and profile are preserved
+            self.assertEqual(result["uuid-100"]["state"], "active")
+            self.assertEqual(result["uuid-100"]["m3u_profile_id"], 5)
+            self.assertEqual(result["uuid-200"]["state"], "active")
+            self.assertEqual(result["uuid-200"]["m3u_profile_id"], 6)
+            self.assertEqual(result["uuid-300"]["state"], "idle")
+            self.assertEqual(result["uuid-300"]["m3u_profile_id"], 5)
     
     def test_parse_empty_channels_array(self):
         """Test parsing when channels array is empty."""
@@ -188,7 +150,7 @@ class TestFetcherProxyStatusParsing(unittest.TestCase):
         mock_response = {
             "channels": [
                 {
-                    "channel_id": "100",
+                    "channel_id": "uuid-100",
                     "state": "active"
                 },
                 {
@@ -196,7 +158,7 @@ class TestFetcherProxyStatusParsing(unittest.TestCase):
                     "state": "active"
                 },
                 {
-                    "channel_id": "200",
+                    "channel_id": "uuid-200",
                     "state": "active"
                 }
             ],
@@ -209,8 +171,8 @@ class TestFetcherProxyStatusParsing(unittest.TestCase):
             # Should only include items with channel_id
             self.assertIsInstance(result, dict)
             self.assertEqual(len(result), 2)
-            self.assertIn("100", result)
-            self.assertIn("200", result)
+            self.assertIn("uuid-100", result)
+            self.assertIn("uuid-200", result)
     
     def test_parse_invalid_response(self):
         """Test handling of invalid response format."""

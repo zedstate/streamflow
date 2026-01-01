@@ -528,10 +528,8 @@ class UDIFetcher:
     def _process_channels_from_response(self, status_data: Any) -> Dict[str, Any]:
         """Process proxy status response and extract channels as a dict.
         
-        Handles multiple response formats:
-        - New format: {"channels": [...], "count": N}
-        - Legacy dict format: {channel_id_str: {...}, ...}
-        - Legacy list format: [{...}, {...}]
+        Handles the API response format:
+        - Standard format: {"channels": [...], "count": N}
         
         Args:
             status_data: Raw response from the proxy status endpoint
@@ -541,32 +539,17 @@ class UDIFetcher:
         """
         result = {}
         
-        # Handle the new API response format with nested channels array
+        # Handle the API response format with nested channels array
         if isinstance(status_data, dict) and 'channels' in status_data:
             channels_list = status_data.get('channels', [])
             if isinstance(channels_list, list):
                 for item in channels_list:
                     if isinstance(item, dict) and 'channel_id' in item:
                         result[str(item['channel_id'])] = item
-                logger.debug(f"Processed {len(result)} channels from channels array")
+                logger.debug(f"Processed {len(result)} channels from proxy status")
                 return result
         
-        # Legacy format: dict keyed by channel_id (e.g., {"100": {...}, "101": {...}})
-        # Check if it's a dict and doesn't have special keys like 'channels' or 'count'
-        if isinstance(status_data, dict) and not any(k in status_data for k in ['channels', 'count']):
-            # Verify it's a legacy format by checking if values are channel objects
-            if status_data and all(isinstance(v, dict) for v in status_data.values()):
-                logger.debug(f"Using legacy dict format with {len(status_data)} channels")
-                return status_data
-        
-        # Legacy format: flat list
-        if isinstance(status_data, list):
-            for item in status_data:
-                if isinstance(item, dict) and 'channel_id' in item:
-                    result[str(item['channel_id'])] = item
-            logger.debug(f"Processed {len(result)} channels from list format")
-            return result
-        
+        logger.warning(f"Unexpected proxy status format: {type(status_data)}")
         return result
     
     def fetch_proxy_status(self) -> Dict[str, Any]:
@@ -575,10 +558,8 @@ class UDIFetcher:
         This fetches the actual running stream status from /proxy/ts/status endpoint,
         which provides accurate information about which streams are currently active.
         
-        The endpoint may return different formats:
-        - New format: {"channels": [...], "count": N}
-        - Legacy dict format: {"channel_id": {...}, ...}
-        - Legacy list format: [{...}, {...}]
+        The endpoint returns the format:
+        - Standard format: {"channels": [...], "count": N}
         
         Returns:
             Dictionary with channel_id -> status mapping, or empty dict if unavailable
