@@ -26,7 +26,7 @@ Usage:
 import threading
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any, Set, Tuple
 
 from udi.storage import UDIStorage
 from udi.fetcher import UDIFetcher
@@ -1181,6 +1181,138 @@ class UDIManager:
         total_viewers = self._sum_total_viewers(account_id)
         logger.debug(f"Account {account_id} has {total_viewers} total viewers")
         return total_viewers
+    
+    def get_active_streams_count_per_profile(self, account_id: int) -> Dict[int, int]:
+        """Get the count of active streams for each profile in an account.
+        
+        Args:
+            account_id: M3U account ID
+            
+        Returns:
+            Dictionary mapping profile_id to active stream count
+        """
+        self._ensure_initialized()
+        
+        # Get real-time proxy status
+        proxy_status = self._get_proxy_status()
+        
+        # Count active streams per profile
+        profile_counts: Dict[int, int] = {}
+        
+        for channel_id_str, status in proxy_status.items():
+            if not self._is_channel_status_active(status):
+                continue
+            
+            # Get the m3u_profile_id from the proxy status
+            profile_id = status.get('m3u_profile_id')
+            if not profile_id:
+                continue
+            
+            # Find which account owns this profile
+            profile_account_id = self._find_account_for_profile(profile_id)
+            if profile_account_id != account_id:
+                continue
+            
+            # Increment count for this profile
+            profile_counts[profile_id] = profile_counts.get(profile_id, 0) + 1
+        
+        logger.debug(f"Account {account_id} profile usage: {profile_counts}")
+        return profile_counts
+    
+    def find_available_profile_for_stream(self, stream: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Find an available profile that can serve this stream.
+        
+        Profiles use search_pattern/replace_pattern to transform stream URLs.
+        This method finds a profile from the stream's M3U account that:
+        1. Is active
+        2. Has available slots (active_count < max_streams)
+        3. Can serve this stream (URL pattern matching if needed)
+        
+        Args:
+            stream: Stream dictionary with 'm3u_account' and 'url' fields
+            
+        Returns:
+            Profile dictionary if available, None otherwise
+        """
+        self._ensure_initialized()
+        
+        account_id = stream.get('m3u_account')
+        if not account_id:
+            logger.debug(f"Stream {stream.get('id')} has no m3u_account")
+            return None
+        
+        # Get the account and its profiles
+        account = self.get_m3u_account_by_id(account_id)
+        if not account:
+            logger.warning(f"Account {account_id} not found for stream {stream.get('id')}")
+            return None
+        
+        profiles = account.get('profiles', [])
+        if not profiles:
+            logger.debug(f"Account {account_id} has no profiles")
+            return None
+        
+        # Get current usage per profile
+        profile_usage = self.get_active_streams_count_per_profile(account_id)
+        
+        # Find the first available profile
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            
+            profile_id = profile.get('id')
+            if not profile_id:
+                continue
+            
+            # Skip inactive profiles
+            if not profile.get('is_active', True):
+                logger.debug(f"Profile {profile_id} is inactive, skipping")
+                continue
+            
+            # Check if profile has available slots
+            max_streams = profile.get('max_streams', 0)
+            if max_streams == 0:
+                # Unlimited streams
+                logger.debug(f"Profile {profile_id} has unlimited streams, using it")
+                return profile
+            
+            active_count = profile_usage.get(profile_id, 0)
+            if active_count < max_streams:
+                logger.debug(f"Profile {profile_id} has {active_count}/{max_streams} active streams, available")
+                return profile
+            else:
+                logger.debug(f"Profile {profile_id} is at capacity ({active_count}/{max_streams} streams)")
+        
+        logger.debug(f"No available profile found for stream {stream.get('id')} in account {account_id}")
+        return None
+    
+    def check_stream_can_run(self, stream: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """Check if a stream can run based on its M3U account profile availability.
+        
+        Args:
+            stream: Stream dictionary with 'm3u_account' and other fields
+            
+        Returns:
+            Tuple of (can_run: bool, reason: Optional[str])
+            - (True, None) if stream can run
+            - (False, reason) if stream cannot run with explanation
+        """
+        self._ensure_initialized()
+        
+        account_id = stream.get('m3u_account')
+        if not account_id:
+            # Custom stream without M3U account - can always run
+            return (True, None)
+        
+        # Try to find an available profile
+        available_profile = self.find_available_profile_for_stream(stream)
+        
+        if available_profile:
+            return (True, None)
+        else:
+            account = self.get_m3u_account_by_id(account_id)
+            account_name = account.get('name', f'Account {account_id}') if account else f'Account {account_id}'
+            return (False, f"All profiles in {account_name} are at capacity")
     
     def _ensure_initialized(self) -> None:
         """Ensure UDI Manager is initialized before data access.
