@@ -421,6 +421,94 @@ class TestInitializeAccountLimits(unittest.TestCase):
         self.assertEqual(limiter.get_account_limit(1), 1)
         self.assertEqual(limiter.get_account_limit(2), 2)
         self.assertEqual(limiter.get_account_limit(3), 0)
+    
+    def test_initialize_account_with_profiles(self):
+        """Test initializing account with multiple profiles - should sum profile limits."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        # Account DE-00 has max_streams=1 but has 2 active profiles with 1 stream each
+        # Total should be 2 (sum of profile limits)
+        accounts = [
+            {
+                'id': 26,
+                'name': 'DE-00',
+                'max_streams': 1,
+                'profiles': [
+                    {'id': 38, 'name': 'D4 - 01', 'max_streams': 1, 'is_active': True},
+                    {'id': 27, 'name': 'D4 - 00', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should be 2 (sum of two profile limits), not 1 (account-level limit)
+        self.assertEqual(limiter.get_account_limit(26), 2)
+    
+    def test_initialize_account_with_inactive_profile(self):
+        """Test that inactive profiles are excluded from limit calculation."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        accounts = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'max_streams': 1,
+                'profiles': [
+                    {'id': 1, 'name': 'Profile 1', 'max_streams': 2, 'is_active': True},
+                    {'id': 2, 'name': 'Profile 2', 'max_streams': 3, 'is_active': False}  # Inactive
+                ]
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should only count the active profile (2), not the inactive one (3)
+        self.assertEqual(limiter.get_account_limit(1), 2)
+    
+    def test_initialize_account_with_no_profiles(self):
+        """Test account without profiles uses account-level limit."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        accounts = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'max_streams': 5,
+                'profiles': []  # No profiles
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should use account-level limit
+        self.assertEqual(limiter.get_account_limit(1), 5)
+    
+    def test_initialize_account_profile_limit_higher_than_account(self):
+        """Test that profile limit sum is used when higher than account limit."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        accounts = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'max_streams': 1,  # Account says 1
+                'profiles': [
+                    {'id': 1, 'name': 'Profile 1', 'max_streams': 3, 'is_active': True},
+                    {'id': 2, 'name': 'Profile 2', 'max_streams': 2, 'is_active': True}
+                ]
+                # Total profile limit = 5, which is > account limit of 1
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should use profile sum (5), not account limit (1)
+        self.assertEqual(limiter.get_account_limit(1), 5)
 
 
 if __name__ == '__main__':
