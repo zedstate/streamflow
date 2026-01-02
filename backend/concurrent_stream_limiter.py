@@ -328,11 +328,39 @@ class SmartStreamScheduler:
             futures: Dict[Future, Dict[str, Any]] = {}
             
             def submit_stream_check(stream: Dict[str, Any]):
-                """Submit a stream check with account limit enforcement."""
+                """Submit a stream check with profile-aware limit enforcement."""
                 account_id = stream.get('m3u_account')
                 
+                # Check if stream can run using profile-aware checking
+                # This replaces the old account-level acquire/release with per-profile awareness
+                if account_id and self.account_limiter.udi_manager:
+                    can_run, reason = self.account_limiter.udi_manager.check_stream_can_run(stream)
+                    
+                    if not can_run:
+                        logger.info(f"Skipping check for stream {stream['id']}: {reason}, using cached stats")
+                        
+                        # Get cached stream stats from UDI
+                        try:
+                            cached_stream = self.account_limiter.udi_manager.get_stream_by_id(stream['id'])
+                            if cached_stream and cached_stream.get('stream_stats'):
+                                # Return a result with cached stats
+                                return {
+                                    'stream_id': stream['id'],
+                                    'stream_name': stream.get('name', 'Unknown'),
+                                    'stream_url': stream.get('url', ''),
+                                    'cached': True,
+                                    'skipped_reason': 'no_available_profile',
+                                    'reason_detail': reason,
+                                    **cached_stream.get('stream_stats', {})
+                                }
+                            else:
+                                logger.warning(f"No cached stats available for stream {stream['id']}, skipping")
+                        except Exception as e:
+                            logger.error(f"Error retrieving cached stats for stream {stream['id']}: {e}")
+                        return None
+                
                 # Acquire account slot before submitting to executor
-                # This ensures we don't exceed per-account limits
+                # This ensures we don't exceed per-account limits at a global level
                 acquired, reason = self.account_limiter.acquire(account_id, timeout=300)
                 
                 if not acquired:
@@ -491,8 +519,13 @@ def initialize_account_limits(accounts: List[Dict[str, Any]]):
     """
     Initialize account limits from M3U account data.
     
-    Now supports M3U account profiles. If an account has profiles, the total
-    limit is calculated by summing max_streams from all active profiles.
+    NOTE: This function now works in conjunction with profile-aware checking.
+    The limits set here are used as a fallback/global cap, but the primary
+    limit enforcement is done per-profile via UDI's check_stream_can_run().
+    
+    When profiles are present, the total limit is calculated by summing max_streams
+    from all active profiles to provide a global upper bound for the account.
+    However, actual stream checking uses profile-specific availability.
     
     Args:
         accounts: List of M3U account dictionaries with 'id', 'max_streams', and optionally 'profiles' fields
@@ -507,4 +540,4 @@ def initialize_account_limits(accounts: List[Dict[str, Any]]):
         if account_id is not None:
             limiter.set_account_limit(account_id, max_streams, profiles)
     
-    logger.info(f"Initialized limits for {len(accounts)} accounts")
+    logger.info(f"Initialized limits for {len(accounts)} accounts (profile-aware checking enabled)")

@@ -316,6 +316,8 @@ class TestSmartStreamScheduler(unittest.TestCase):
         # Create a mock UDI manager that reports 1 active stream
         mock_udi = Mock()
         mock_udi.get_active_streams_for_account.return_value = 1
+        # Mock the new profile-aware checking to always allow (let the limiter handle it)
+        mock_udi.check_stream_can_run.return_value = (True, None)
         
         # Create limiter with mock UDI
         limiter = AccountStreamLimiter(udi_manager=mock_udi)
@@ -509,6 +511,138 @@ class TestInitializeAccountLimits(unittest.TestCase):
         
         # Should use profile sum (5), not account limit (1)
         self.assertEqual(limiter.get_account_limit(1), 5)
+
+
+class TestProfileAwareStreamChecking(unittest.TestCase):
+    """Test cases for profile-aware stream checking via UDI."""
+    
+    def test_find_available_profile_with_free_slots(self):
+        """Test finding an available profile when one has free slots."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 2, 'is_active': True},
+                    {'id': 11, 'name': 'Profile 2', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage (Profile 1 has 1/2 slots used, Profile 2 has 0/1)
+        def mock_get_usage(account_id):
+            if account_id == 1:
+                return {10: 1, 11: 0}  # Profile 10 has 1 active, Profile 11 has 0
+            return {}
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        # Test stream with account 1
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        profile = udi.find_available_profile_for_stream(stream)
+        
+        # Should find Profile 1 (first available)
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile['id'], 10)
+    
+    def test_find_available_profile_all_at_capacity(self):
+        """Test that no profile is returned when all are at capacity."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 1, 'is_active': True},
+                    {'id': 11, 'name': 'Profile 2', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage (both profiles at capacity)
+        def mock_get_usage(account_id):
+            if account_id == 1:
+                return {10: 1, 11: 1}  # Both at 1/1
+            return {}
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        # Test stream with account 1
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        profile = udi.find_available_profile_for_stream(stream)
+        
+        # Should return None (all at capacity)
+        self.assertIsNone(profile)
+    
+    def test_check_stream_can_run_with_available_profile(self):
+        """Test stream can run check when profile is available."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 2, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage
+        def mock_get_usage(account_id):
+            return {10: 0}  # No active streams
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        can_run, reason = udi.check_stream_can_run(stream)
+        
+        # Should be able to run
+        self.assertTrue(can_run)
+        self.assertIsNone(reason)
+    
+    def test_check_stream_can_run_all_profiles_at_capacity(self):
+        """Test stream cannot run when all profiles are at capacity."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage (at capacity)
+        def mock_get_usage(account_id):
+            return {10: 1}  # 1/1 active
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        can_run, reason = udi.check_stream_can_run(stream)
+        
+        # Should not be able to run
+        self.assertFalse(can_run)
+        self.assertIsNotNone(reason)
+        self.assertIn('Test Account', reason)
 
 
 if __name__ == '__main__':
