@@ -51,23 +51,50 @@ class AccountStreamLimiter:
         self.udi_manager = udi_manager
         logger.info("AccountStreamLimiter initialized")
     
-    def set_account_limit(self, account_id: int, max_streams: int):
+    def set_account_limit(self, account_id: int, max_streams: int, profiles: list = None):
         """
         Set the maximum concurrent streams for an account.
         
+        This now supports M3U account profiles. If profiles are provided, the total
+        limit is calculated by summing the max_streams of all active profiles.
+        
         Args:
             account_id: M3U account ID
-            max_streams: Maximum concurrent streams (0 = unlimited)
+            max_streams: Maximum concurrent streams at account level (0 = unlimited)
+            profiles: Optional list of M3UAccountProfile objects with per-profile limits
         """
         with self.lock:
-            # Store the limit
-            self.account_limits[account_id] = max_streams
+            # Calculate total limit by summing active profile limits if profiles exist
+            total_limit = max_streams
+            if profiles:
+                # Sum up limits from all active profiles
+                profile_total = sum(
+                    p.get('max_streams', 0) 
+                    for p in profiles 
+                    if p.get('is_active', True)
+                )
+                
+                # Use profile total if it's greater than account-level limit
+                # This handles the case where account has multiple profiles
+                if profile_total > 0:
+                    total_limit = profile_total
+                    logger.debug(
+                        f"Account {account_id} has {len([p for p in profiles if p.get('is_active', True)])} "
+                        f"active profiles with total limit: {total_limit}"
+                    )
+            
+            # Store the calculated limit
+            self.account_limits[account_id] = total_limit
             
             # Initialize checking count for this account
             if account_id not in self.account_checking_counts:
                 self.account_checking_counts[account_id] = 0
             
-            logger.debug(f"Set limit for account {account_id}: {max_streams} concurrent streams" if max_streams > 0 else f"Set limit for account {account_id}: unlimited concurrent streams")
+            logger.debug(
+                f"Set limit for account {account_id}: {total_limit} concurrent streams" 
+                if total_limit > 0 
+                else f"Set limit for account {account_id}: unlimited concurrent streams"
+            )
     
     def get_account_limit(self, account_id: int) -> int:
         """
@@ -463,16 +490,20 @@ def initialize_account_limits(accounts: List[Dict[str, Any]]):
     """
     Initialize account limits from M3U account data.
     
+    Now supports M3U account profiles. If an account has profiles, the total
+    limit is calculated by summing max_streams from all active profiles.
+    
     Args:
-        accounts: List of M3U account dictionaries with 'id' and 'max_streams' fields
+        accounts: List of M3U account dictionaries with 'id', 'max_streams', and optionally 'profiles' fields
     """
     limiter = get_account_limiter()
     
     for account in accounts:
         account_id = account.get('id')
         max_streams = account.get('max_streams', 0)
+        profiles = account.get('profiles', [])
         
         if account_id is not None:
-            limiter.set_account_limit(account_id, max_streams)
+            limiter.set_account_limit(account_id, max_streams, profiles)
     
     logger.info(f"Initialized limits for {len(accounts)} accounts")

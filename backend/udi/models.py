@@ -202,6 +202,52 @@ class Logo:
 
 
 @dataclass
+class M3UAccountProfile:
+    """Represents a profile within an M3U account (e.g., different provider logins)."""
+    id: int
+    name: str = ""
+    max_streams: int = 0
+    is_active: bool = True
+    is_default: bool = False
+    current_viewers: int = 0
+    search_pattern: Optional[str] = None
+    replace_pattern: Optional[str] = None
+    custom_properties: Optional[Dict[str, Any]] = None
+    account: Optional[int] = None  # Parent M3U account ID
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'M3UAccountProfile':
+        """Create an M3UAccountProfile from a dictionary (API response)."""
+        return cls(
+            id=data.get('id'),
+            name=data.get('name', ''),
+            max_streams=data.get('max_streams', 0),
+            is_active=data.get('is_active', True),
+            is_default=data.get('is_default', False),
+            current_viewers=data.get('current_viewers', 0),
+            search_pattern=data.get('search_pattern'),
+            replace_pattern=data.get('replace_pattern'),
+            custom_properties=data.get('custom_properties'),
+            account=data.get('account')
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'max_streams': self.max_streams,
+            'is_active': self.is_active,
+            'is_default': self.is_default,
+            'current_viewers': self.current_viewers,
+            'search_pattern': self.search_pattern,
+            'replace_pattern': self.replace_pattern,
+            'custom_properties': self.custom_properties,
+            'account': self.account
+        }
+
+
+@dataclass
 class M3UAccount:
     """Represents an M3U playlist source account."""
     id: int
@@ -215,7 +261,7 @@ class M3UAccount:
     updated_at: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
     user_agent: Optional[str] = None
-    profiles: Optional[List[Any]] = None
+    profiles: List['M3UAccountProfile'] = field(default_factory=list)
     locked: bool = False
     channel_groups: List[int] = field(default_factory=list)
     refresh_interval: int = 0
@@ -236,6 +282,14 @@ class M3UAccount:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'M3UAccount':
         """Create an M3UAccount from a dictionary (API response)."""
+        # Parse profiles if present
+        profiles = []
+        profiles_data = data.get('profiles', [])
+        if profiles_data:
+            for profile_data in profiles_data:
+                if isinstance(profile_data, dict):
+                    profiles.append(M3UAccountProfile.from_dict(profile_data))
+        
         return cls(
             id=data.get('id'),
             name=data.get('name', ''),
@@ -248,7 +302,7 @@ class M3UAccount:
             updated_at=data.get('updated_at'),
             filters=data.get('filters'),
             user_agent=data.get('user_agent'),
-            profiles=data.get('profiles'),
+            profiles=profiles,
             locked=data.get('locked', False),
             channel_groups=data.get('channel_groups', []),
             refresh_interval=data.get('refresh_interval', 0),
@@ -281,7 +335,7 @@ class M3UAccount:
             'updated_at': self.updated_at,
             'filters': self.filters,
             'user_agent': self.user_agent,
-            'profiles': self.profiles,
+            'profiles': [p.to_dict() for p in self.profiles] if self.profiles else [],
             'locked': self.locked,
             'channel_groups': self.channel_groups,
             'refresh_interval': self.refresh_interval,
