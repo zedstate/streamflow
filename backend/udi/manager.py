@@ -26,7 +26,7 @@ Usage:
 import threading
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any, Set, Tuple
 
 from udi.storage import UDIStorage
 from udi.fetcher import UDIFetcher
@@ -1286,7 +1286,7 @@ class UDIManager:
         logger.debug(f"No available profile found for stream {stream.get('id')} in account {account_id}")
         return None
     
-    def check_stream_can_run(self, stream: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+    def check_stream_can_run(self, stream: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """Check if a stream can run based on its M3U account profile availability.
         
         Args:
