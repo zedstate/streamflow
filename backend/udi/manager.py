@@ -1348,7 +1348,8 @@ class UDIManager:
         replace_pattern = profile.get('replace_pattern')
         
         # If patterns are not configured, return original URL
-        if not search_pattern or not replace_pattern:
+        # Check explicitly for None or empty strings
+        if not (search_pattern and replace_pattern):
             return original_url
         
         try:
@@ -1356,15 +1357,15 @@ class UDIManager:
             transformed_url = re.sub(search_pattern, replace_pattern, original_url)
             
             if transformed_url != original_url:
-                logger.debug(f"Applied URL transformation for stream {stream.get('id')}: "
-                           f"{original_url[:50]}... -> {transformed_url[:50]}...")
+                # Log transformation without exposing sensitive URL details
+                logger.debug(f"Applied URL transformation for stream {stream.get('id')} using profile {profile.get('id')}")
             
             return transformed_url
         except re.error as e:
             logger.error(f"Invalid regex pattern in profile {profile.get('id')}: {e}")
             return original_url
         except Exception as e:
-            logger.error(f"Error applying URL transformation: {e}")
+            logger.error(f"Error applying URL transformation for stream {stream.get('id')}: {e}")
             return original_url
     
     def _ensure_initialized(self) -> None:
