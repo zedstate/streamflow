@@ -395,8 +395,13 @@ class SmartStreamScheduler:
                 def wrapped_check():
                     """Wrapper that ensures semaphore is released."""
                     try:
+                        # Apply URL transformation if using M3U profile with search/replace patterns
+                        stream_url = stream.get('url', '')
+                        if self.account_limiter.udi_manager:
+                            stream_url = self.account_limiter.udi_manager.apply_profile_url_transformation(stream)
+                        
                         result = check_function(
-                            stream_url=stream.get('url', ''),
+                            stream_url=stream_url,
                             stream_id=stream['id'],
                             stream_name=stream.get('name', 'Unknown'),
                             **check_params

@@ -2314,8 +2314,14 @@ class StreamCheckerService:
                 
                 # Analyze stream
                 analysis_params = self.config.get('stream_analysis', {})
+                
+                # Apply URL transformation if using M3U profile with search/replace patterns
+                stream_url = stream.get('url', '')
+                if udi:
+                    stream_url = udi.apply_profile_url_transformation(stream)
+                
                 analyzed = analyze_stream(
-                    stream_url=stream.get('url', ''),
+                    stream_url=stream_url,
                     stream_id=stream['id'],
                     stream_name=stream.get('name', 'Unknown'),
                     ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
@@ -2428,8 +2434,14 @@ class StreamCheckerService:
                     # If we can't fetch cached data, analyze this stream
                     logger.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
                     analysis_params = self.config.get('stream_analysis', {})
+                    
+                    # Apply URL transformation if using M3U profile with search/replace patterns
+                    stream_url = stream.get('url', '')
+                    if udi:
+                        stream_url = udi.apply_profile_url_transformation(stream)
+                    
                     analyzed = analyze_stream(
-                        stream_url=stream.get('url', ''),
+                        stream_url=stream_url,
                         stream_id=stream['id'],
                         stream_name=stream.get('name', 'Unknown'),
                         ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),

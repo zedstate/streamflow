@@ -1314,6 +1314,60 @@ class UDIManager:
             account_name = account.get('name', f'Account {account_id}') if account else f'Account {account_id}'
             return (False, f"All profiles in {account_name} are at capacity")
     
+    def apply_profile_url_transformation(self, stream: Dict[str, Any], profile: Optional[Dict[str, Any]] = None) -> str:
+        """Apply search/replace pattern transformation to a stream URL.
+        
+        When using M3U account profiles with search_pattern and replace_pattern,
+        this method transforms the stream URL according to the profile configuration.
+        This is essential for free profiles that need different URL formats than
+        the main account URL.
+        
+        Args:
+            stream: Stream dictionary with 'url' and optionally 'm3u_account'
+            profile: Optional profile dictionary. If not provided, will find available profile for stream
+            
+        Returns:
+            Transformed URL string. If no transformation is needed, returns original URL.
+        """
+        import re
+        
+        original_url = stream.get('url', '')
+        if not original_url:
+            return original_url
+        
+        # If no profile provided, try to find one
+        if profile is None:
+            profile = self.find_available_profile_for_stream(stream)
+        
+        # If still no profile, return original URL
+        if not profile:
+            return original_url
+        
+        # Get search and replace patterns
+        search_pattern = profile.get('search_pattern')
+        replace_pattern = profile.get('replace_pattern')
+        
+        # If patterns are not configured, return original URL
+        # Check explicitly for None or empty strings
+        if not (search_pattern and replace_pattern):
+            return original_url
+        
+        try:
+            # Apply regex transformation
+            transformed_url = re.sub(search_pattern, replace_pattern, original_url)
+            
+            if transformed_url != original_url:
+                # Log transformation without exposing sensitive URL details
+                logger.debug(f"Applied URL transformation for stream {stream.get('id')} using profile {profile.get('id')}")
+            
+            return transformed_url
+        except re.error as e:
+            logger.error(f"Invalid regex pattern in profile {profile.get('id')}: {e}")
+            return original_url
+        except Exception as e:
+            logger.error(f"Error applying URL transformation for stream {stream.get('id')}: {e}")
+            return original_url
+    
     def _ensure_initialized(self) -> None:
         """Ensure UDI Manager is initialized before data access.
         
