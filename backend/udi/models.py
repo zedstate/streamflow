@@ -288,7 +288,9 @@ class M3UAccount:
         if profiles_data:
             for profile_data in profiles_data:
                 if isinstance(profile_data, dict):
-                    profiles.append(M3UAccountProfile.from_dict(profile_data))
+                    # Skip profiles without an ID (invalid data)
+                    if profile_data.get('id') is not None:
+                        profiles.append(M3UAccountProfile.from_dict(profile_data))
         
         return cls(
             id=data.get('id'),
