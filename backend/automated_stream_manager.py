@@ -530,6 +530,27 @@ class RegexChannelMatcher:
     def get_patterns(self) -> Dict:
         """Get current patterns configuration."""
         return self.channel_patterns
+    
+    def has_regex_patterns(self, channel_id: str) -> bool:
+        """Check if a channel has regex patterns configured.
+        
+        Args:
+            channel_id: Channel ID to check
+            
+        Returns:
+            True if the channel has at least one enabled regex pattern, False otherwise
+        """
+        channel_config = self.channel_patterns.get("patterns", {}).get(str(channel_id))
+        if not channel_config:
+            return False
+        
+        # Check if the pattern is enabled
+        if not channel_config.get("enabled", True):
+            return False
+        
+        # Check if there are any regex patterns
+        regex_patterns = channel_config.get("regex", [])
+        return isinstance(regex_patterns, list) and len(regex_patterns) > 0
 
 
 class AutomatedStreamManager:
@@ -1244,6 +1265,12 @@ class AutomatedStreamManager:
                 
                 # Skip channels with matching disabled
                 if channel_id not in matching_enabled_channel_ids:
+                    continue
+                
+                # Skip channels without regex patterns configured
+                # This prevents removing all streams from channels that don't have regex patterns
+                if not self.regex_matcher.has_regex_patterns(str(channel_id)):
+                    logger.debug(f"Skipping channel {channel_id} - no regex patterns configured")
                     continue
                 
                 validation_results["channels_checked"] += 1
