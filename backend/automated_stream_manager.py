@@ -1262,19 +1262,21 @@ class AutomatedStreamManager:
             # Validate each channel's streams
             for channel in all_channels:
                 channel_id = channel.get('id')
+                channel_name = channel.get('name', f'Channel {channel_id}')
                 
-                # Skip channels with matching disabled
+                # Skip channels with matching disabled (respects channel-level and group-level settings)
+                # Even if a channel has regex patterns, we skip it if matching is disabled
                 if channel_id not in matching_enabled_channel_ids:
+                    logger.debug(f"Skipping channel {channel_id} ({channel_name}) - matching disabled")
                     continue
                 
                 # Skip channels without regex patterns configured
                 # This prevents removing all streams from channels that don't have regex patterns
                 if not self.regex_matcher.has_regex_patterns(str(channel_id)):
-                    logger.debug(f"Skipping channel {channel_id} - no regex patterns configured")
+                    logger.debug(f"Skipping channel {channel_id} ({channel_name}) - no regex patterns configured")
                     continue
                 
                 validation_results["channels_checked"] += 1
-                channel_name = channel.get('name', f'Channel {channel_id}')
                 
                 # Get streams for this channel
                 channel_streams = udi.get_channel_streams(channel_id)

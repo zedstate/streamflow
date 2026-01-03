@@ -317,7 +317,11 @@ The `remove_non_matching_streams` automation control enables automatic cleanup o
 - You update regex patterns and want to remove streams that no longer match
 - You want to keep channels clean and up-to-date
 
-**Important:** This feature **only affects channels that have regex patterns configured**. Channels without regex patterns will not be validated or have their streams removed, ensuring that manually managed channels are not affected.
+**Important:** This feature **only affects channels that meet ALL of the following criteria**:
+1. Have automatic stream matching **enabled** (channel-level or group-level setting)
+2. Have regex patterns **configured and enabled**
+
+Channels that don't meet these criteria will not be validated or have their streams removed, ensuring that manually managed channels and channels with matching disabled are not affected.
 
 **When it runs:**
 - During automation cycles (after M3U updates and before matching new streams)
@@ -325,11 +329,12 @@ The `remove_non_matching_streams` automation control enables automatic cleanup o
 - During single channel checks
 
 **How it works:**
-1. For each channel with matching enabled **AND** regex patterns configured, validates existing streams against those regex patterns
-2. Removes streams that don't match any pattern for that channel
-3. Skips channels without regex patterns entirely (no validation performed)
-4. Logs the removals in the changelog
-5. Updates the channel via Dispatcharr API
+1. For each channel, checks if matching is enabled AND regex patterns are configured
+2. Validates existing streams against those regex patterns
+3. Removes streams that don't match any pattern for that channel
+4. Skips channels with matching disabled or without regex patterns entirely
+5. Logs the removals in the changelog
+6. Updates the channel via Dispatcharr API
 
 **Configuration:**
 ```json
