@@ -532,7 +532,12 @@ class RegexChannelMatcher:
         return self.channel_patterns
     
     def has_regex_patterns(self, channel_id: str) -> bool:
-        """Check if a channel has regex patterns configured.
+        """Check if a channel has regex patterns configured and enabled.
+        
+        A channel is considered to have regex patterns if:
+        1. The channel exists in the patterns configuration
+        2. The pattern configuration is enabled (enabled=True)
+        3. The regex list is non-empty
         
         Args:
             channel_id: Channel ID to check

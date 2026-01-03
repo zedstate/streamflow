@@ -2,10 +2,22 @@
 """
 Test for the fix of validate_and_remove_non_matching_streams function.
 
+Bug Fixed: Previously, when "Remove Non-Matching Streams" was enabled, the function
+would remove ALL streams from channels that didn't have regex patterns configured.
+This happened because match_stream_to_channels() returns an empty list for channels
+without patterns, causing all streams to be considered "non-matching".
+
+Expected Behavior After Fix:
+1. Only channels WITH regex patterns configured are validated
+2. Only channels WITH matching enabled are validated  
+3. Channels without regex patterns are completely skipped (no streams removed)
+4. Channels with disabled regex patterns are skipped
+5. Channels with matching toggle OFF are skipped
+
 This test verifies that:
-1. Channels without regex patterns are NOT validated
-2. Only channels WITH regex patterns have their streams validated
-3. Streams are only removed from channels that have regex patterns configured
+- Channels without regex patterns are NOT validated
+- Only channels WITH regex patterns have their streams validated
+- Streams are only removed from channels that have regex patterns configured
 """
 
 import unittest
