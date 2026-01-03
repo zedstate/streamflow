@@ -11,6 +11,9 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Maximum supported backreference number in Python regex
+MAX_BACKREFERENCE_COUNT = 99
+
 
 class TestProfileURLBackreferenceConversion(unittest.TestCase):
     """Test conversion of $1 style backreferences to \1 style."""
@@ -23,7 +26,7 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
         
         # Convert $1 to \1
         python_replace_pattern = replace_pattern_dollar
-        for i in range(99, 0, -1):
+        for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
             python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
         
         # Apply transformation
@@ -40,7 +43,7 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
         
         # Convert $1, $2 to \1, \2
         python_replace_pattern = replace_pattern_dollar
-        for i in range(99, 0, -1):
+        for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
             python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
         
         transformed_url = re.sub(search_pattern, python_replace_pattern, original_url)
@@ -61,7 +64,7 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
         else:
             # Convert $1 to \1
             python_replace_pattern = replace_pattern_dollar
-            for i in range(99, 0, -1):
+            for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
                 python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
             
             transformed_url = re.sub(search_pattern, python_replace_pattern, original_url)
@@ -77,7 +80,7 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
         
         # Convert $1 to \1 (should not affect $other)
         python_replace_pattern = replace_pattern
-        for i in range(99, 0, -1):
+        for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
             python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
         
         transformed_url = re.sub(search_pattern, python_replace_pattern, original_url)
@@ -87,13 +90,28 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
     def test_high_numbered_backreference(self):
         """Test conversion of higher numbered backreferences like $10."""
         original_url = 'http://example.com/a1/b2/c3/d4/e5/f6/g7/h8/i9/j10/stream.m3u8'
-        # Pattern with 10 capture groups
-        search_pattern = r'/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/([a-z])(\d+)/'
-        replace_pattern_dollar = '/$1$2-$3$4-$5$6-$7$8-$9$10-$11$12-$13$14-$15$16-$17$18-$19$20/'
+        
+        # Pattern with 10 capture groups (2 per directory: letter and number)
+        # Captures: a, 1, b, 2, c, 3, d, 4, e, 5, f, 6, g, 7, h, 8, i, 9, j, 10
+        parts = []
+        for _ in range(10):
+            parts.append(r'([a-z])(\d+)/')
+        search_pattern = '/' + ''.join(parts)
+        
+        # Replace pattern: /a1-b2-c3-d4-e5-f6-g7-h8-i9-j10/
+        # Uses backreferences $1 through $20
+        replace_parts = []
+        for i in range(1, 20, 2):
+            if i == 1:
+                replace_parts.append(f'${i}${i+1}')
+            else:
+                replace_parts.append(f'-${i}${i+1}')
+        replace_pattern_dollar = '/' + ''.join(replace_parts) + '/'
         
         # Convert $1, $2, ..., $20 to \1, \2, ..., \20
+        MAX_BACKREFERENCE_COUNT = 99
         python_replace_pattern = replace_pattern_dollar
-        for i in range(99, 0, -1):
+        for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
             python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
         
         transformed_url = re.sub(search_pattern, python_replace_pattern, original_url)
@@ -112,7 +130,7 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
         
         # Convert $1 to \1
         python_replace_pattern = replace_pattern_dollar
-        for i in range(99, 0, -1):
+        for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
             python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
         
         transformed_url = re.sub(search_pattern, python_replace_pattern, original_url)
@@ -128,7 +146,7 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
         
         # Convert $1 to \1
         python_replace_pattern = replace_pattern_dollar
-        for i in range(99, 0, -1):
+        for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
             python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
         
         # This should either fail or produce invalid output
@@ -150,7 +168,7 @@ class TestProfileURLBackreferenceConversion(unittest.TestCase):
         else:
             # Convert and apply
             python_replace_pattern = replace_pattern_dollar
-            for i in range(99, 0, -1):
+            for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
                 python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
             transformed_url = re.sub(search_pattern, python_replace_pattern, original_url)
         

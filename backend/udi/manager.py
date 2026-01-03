@@ -1369,10 +1369,12 @@ class UDIManager:
             
             # Convert $1, $2 style backreferences to \1, \2 for Python's re.sub()
             # This handles patterns from other regex engines (e.g., JavaScript, Perl)
+            # Maximum supported backreference number (Python regex supports up to 99 groups)
+            MAX_BACKREFERENCE_COUNT = 99
             python_replace_pattern = replace_pattern
-            # Replace $1, $2, ... $9 with \1, \2, ... \9
-            # Use a simple conversion that handles $1 through $99
-            for i in range(99, 0, -1):  # Start from highest to avoid replacing $10 as $1 + 0
+            # Replace $1, $2, ... $99 with \1, \2, ... \99
+            # Start from highest to avoid replacing $10 as $1 + 0
+            for i in range(MAX_BACKREFERENCE_COUNT, 0, -1):
                 python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
             
             # Apply regex transformation
