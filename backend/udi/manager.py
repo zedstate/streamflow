@@ -1348,13 +1348,41 @@ class UDIManager:
         replace_pattern = profile.get('replace_pattern')
         
         # If patterns are not configured, return original URL
-        # Check explicitly for None or empty strings
-        if not (search_pattern and replace_pattern):
+        # Check explicitly for None or empty strings (including whitespace-only strings)
+        if not search_pattern or not replace_pattern:
+            return original_url
+        
+        # Strip whitespace and check again
+        search_pattern = search_pattern.strip()
+        replace_pattern = replace_pattern.strip()
+        
+        if not search_pattern or not replace_pattern:
+            logger.debug(f"Profile {profile.get('id')} has empty search_pattern or replace_pattern after stripping whitespace")
             return original_url
         
         try:
+            # First, test if the pattern matches the URL
+            # If it doesn't match, don't apply any transformation
+            if not re.search(search_pattern, original_url):
+                logger.debug(f"Search pattern '{search_pattern}' does not match URL for stream {stream.get('id')}, skipping transformation")
+                return original_url
+            
+            # Convert $1, $2 style backreferences to \1, \2 for Python's re.sub()
+            # This handles patterns from other regex engines (e.g., JavaScript, Perl)
+            python_replace_pattern = replace_pattern
+            # Replace $1, $2, ... $9 with \1, \2, ... \9
+            # Use a simple conversion that handles $1 through $99
+            for i in range(99, 0, -1):  # Start from highest to avoid replacing $10 as $1 + 0
+                python_replace_pattern = python_replace_pattern.replace(f'${i}', f'\\{i}')
+            
             # Apply regex transformation
-            transformed_url = re.sub(search_pattern, replace_pattern, original_url)
+            transformed_url = re.sub(search_pattern, python_replace_pattern, original_url)
+            
+            # Validate the transformed URL has a valid protocol
+            if not transformed_url.startswith(('http://', 'https://', 'rtmp://', 'rtmps://')):
+                logger.error(f"Profile {profile.get('id')} transformation resulted in invalid URL protocol. "
+                           f"Original URL preserved. Check search_pattern and replace_pattern configuration.")
+                return original_url
             
             if transformed_url != original_url:
                 # Log transformation without exposing sensitive URL details
