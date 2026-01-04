@@ -1260,6 +1260,10 @@ class AutomatedStreamManager:
                 "details": []
             }
             
+            # Get dead stream removal setting to pass to update_channel_streams
+            # This ensures the setting is respected when validating streams
+            dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+            
             # Get all streams from UDI for lookup
             all_streams = udi.get_streams(log_result=False)
             stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
@@ -1326,7 +1330,8 @@ class AutomatedStreamManager:
                 if streams_to_remove:
                     try:
                         from api_utils import update_channel_streams
-                        success = update_channel_streams(channel_id, streams_to_keep)
+                        # Respect dead stream removal setting when updating channel
+                        success = update_channel_streams(channel_id, streams_to_keep, allow_dead_streams=(not dead_stream_removal_enabled))
                         
                         if success:
                             validation_results["streams_removed"] += len(streams_to_remove)
