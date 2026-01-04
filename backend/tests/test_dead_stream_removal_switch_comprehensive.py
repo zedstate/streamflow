@@ -50,7 +50,7 @@ class TestDeadStreamRemovalSwitchComprehensive(unittest.TestCase):
         for config_file in self.config_dir.glob('*.json'):
             try:
                 config_file.unlink()
-            except:
+            except Exception:
                 pass
         
     def _create_stream_checker_config(self, removal_enabled):
