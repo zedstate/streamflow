@@ -10,7 +10,8 @@ This directory contains detailed documentation for StreamFlow for Dispatcharr.
 
 ## Implementation Guides
 
-- **[ACESTREAM_MONITORING_IMPLEMENTATION.md](ACESTREAM_MONITORING_IMPLEMENTATION.md)** - Comprehensive implementation guide for AceStream monitoring feature (experimental)
+- **[ACESTREAM_FEATURE_STATUS.md](ACESTREAM_FEATURE_STATUS.md)** - Status and overview of AceStream monitoring feature
+- **[ACESTREAM_MONITORING_IMPLEMENTATION.md](ACESTREAM_MONITORING_IMPLEMENTATION.md)** - Complete implementation guide for AceStream monitoring (experimental)
 
 ## Quick Links
 
