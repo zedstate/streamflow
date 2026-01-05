@@ -8,6 +8,10 @@ This directory contains detailed documentation for StreamFlow for Dispatcharr.
 - **[FEATURES.md](FEATURES.md)** - Detailed feature descriptions and usage
 - **[API.md](API.md)** - REST API endpoints and usage examples
 
+## Implementation Guides
+
+- **[ACESTREAM_MONITORING_IMPLEMENTATION.md](ACESTREAM_MONITORING_IMPLEMENTATION.md)** - Comprehensive implementation guide for AceStream monitoring feature (experimental)
+
 ## Quick Links
 
 For quick deployment instructions, see the main [README.md](../README.md) in the root directory.
