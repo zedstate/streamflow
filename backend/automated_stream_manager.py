@@ -704,6 +704,49 @@ class AutomatedStreamManager:
             # Don't cache errors, try again next time
             return True
     
+    def _filter_channels_by_profile(self, all_channels: List[Dict], action_description: str) -> List[Dict]:
+        """Filter channels by selected profile if one is configured.
+        
+        Args:
+            all_channels: List of all channels from UDI
+            action_description: Description of the action (e.g., "stream assignment", "stream validation")
+                               Used in log messages to provide context
+        
+        Returns:
+            Filtered list of channels. If no profile is selected or an error occurs,
+            returns the original list.
+        """
+        profile_config = get_profile_config()
+        
+        if not profile_config.is_using_profile():
+            return all_channels
+        
+        selected_profile_id = profile_config.get_selected_profile()
+        if not selected_profile_id:
+            return all_channels
+        
+        try:
+            # Get channels that are enabled in this profile from UDI
+            udi = get_udi_manager()
+            profile_data = udi.get_profile_channels(selected_profile_id)
+            
+            # According to Dispatcharr API, profile_data.channels is a list of channel IDs
+            profile_channel_ids = {
+                ch_id for ch_id in profile_data.get('channels', []) 
+                if isinstance(ch_id, int)
+            }
+            
+            # Filter channels to only those in the profile
+            filtered_channels = [ch for ch in all_channels if ch.get('id') in profile_channel_ids]
+            
+            profile_name = profile_config.get_config().get('selected_profile_name', 'Unknown')
+            logger.info(f"Profile filter active: Using {len(filtered_channels)} channels from profile '{profile_name}' for {action_description}")
+            
+            return filtered_channels
+        except Exception as e:
+            logger.error(f"Failed to load profile channels for {action_description}, using all channels: {e}")
+            return all_channels
+    
     def refresh_playlists(self, force: bool = False) -> bool:
         """Refresh M3U playlists and track changes.
         
@@ -939,28 +982,7 @@ class AutomatedStreamManager:
                 return {}
             
             # Filter by profile if one is selected
-            profile_config = get_profile_config()
-            
-            if profile_config.is_using_profile():
-                selected_profile_id = profile_config.get_selected_profile()
-                if selected_profile_id:
-                    try:
-                        # Get channels that are enabled in this profile from UDI
-                        profile_data = udi.get_profile_channels(selected_profile_id)
-                        
-                        # According to Dispatcharr API, profile_data.channels is a list of channel IDs
-                        profile_channel_ids = {
-                            ch_id for ch_id in profile_data.get('channels', []) 
-                            if isinstance(ch_id, int)
-                        }
-                        
-                        # Filter channels to only those in the profile
-                        all_channels = [ch for ch in all_channels if ch.get('id') in profile_channel_ids]
-                        
-                        profile_name = profile_config.get_config().get('selected_profile_name', 'Unknown')
-                        logger.info(f"Profile filter active: Using {len(all_channels)} channels from profile '{profile_name}' for stream assignment")
-                    except Exception as e:
-                        logger.error(f"Failed to load profile channels, using all channels: {e}")
+            all_channels = self._filter_channels_by_profile(all_channels, "stream assignment")
             
             # Filter channels by matching_mode setting (channel-level overrides group-level)
             channel_settings = get_channel_settings_manager()
@@ -1261,28 +1283,7 @@ class AutomatedStreamManager:
                 }
             
             # Filter by profile if one is selected
-            profile_config = get_profile_config()
-            
-            if profile_config.is_using_profile():
-                selected_profile_id = profile_config.get_selected_profile()
-                if selected_profile_id:
-                    try:
-                        # Get channels that are enabled in this profile from UDI
-                        profile_data = udi.get_profile_channels(selected_profile_id)
-                        
-                        # According to Dispatcharr API, profile_data.channels is a list of channel IDs
-                        profile_channel_ids = {
-                            ch_id for ch_id in profile_data.get('channels', []) 
-                            if isinstance(ch_id, int)
-                        }
-                        
-                        # Filter channels to only those in the profile
-                        all_channels = [ch for ch in all_channels if ch.get('id') in profile_channel_ids]
-                        
-                        profile_name = profile_config.get_config().get('selected_profile_name', 'Unknown')
-                        logger.info(f"Profile filter active: Using {len(all_channels)} channels from profile '{profile_name}' for stream validation")
-                    except Exception as e:
-                        logger.error(f"Failed to load profile channels, using all channels: {e}")
+            all_channels = self._filter_channels_by_profile(all_channels, "stream validation")
             
             # Get channel settings manager to respect matching mode settings
             channel_settings = get_channel_settings_manager()
