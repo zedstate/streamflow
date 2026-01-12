@@ -48,6 +48,30 @@ const BULK_HEALTH_CHECK_PRIORITY = 10
 // M3U account filtering - exclude 'custom' account as it's not a real source
 const CUSTOM_ACCOUNT_NAME = 'custom'
 
+// Helper function to normalize pattern data (supports both old and new formats)
+const normalizePatternData = (channelPatterns) => {
+  if (!channelPatterns) return []
+  
+  // New format: regex_patterns is array of {pattern, m3u_accounts}
+  if (channelPatterns.regex_patterns && Array.isArray(channelPatterns.regex_patterns)) {
+    return channelPatterns.regex_patterns.map(p => ({
+      pattern: p.pattern || p,
+      m3u_accounts: p.m3u_accounts || null
+    }))
+  }
+  
+  // Old format: regex is array of strings, m3u_accounts is channel-level
+  if (channelPatterns.regex && Array.isArray(channelPatterns.regex)) {
+    const channelM3uAccounts = channelPatterns.m3u_accounts || null
+    return channelPatterns.regex.map(pattern => ({
+      pattern: pattern,
+      m3u_accounts: channelM3uAccounts
+    }))
+  }
+  
+  return []
+}
+
 function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading, channelSettings, onUpdateSettings }) {
   const [stats, setStats] = useState(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -307,33 +331,36 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                 </Button>
               </div>
             
-            {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
-              <div className="space-y-2">
-                {channelPatterns.regex.map((pattern, index) => (
-                  <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
-                    <code className="text-sm flex-1 break-all">{pattern}</code>
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onEditRegex(channel.id, index)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onDeletePattern(channel.id, index)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+            {(() => {
+              const normalizedPatterns = normalizePatternData(channelPatterns)
+              return normalizedPatterns.length > 0 ? (
+                <div className="space-y-2">
+                  {normalizedPatterns.map((patternObj, index) => (
+                    <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                      <code className="text-sm flex-1 break-all">{patternObj.pattern}</code>
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onEditRegex(channel.id, index)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onDeletePattern(channel.id, index)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No regex patterns configured</p>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No regex patterns configured</p>
+              )
+            })()}
             </div>
           </div>
         )}
@@ -435,7 +462,7 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
   const isChecking = checkingChannel === channel.id
   
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
-  const patternCount = channelPatterns?.regex?.length || 0
+  const patternCount = normalizePatternData(channelPatterns).length
   const matchingMode = channelSettings?.matching_mode || 'enabled'
   const checkingMode = channelSettings?.checking_mode || 'enabled'
   const matchingModeSource = channelSettings?.matching_mode_source || 'default'
@@ -634,38 +661,40 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
               </Button>
             </div>
           
-            {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
-              <div className="space-y-2">
-                {channelPatterns.regex.map((pattern, index) => {
-                  // Get M3U account names if m3u_accounts are specified
-                  const accountNames = channelPatterns.m3u_accounts && channelPatterns.m3u_accounts.length > 0
-                    ? channelPatterns.m3u_accounts.map(id => {
-                        const acc = m3uAccounts?.find(account => account.id === id)
-                        return acc ? acc.name : `Account ${id}`
-                      }).join(', ')
-                    : 'All M3U Accounts'
-                  
-                  return (
-                    <div key={index} className="space-y-1">
-                      <div className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
-                        <div className="flex-1 space-y-1">
-                          <code className="text-sm break-all">{pattern}</code>
-                          <div className="text-xs text-muted-foreground">
-                            M3U Sources: {accountNames}
+            {(() => {
+              const normalizedPatterns = normalizePatternData(channelPatterns)
+              return normalizedPatterns.length > 0 ? (
+                <div className="space-y-2">
+                  {normalizedPatterns.map((patternObj, index) => {
+                    // Get M3U account names if m3u_accounts are specified for this pattern
+                    const accountNames = patternObj.m3u_accounts && patternObj.m3u_accounts.length > 0
+                      ? patternObj.m3u_accounts.map(id => {
+                          const acc = m3uAccounts?.find(account => account.id === id)
+                          return acc ? acc.name : `Account ${id}`
+                        }).join(', ')
+                      : 'All M3U Accounts'
+                    
+                    return (
+                      <div key={index} className="space-y-1">
+                        <div className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                          <div className="flex-1 space-y-1">
+                            <code className="text-sm break-all">{patternObj.pattern}</code>
+                            <div className="text-xs text-muted-foreground">
+                              M3U Sources: {accountNames}
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onEditRegex(channel.id, index)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onDeletePattern(channel.id, index)}
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onEditRegex(channel.id, index)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onDeletePattern(channel.id, index)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -677,7 +706,8 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No regex patterns configured</p>
-            )}
+            )
+          })()}
           </div>
         </div>
       )}
@@ -1375,14 +1405,22 @@ export default function ChannelConfiguration() {
     // If editing an existing pattern, load it
     if (patternIndex !== null) {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
-      if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
+      
+      // Support both new and old format
+      if (channelPatterns?.regex_patterns && channelPatterns.regex_patterns[patternIndex]) {
+        // New format with per-pattern m3u_accounts
+        const patternObj = channelPatterns.regex_patterns[patternIndex]
+        setNewPattern(patternObj.pattern || '')
+        setSelectedM3uAccounts(patternObj.m3u_accounts || [])
+      } else if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
+        // Old format - pattern is a string, m3u_accounts is channel-level
         setNewPattern(channelPatterns.regex[patternIndex])
-      }
-      // Load existing M3U account selection (if any)
-      if (channelPatterns && channelPatterns.m3u_accounts) {
-        setSelectedM3uAccounts(channelPatterns.m3u_accounts)
-      } else {
-        setSelectedM3uAccounts([])  // Empty means all M3U accounts
+        // Load channel-level M3U account selection (if any)
+        if (channelPatterns.m3u_accounts) {
+          setSelectedM3uAccounts(channelPatterns.m3u_accounts)
+        } else {
+          setSelectedM3uAccounts([])  // Empty means all M3U accounts
+        }
       }
     } else {
       setNewPattern('')
@@ -1490,22 +1528,42 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[editingChannelId] || patterns[String(editingChannelId)]
       const channel = channels.find(ch => ch.id === editingChannelId)
       
-      let updatedRegex = []
-      if (editingPatternIndex !== null && channelPatterns?.regex) {
+      // Build regex_patterns array in new format with per-pattern m3u_accounts
+      let updatedRegexPatterns = []
+      
+      // Get existing patterns in new format
+      if (channelPatterns?.regex_patterns) {
+        // Already in new format
+        updatedRegexPatterns = [...channelPatterns.regex_patterns]
+      } else if (channelPatterns?.regex) {
+        // Convert from old format
+        const oldM3uAccounts = channelPatterns.m3u_accounts
+        updatedRegexPatterns = channelPatterns.regex.map(p => ({
+          pattern: p,
+          m3u_accounts: oldM3uAccounts
+        }))
+      }
+      
+      if (editingPatternIndex !== null) {
         // Editing existing pattern
-        updatedRegex = [...channelPatterns.regex]
-        updatedRegex[editingPatternIndex] = newPattern
+        updatedRegexPatterns[editingPatternIndex] = {
+          pattern: newPattern,
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+        }
       } else {
         // Adding new pattern
-        updatedRegex = channelPatterns?.regex ? [...channelPatterns.regex, newPattern] : [newPattern]
+        updatedRegexPatterns.push({
+          pattern: newPattern,
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+        })
       }
 
+      // Send in new format
       await regexAPI.addPattern({
         channel_id: editingChannelId,
         name: channel?.name || '',
-        regex: updatedRegex,
-        enabled: channelPatterns?.enabled !== false,
-        m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null  // null = all M3U accounts
+        regex: updatedRegexPatterns,  // Send array of objects with per-pattern m3u_accounts
+        enabled: channelPatterns?.enabled !== false
       })
 
       toast({
@@ -1530,26 +1588,50 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
       const channel = channels.find(ch => ch.id === channelId)
       
-      if (!channelPatterns?.regex) return
+      // Get regex patterns in the appropriate format
+      let regexPatterns = []
+      if (channelPatterns?.regex_patterns) {
+        regexPatterns = channelPatterns.regex_patterns
+      } else if (channelPatterns?.regex) {
+        // Convert old format
+        const oldM3uAccounts = channelPatterns.m3u_accounts
+        regexPatterns = channelPatterns.regex.map(p => ({
+          pattern: p,
+          m3u_accounts: oldM3uAccounts
+        }))
+      } else {
+        return // No patterns to delete
+      }
 
-      const updatedRegex = channelPatterns.regex.filter((_, index) => index !== patternIndex)
+      const updatedRegexPatterns = regexPatterns.filter((_, index) => index !== patternIndex)
       
-      if (updatedRegex.length === 0) {
+      if (updatedRegexPatterns.length === 0) {
         // If no patterns left, delete the entire pattern config
         await regexAPI.deletePattern(channelId)
       } else {
-        // Update with remaining patterns, preserving playlist configuration
+        // Update with remaining patterns
         await regexAPI.addPattern({
           channel_id: channelId,
           name: channel?.name || '',
-          regex: updatedRegex,
-          enabled: channelPatterns.enabled !== false,
-          m3u_accounts: channelPatterns.m3u_accounts  // Preserve M3U account filtering
+          regex: updatedRegexPatterns,  // Send array of objects
+          enabled: channelPatterns.enabled !== false
         })
       }
 
       toast({
         title: "Success",
+        description: "Pattern deleted successfully"
+      })
+
+      await loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to delete pattern",
+        variant: "destructive"
+      })
+    }
+  }
         description: "Pattern deleted successfully"
       })
 

@@ -553,22 +553,42 @@ class RegexChannelMatcher:
             if not config.get("enabled", True):
                 continue
             
-            # Check if this regex pattern applies to the stream's M3U account
-            # Backward compatible behavior:
-            # - m3u_accounts not present (None) = old config, applies to all M3U accounts
-            # - m3u_accounts = [] (empty) = new config, explicitly applies to all M3U accounts
-            # - m3u_accounts = [1,2,3] = only applies to those specific M3U accounts
-            pattern_m3u_accounts = config.get("m3u_accounts")
-            if pattern_m3u_accounts is not None and len(pattern_m3u_accounts) > 0:
-                # Pattern is limited to specific M3U accounts
-                if stream_m3u_account is None or stream_m3u_account not in pattern_m3u_accounts:
-                    # Stream's M3U account is not in the allowed list, skip this pattern
-                    continue
-            # If m3u_accounts is None (old config) or empty list (new, all), pattern applies to all M3U accounts
             
             channel_name = config.get("name", "")
             
-            for pattern in config.get("regex", []):
+            # Support both new format (regex_patterns) and old format (regex) for backward compatibility
+            regex_patterns = config.get("regex_patterns")
+            if regex_patterns is None:
+                # Fallback to old format
+                old_regex = config.get("regex", [])
+                old_m3u_accounts = config.get("m3u_accounts")
+                regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
+            
+            for pattern_obj in regex_patterns:
+                # Handle both dict and string patterns for flexibility
+                if isinstance(pattern_obj, dict):
+                    pattern = pattern_obj.get("pattern", "")
+                    pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                else:
+                    # Legacy string format
+                    pattern = pattern_obj
+                    pattern_m3u_accounts = None
+                
+                if not pattern:
+                    continue
+                
+                # Check if this regex pattern applies to the stream's M3U account
+                # Backward compatible behavior:
+                # - m3u_accounts not present (None) = old config, applies to all M3U accounts
+                # - m3u_accounts = [] (empty) = new config, explicitly applies to all M3U accounts
+                # - m3u_accounts = [1,2,3] = only applies to those specific M3U accounts
+                if pattern_m3u_accounts is not None and len(pattern_m3u_accounts) > 0:
+                    # Pattern is limited to specific M3U accounts
+                    if stream_m3u_account is None or stream_m3u_account not in pattern_m3u_accounts:
+                        # Stream's M3U account is not in the allowed list, skip this pattern
+                        continue
+                # If m3u_accounts is None (old config) or empty list (new, all), pattern applies to all M3U accounts
+                
                 # Substitute channel name variable if present
                 substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
                 
@@ -617,8 +637,12 @@ class RegexChannelMatcher:
         if not channel_config.get("enabled", True):
             return False
         
-        # Check if there are any regex patterns
-        regex_patterns = channel_config.get("regex", [])
+        # Check if there are any regex patterns (support both old and new format)
+        regex_patterns = channel_config.get("regex_patterns")
+        if regex_patterns is None:
+            # Fallback to old format
+            regex_patterns = channel_config.get("regex", [])
+        
         return isinstance(regex_patterns, list) and len(regex_patterns) > 0
 
 
