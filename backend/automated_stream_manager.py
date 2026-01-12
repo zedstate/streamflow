@@ -51,6 +51,9 @@ from udi import get_udi_manager
 # Import channel settings manager
 from channel_settings_manager import get_channel_settings_manager
 
+# Import profile config
+from profile_config import get_profile_config
+
 # Setup centralized logging
 from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
 
@@ -935,6 +938,30 @@ class AutomatedStreamManager:
                 logger.warning("No channels found")
                 return {}
             
+            # Filter by profile if one is selected
+            profile_config = get_profile_config()
+            
+            if profile_config.is_using_profile():
+                selected_profile_id = profile_config.get_selected_profile()
+                if selected_profile_id:
+                    try:
+                        # Get channels that are enabled in this profile from UDI
+                        profile_data = udi.get_profile_channels(selected_profile_id)
+                        
+                        # According to Dispatcharr API, profile_data.channels is a list of channel IDs
+                        profile_channel_ids = {
+                            ch_id for ch_id in profile_data.get('channels', []) 
+                            if isinstance(ch_id, int)
+                        }
+                        
+                        # Filter channels to only those in the profile
+                        all_channels = [ch for ch in all_channels if ch.get('id') in profile_channel_ids]
+                        
+                        profile_name = profile_config.get_config().get('selected_profile_name', 'Unknown')
+                        logger.info(f"Profile filter active: Using {len(all_channels)} channels from profile '{profile_name}' for stream assignment")
+                    except Exception as e:
+                        logger.error(f"Failed to load profile channels, using all channels: {e}")
+            
             # Filter channels by matching_mode setting (channel-level overrides group-level)
             channel_settings = get_channel_settings_manager()
             matching_enabled_channel_ids = []
@@ -1232,6 +1259,30 @@ class AutomatedStreamManager:
                     "channels_modified": 0,
                     "details": []
                 }
+            
+            # Filter by profile if one is selected
+            profile_config = get_profile_config()
+            
+            if profile_config.is_using_profile():
+                selected_profile_id = profile_config.get_selected_profile()
+                if selected_profile_id:
+                    try:
+                        # Get channels that are enabled in this profile from UDI
+                        profile_data = udi.get_profile_channels(selected_profile_id)
+                        
+                        # According to Dispatcharr API, profile_data.channels is a list of channel IDs
+                        profile_channel_ids = {
+                            ch_id for ch_id in profile_data.get('channels', []) 
+                            if isinstance(ch_id, int)
+                        }
+                        
+                        # Filter channels to only those in the profile
+                        all_channels = [ch for ch in all_channels if ch.get('id') in profile_channel_ids]
+                        
+                        profile_name = profile_config.get_config().get('selected_profile_name', 'Unknown')
+                        logger.info(f"Profile filter active: Using {len(all_channels)} channels from profile '{profile_name}' for stream validation")
+                    except Exception as e:
+                        logger.error(f"Failed to load profile channels, using all channels: {e}")
             
             # Get channel settings manager to respect matching mode settings
             channel_settings = get_channel_settings_manager()
