@@ -1708,9 +1708,9 @@ export default function ChannelConfiguration() {
       // Filter to only include channels that are currently selected
       // This ensures we only edit patterns in the selected channels, even if the pattern
       // exists in other channels that were not selected
-      const selectedChannelIds = Array.from(selectedChannels).map(id => String(id))
+      const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
       const channelsToEdit = editingCommonPattern.channel_ids.filter(id => 
-        selectedChannelIds.includes(String(id))
+        selectedChannelIdsSet.has(String(id))
       )
       
       if (channelsToEdit.length === 0) {

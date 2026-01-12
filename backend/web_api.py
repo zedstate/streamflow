@@ -1063,6 +1063,8 @@ def bulk_edit_regex_pattern():
                 existing_regex = existing_patterns.get('regex', [])
                 
                 # Replace old pattern with new pattern
+                # Note: This replaces ALL occurrences of old_pattern if it appears multiple times
+                # in the same channel's regex list, which is the intended behavior
                 if old_pattern in existing_regex:
                     updated_regex = [new_pattern if p == old_pattern else p for p in existing_regex]
                     
