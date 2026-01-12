@@ -360,7 +360,7 @@ class RegexChannelMatcher:
                 # "2": {"name": "ESPN", "regex": [".*ESPN.*", ".*Sports.*"], "enabled": True}
             },
             "global_settings": {
-                "case_sensitive": False,
+                "case_sensitive": True,
                 "require_exact_match": False
             }
         }
@@ -484,7 +484,7 @@ class RegexChannelMatcher:
             List of channel IDs that match the stream
         """
         matches = []
-        case_sensitive = self.channel_patterns.get("global_settings", {}).get("case_sensitive", False)
+        case_sensitive = self.channel_patterns.get("global_settings", {}).get("case_sensitive", True)
         
         search_name = stream_name if case_sensitive else stream_name.lower()
         
