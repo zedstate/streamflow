@@ -1705,8 +1705,25 @@ export default function ChannelConfiguration() {
     }
     
     try {
+      // Filter to only include channels that are currently selected
+      // This ensures we only edit patterns in the selected channels, even if the pattern
+      // exists in other channels that were not selected
+      const selectedChannelIds = Array.from(selectedChannels).map(id => String(id))
+      const channelsToEdit = editingCommonPattern.channel_ids.filter(id => 
+        selectedChannelIds.includes(String(id))
+      )
+      
+      if (channelsToEdit.length === 0) {
+        toast({
+          title: "Error",
+          description: "No selected channels have this pattern",
+          variant: "destructive"
+        })
+        return
+      }
+      
       const response = await regexAPI.bulkEditPattern({
-        channel_ids: editingCommonPattern.channel_ids,
+        channel_ids: channelsToEdit,
         old_pattern: editingCommonPattern.pattern,
         new_pattern: newCommonPattern
       })
@@ -3050,7 +3067,7 @@ export default function ChannelConfiguration() {
           <DialogHeader>
             <DialogTitle>Edit Common Regex Patterns</DialogTitle>
             <DialogDescription>
-              These are the regex patterns shared across {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}. Editing a pattern will update it in all channels that use it.
+              These are the regex patterns shared across the {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}. Editing a pattern will update it ONLY in the selected channels, not in any other channels that may also have this pattern.
             </DialogDescription>
           </DialogHeader>
           
