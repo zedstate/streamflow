@@ -6,13 +6,14 @@ import { Label } from '@/components/ui/label.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Checkbox } from '@/components/ui/checkbox.jsx'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog.jsx'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog.jsx'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2 } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
@@ -1028,6 +1029,16 @@ export default function ChannelConfiguration() {
   // Bulk health check state
   const [bulkCheckingChannels, setBulkCheckingChannels] = useState(false)
   
+  // Delete confirmation dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  
+  // Edit common regex dialog state
+  const [editCommonDialogOpen, setEditCommonDialogOpen] = useState(false)
+  const [commonPatterns, setCommonPatterns] = useState([])
+  const [loadingCommonPatterns, setLoadingCommonPatterns] = useState(false)
+  const [editingCommonPattern, setEditingCommonPattern] = useState(null)
+  const [newCommonPattern, setNewCommonPattern] = useState('')
+  
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -1619,6 +1630,129 @@ export default function ChannelConfiguration() {
       })
     }
   }
+  
+  const handleBulkDelete = async () => {
+    if (selectedChannels.size === 0) {
+      toast({
+        title: "No Channels Selected",
+        description: "Please select at least one channel",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      const response = await regexAPI.bulkDeletePatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      
+      toast({
+        title: "Success",
+        description: response.data.message || `Deleted patterns from ${response.data.success_count} channels`,
+      })
+      
+      // Reload data and close dialog
+      await loadData()
+      setDeleteDialogOpen(false)
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to delete patterns",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleOpenEditCommon = async () => {
+    if (selectedChannels.size === 0) {
+      toast({
+        title: "No Channels Selected",
+        description: "Please select at least one channel",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      setLoadingCommonPatterns(true)
+      setEditCommonDialogOpen(true)
+      
+      const response = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      
+      setCommonPatterns(response.data.patterns || [])
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to load common patterns",
+        variant: "destructive"
+      })
+      setEditCommonDialogOpen(false)
+    } finally {
+      setLoadingCommonPatterns(false)
+    }
+  }
+  
+  const handleEditCommonPattern = async () => {
+    if (!editingCommonPattern || !newCommonPattern.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a new pattern",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      // Filter to only include channels that are currently selected
+      // This ensures we only edit patterns in the selected channels, even if the pattern
+      // exists in other channels that were not selected
+      const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
+      const channelsToEdit = editingCommonPattern.channel_ids.filter(id => 
+        selectedChannelIdsSet.has(String(id))
+      )
+      
+      if (channelsToEdit.length === 0) {
+        toast({
+          title: "Error",
+          description: "No selected channels have this pattern",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      const response = await regexAPI.bulkEditPattern({
+        channel_ids: channelsToEdit,
+        old_pattern: editingCommonPattern.pattern,
+        new_pattern: newCommonPattern
+      })
+      
+      toast({
+        title: "Success",
+        description: response.data.message || `Updated pattern in ${response.data.success_count} channels`,
+      })
+      
+      // Reload data and common patterns
+      await loadData()
+      
+      // Reload common patterns to show updated list
+      const patternsResponse = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      setCommonPatterns(patternsResponse.data.patterns || [])
+      
+      // Close edit mode
+      setEditingCommonPattern(null)
+      setNewCommonPattern('')
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to edit pattern",
+        variant: "destructive"
+      })
+    }
+  }
 
   // Handler for toggling expanded row - ensures only one row is expanded at a time
   const handleToggleExpanded = (channelId) => {
@@ -2031,44 +2165,71 @@ export default function ChannelConfiguration() {
                     <Badge variant="secondary">
                       {selectedChannels.size} selected
                     </Badge>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleSelectAll}
-                      disabled={displayChannels.length === 0}
-                    >
-                      Select All
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDeselectAll}
-                      disabled={selectedChannels.size === 0}
-                    >
-                      Deselect All
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => setBulkDialogOpen(true)}
-                      disabled={selectedChannels.size === 0}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Regex to Selected
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={handleBulkHealthCheck}
-                      disabled={selectedChannels.size === 0 || bulkCheckingChannels}
-                      className="text-blue-600 dark:text-green-500 border-blue-600 dark:border-green-500 hover:bg-blue-50 dark:hover:bg-green-950"
-                      variant="outline"
-                    >
-                      {bulkCheckingChannels ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Activity className="h-4 w-4 mr-2" />
-                      )}
-                      Health Check Selected
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setBulkDialogOpen(true)}
+                          disabled={selectedChannels.size === 0}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Add Regex to Selected</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleBulkHealthCheck}
+                          disabled={selectedChannels.size === 0 || bulkCheckingChannels}
+                          className="text-blue-600 dark:text-green-500 border-blue-600 dark:border-green-500 hover:bg-blue-50 dark:hover:bg-green-950"
+                        >
+                          {bulkCheckingChannels ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Activity className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Health Check Selected</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleOpenEditCommon}
+                          disabled={selectedChannels.size === 0}
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Edit Common Regex</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => setDeleteDialogOpen(true)}
+                          disabled={selectedChannels.size === 0}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Delete Selected Regex</p>
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
               </CardContent>
@@ -2877,6 +3038,120 @@ export default function ChannelConfiguration() {
             </Button>
             <Button onClick={handleBulkAddPattern} disabled={!bulkPattern.trim()}>
               Add to {selectedChannels.size} Channel{selectedChannels.size !== 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Regex Patterns</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete all regex patterns from {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBulkDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      
+      {/* Edit Common Regex Dialog */}
+      <Dialog open={editCommonDialogOpen} onOpenChange={setEditCommonDialogOpen}>
+        <DialogContent className="sm:max-w-[700px]">
+          <DialogHeader>
+            <DialogTitle>Edit Common Regex Patterns</DialogTitle>
+            <DialogDescription>
+              These are the regex patterns shared across the {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}. Editing a pattern will update it ONLY in the selected channels, not in any other channels that may also have this pattern.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4 max-h-[500px] overflow-y-auto">
+            {loadingCommonPatterns ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : commonPatterns.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No common patterns found across selected channels
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {commonPatterns.map((patternInfo, index) => (
+                  <div key={index} className="border rounded-lg p-4 space-y-3">
+                    {editingCommonPattern && editingCommonPattern.pattern === patternInfo.pattern ? (
+                      // Edit mode
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label>New Pattern</Label>
+                          <Input
+                            value={newCommonPattern}
+                            onChange={(e) => setNewCommonPattern(e.target.value)}
+                            className="font-mono"
+                            placeholder="Enter new pattern"
+                          />
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditingCommonPattern(null)
+                              setNewCommonPattern('')
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={handleEditCommonPattern}
+                            disabled={!newCommonPattern.trim()}
+                          >
+                            Save
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      // View mode
+                      <>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <code className="text-sm break-all block">{patternInfo.pattern}</code>
+                            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                              <span>Used in {patternInfo.count} of {selectedChannels.size} channels ({patternInfo.percentage}%)</span>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditingCommonPattern(patternInfo)
+                              setNewCommonPattern(patternInfo.pattern)
+                            }}
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setEditCommonDialogOpen(false)
+              setEditingCommonPattern(null)
+              setNewCommonPattern('')
+            }}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

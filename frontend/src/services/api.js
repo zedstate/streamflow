@@ -78,6 +78,9 @@ export const regexAPI = {
   testPatternLive: (data) => api.post('/test-regex-live', data),
   importPatterns: (patterns) => api.post('/regex-patterns/import', patterns),
   bulkAddPatterns: (data) => api.post('/regex-patterns/bulk', data),
+  bulkDeletePatterns: (data) => api.post('/regex-patterns/bulk-delete', data),
+  getCommonPatterns: (data) => api.post('/regex-patterns/common', data),
+  bulkEditPattern: (data) => api.post('/regex-patterns/bulk-edit', data),
 };
 
 export const streamAPI = {

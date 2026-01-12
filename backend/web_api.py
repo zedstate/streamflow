@@ -913,6 +913,201 @@ def import_regex_patterns():
         logger.error(f"Error importing regex patterns: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/regex-patterns/bulk-delete', methods=['POST'])
+def bulk_delete_regex_patterns():
+    """Delete all regex patterns from multiple channels."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        channel_ids = data.get('channel_ids', [])
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        matcher = get_regex_matcher()
+        
+        # Delete patterns for each channel
+        success_count = 0
+        failed_channels = []
+        
+        for channel_id in channel_ids:
+            try:
+                matcher.delete_channel_pattern(str(channel_id))
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Error deleting patterns from channel {channel_id}: {e}")
+                failed_channels.append({
+                    "channel_id": channel_id,
+                    "error": str(e)
+                })
+        
+        response_data = {
+            "message": f"Successfully deleted patterns from {success_count} channel(s)",
+            "success_count": success_count,
+            "total_channels": len(channel_ids)
+        }
+        
+        if failed_channels:
+            response_data["failed_channels"] = failed_channels
+            response_data["failed_count"] = len(failed_channels)
+        
+        return jsonify(response_data)
+    except Exception as e:
+        logger.error(f"Error bulk deleting regex patterns: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/regex-patterns/common', methods=['POST'])
+def get_common_regex_patterns():
+    """Get common regex patterns across multiple channels, ordered by frequency."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        channel_ids = data.get('channel_ids', [])
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        matcher = get_regex_matcher()
+        patterns_data = matcher.get_patterns()
+        
+        # Count pattern occurrences across selected channels
+        pattern_count = {}
+        pattern_to_channels = {}
+        
+        for channel_id in channel_ids:
+            channel_patterns = patterns_data.get('patterns', {}).get(str(channel_id), {})
+            regex_list = channel_patterns.get('regex', [])
+            
+            for pattern in regex_list:
+                if pattern not in pattern_count:
+                    pattern_count[pattern] = 0
+                    pattern_to_channels[pattern] = []
+                
+                pattern_count[pattern] += 1
+                pattern_to_channels[pattern].append(str(channel_id))
+        
+        # Sort patterns by frequency (most common first)
+        sorted_patterns = sorted(pattern_count.items(), key=lambda x: x[1], reverse=True)
+        
+        # Format results
+        common_patterns = []
+        for pattern, count in sorted_patterns:
+            common_patterns.append({
+                "pattern": pattern,
+                "count": count,
+                "channel_ids": pattern_to_channels[pattern],
+                "percentage": round((count / len(channel_ids)) * 100, 1)
+            })
+        
+        return jsonify({
+            "patterns": common_patterns,
+            "total_channels": len(channel_ids),
+            "total_patterns": len(common_patterns)
+        })
+    except Exception as e:
+        logger.error(f"Error getting common regex patterns: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/regex-patterns/bulk-edit', methods=['POST'])
+def bulk_edit_regex_pattern():
+    """Edit a specific regex pattern across multiple channels."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        required_fields = ['channel_ids', 'old_pattern', 'new_pattern']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
+        
+        channel_ids = data['channel_ids']
+        old_pattern = data['old_pattern']
+        new_pattern = data['new_pattern']
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        # Validate new pattern
+        matcher = get_regex_matcher()
+        is_valid, error_msg = matcher.validate_regex_patterns([new_pattern])
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        # Get UDI manager to fetch channel names
+        udi = get_udi_manager()
+        
+        # Update pattern in each channel
+        success_count = 0
+        failed_channels = []
+        
+        for channel_id in channel_ids:
+            try:
+                # Get channel info
+                channel = udi.get_channel_by_id(channel_id)
+                if not channel:
+                    failed_channels.append({
+                        "channel_id": channel_id,
+                        "error": "Channel not found"
+                    })
+                    continue
+                
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get existing patterns
+                patterns = matcher.get_patterns()
+                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
+                existing_regex = existing_patterns.get('regex', [])
+                
+                # Replace old pattern with new pattern
+                # Note: This replaces ALL occurrences of old_pattern if it appears multiple times
+                # in the same channel's regex list, which is the intended behavior
+                if old_pattern in existing_regex:
+                    updated_regex = [new_pattern if p == old_pattern else p for p in existing_regex]
+                    
+                    # Update pattern
+                    matcher.add_channel_pattern(
+                        str(channel_id),
+                        channel_name,
+                        updated_regex,
+                        existing_patterns.get('enabled', True),
+                        m3u_accounts=existing_patterns.get('m3u_accounts')
+                    )
+                    success_count += 1
+                else:
+                    # Pattern not found in this channel, skip
+                    failed_channels.append({
+                        "channel_id": channel_id,
+                        "error": "Pattern not found in channel"
+                    })
+            except Exception as e:
+                logger.error(f"Error editing pattern in channel {channel_id}: {e}")
+                failed_channels.append({
+                    "channel_id": channel_id,
+                    "error": str(e)
+                })
+        
+        response_data = {
+            "message": f"Successfully edited pattern in {success_count} channel(s)",
+            "success_count": success_count,
+            "total_channels": len(channel_ids)
+        }
+        
+        if failed_channels:
+            response_data["failed_channels"] = failed_channels
+            response_data["failed_count"] = len(failed_channels)
+        
+        return jsonify(response_data)
+    except ValueError as e:
+        logger.warning(f"Validation error in bulk pattern edit: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error bulk editing regex pattern: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/test-regex', methods=['POST'])
 def test_regex_pattern():
     """Test a regex pattern against a stream name."""
@@ -968,7 +1163,7 @@ def test_regex_pattern_live():
         
         # Get patterns to test - can be a single pattern or multiple patterns per channel
         patterns = data.get('patterns', [])
-        case_sensitive = data.get('case_sensitive', False)
+        case_sensitive = data.get('case_sensitive', True)
         max_matches_per_pattern = data.get('max_matches', 100)  # Limit results
         
         if not patterns:
