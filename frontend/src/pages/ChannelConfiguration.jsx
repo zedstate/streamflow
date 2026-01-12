@@ -1658,18 +1658,6 @@ export default function ChannelConfiguration() {
       })
     }
   }
-        description: "Pattern deleted successfully"
-      })
-
-      await loadData()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: "Failed to delete pattern",
-        variant: "destructive"
-      })
-    }
-  }
   
   // Bulk assignment handlers
   const handleToggleChannel = (channelId) => {
@@ -3505,20 +3493,6 @@ export default function ChannelConfiguration() {
               setNewCommonPattern('')
               setSelectedCommonPatterns(new Set())
               setCommonPatternsSearch('')
-            }}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-            )}
-          </div>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setEditCommonDialogOpen(false)
-              setEditingCommonPattern(null)
-              setNewCommonPattern('')
             }}>
               Close
             </Button>
