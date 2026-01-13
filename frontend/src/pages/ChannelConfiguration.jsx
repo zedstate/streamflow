@@ -48,6 +48,30 @@ const BULK_HEALTH_CHECK_PRIORITY = 10
 // M3U account filtering - exclude 'custom' account as it's not a real source
 const CUSTOM_ACCOUNT_NAME = 'custom'
 
+// Helper function to normalize pattern data (supports both old and new formats)
+const normalizePatternData = (channelPatterns) => {
+  if (!channelPatterns) return []
+  
+  // New format: regex_patterns is array of {pattern, m3u_accounts}
+  if (channelPatterns.regex_patterns && Array.isArray(channelPatterns.regex_patterns)) {
+    return channelPatterns.regex_patterns.map(p => ({
+      pattern: p.pattern || p,
+      m3u_accounts: p.m3u_accounts || null
+    }))
+  }
+  
+  // Old format: regex is array of strings, m3u_accounts is channel-level
+  if (channelPatterns.regex && Array.isArray(channelPatterns.regex)) {
+    const channelM3uAccounts = channelPatterns.m3u_accounts || null
+    return channelPatterns.regex.map(pattern => ({
+      pattern: pattern,
+      m3u_accounts: channelM3uAccounts
+    }))
+  }
+  
+  return []
+}
+
 function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading, channelSettings, onUpdateSettings }) {
   const [stats, setStats] = useState(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -307,33 +331,36 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                 </Button>
               </div>
             
-            {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
-              <div className="space-y-2">
-                {channelPatterns.regex.map((pattern, index) => (
-                  <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
-                    <code className="text-sm flex-1 break-all">{pattern}</code>
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onEditRegex(channel.id, index)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onDeletePattern(channel.id, index)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+            {(() => {
+              const normalizedPatterns = normalizePatternData(channelPatterns)
+              return normalizedPatterns.length > 0 ? (
+                <div className="space-y-2">
+                  {normalizedPatterns.map((patternObj, index) => (
+                    <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                      <code className="text-sm flex-1 break-all">{patternObj.pattern}</code>
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onEditRegex(channel.id, index)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onDeletePattern(channel.id, index)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No regex patterns configured</p>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No regex patterns configured</p>
+              )
+            })()}
             </div>
           </div>
         )}
@@ -435,7 +462,7 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
   const isChecking = checkingChannel === channel.id
   
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
-  const patternCount = channelPatterns?.regex?.length || 0
+  const patternCount = normalizePatternData(channelPatterns).length
   const matchingMode = channelSettings?.matching_mode || 'enabled'
   const checkingMode = channelSettings?.checking_mode || 'enabled'
   const matchingModeSource = channelSettings?.matching_mode_source || 'default'
@@ -634,38 +661,40 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
               </Button>
             </div>
           
-            {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
-              <div className="space-y-2">
-                {channelPatterns.regex.map((pattern, index) => {
-                  // Get M3U account names if m3u_accounts are specified
-                  const accountNames = channelPatterns.m3u_accounts && channelPatterns.m3u_accounts.length > 0
-                    ? channelPatterns.m3u_accounts.map(id => {
-                        const acc = m3uAccounts?.find(account => account.id === id)
-                        return acc ? acc.name : `Account ${id}`
-                      }).join(', ')
-                    : 'All M3U Accounts'
-                  
-                  return (
-                    <div key={index} className="space-y-1">
-                      <div className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
-                        <div className="flex-1 space-y-1">
-                          <code className="text-sm break-all">{pattern}</code>
-                          <div className="text-xs text-muted-foreground">
-                            M3U Sources: {accountNames}
+            {(() => {
+              const normalizedPatterns = normalizePatternData(channelPatterns)
+              return normalizedPatterns.length > 0 ? (
+                <div className="space-y-2">
+                  {normalizedPatterns.map((patternObj, index) => {
+                    // Get M3U account names if m3u_accounts are specified for this pattern
+                    const accountNames = patternObj.m3u_accounts && patternObj.m3u_accounts.length > 0
+                      ? patternObj.m3u_accounts.map(id => {
+                          const acc = m3uAccounts?.find(account => account.id === id)
+                          return acc ? acc.name : `Account ${id}`
+                        }).join(', ')
+                      : 'All M3U Accounts'
+                    
+                    return (
+                      <div key={index} className="space-y-1">
+                        <div className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                          <div className="flex-1 space-y-1">
+                            <code className="text-sm break-all">{patternObj.pattern}</code>
+                            <div className="text-xs text-muted-foreground">
+                              M3U Sources: {accountNames}
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onEditRegex(channel.id, index)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onDeletePattern(channel.id, index)}
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onEditRegex(channel.id, index)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onDeletePattern(channel.id, index)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -677,7 +706,8 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No regex patterns configured</p>
-            )}
+            )
+          })()}
           </div>
         </div>
       )}
@@ -1038,6 +1068,8 @@ export default function ChannelConfiguration() {
   const [loadingCommonPatterns, setLoadingCommonPatterns] = useState(false)
   const [editingCommonPattern, setEditingCommonPattern] = useState(null)
   const [newCommonPattern, setNewCommonPattern] = useState('')
+  const [selectedCommonPatterns, setSelectedCommonPatterns] = useState(new Set())
+  const [commonPatternsSearch, setCommonPatternsSearch] = useState('')
   
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -1375,14 +1407,22 @@ export default function ChannelConfiguration() {
     // If editing an existing pattern, load it
     if (patternIndex !== null) {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
-      if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
+      
+      // Support both new and old format
+      if (channelPatterns?.regex_patterns && channelPatterns.regex_patterns[patternIndex]) {
+        // New format with per-pattern m3u_accounts
+        const patternObj = channelPatterns.regex_patterns[patternIndex]
+        setNewPattern(patternObj.pattern || '')
+        setSelectedM3uAccounts(patternObj.m3u_accounts || [])
+      } else if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
+        // Old format - pattern is a string, m3u_accounts is channel-level
         setNewPattern(channelPatterns.regex[patternIndex])
-      }
-      // Load existing M3U account selection (if any)
-      if (channelPatterns && channelPatterns.m3u_accounts) {
-        setSelectedM3uAccounts(channelPatterns.m3u_accounts)
-      } else {
-        setSelectedM3uAccounts([])  // Empty means all M3U accounts
+        // Load channel-level M3U account selection (if any)
+        if (channelPatterns.m3u_accounts) {
+          setSelectedM3uAccounts(channelPatterns.m3u_accounts)
+        } else {
+          setSelectedM3uAccounts([])  // Empty means all M3U accounts
+        }
       }
     } else {
       setNewPattern('')
@@ -1490,22 +1530,42 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[editingChannelId] || patterns[String(editingChannelId)]
       const channel = channels.find(ch => ch.id === editingChannelId)
       
-      let updatedRegex = []
-      if (editingPatternIndex !== null && channelPatterns?.regex) {
+      // Build regex_patterns array in new format with per-pattern m3u_accounts
+      let updatedRegexPatterns = []
+      
+      // Get existing patterns in new format
+      if (channelPatterns?.regex_patterns) {
+        // Already in new format
+        updatedRegexPatterns = [...channelPatterns.regex_patterns]
+      } else if (channelPatterns?.regex) {
+        // Convert from old format
+        const oldM3uAccounts = channelPatterns.m3u_accounts
+        updatedRegexPatterns = channelPatterns.regex.map(p => ({
+          pattern: p,
+          m3u_accounts: oldM3uAccounts
+        }))
+      }
+      
+      if (editingPatternIndex !== null) {
         // Editing existing pattern
-        updatedRegex = [...channelPatterns.regex]
-        updatedRegex[editingPatternIndex] = newPattern
+        updatedRegexPatterns[editingPatternIndex] = {
+          pattern: newPattern,
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+        }
       } else {
         // Adding new pattern
-        updatedRegex = channelPatterns?.regex ? [...channelPatterns.regex, newPattern] : [newPattern]
+        updatedRegexPatterns.push({
+          pattern: newPattern,
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+        })
       }
 
+      // Send in new format
       await regexAPI.addPattern({
         channel_id: editingChannelId,
         name: channel?.name || '',
-        regex: updatedRegex,
-        enabled: channelPatterns?.enabled !== false,
-        m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null  // null = all M3U accounts
+        regex: updatedRegexPatterns,  // Send array of objects with per-pattern m3u_accounts
+        enabled: channelPatterns?.enabled !== false
       })
 
       toast({
@@ -1513,8 +1573,16 @@ export default function ChannelConfiguration() {
         description: editingPatternIndex !== null ? "Pattern updated successfully" : "Pattern added successfully"
       })
 
-      // Reload patterns
-      await loadData()
+      // Update patterns state directly instead of reloading the entire page
+      setPatterns(prevPatterns => ({
+        ...prevPatterns,
+        [editingChannelId]: {
+          ...channelPatterns,
+          regex_patterns: updatedRegexPatterns,
+          enabled: channelPatterns?.enabled !== false
+        }
+      }))
+      
       handleCloseDialog()
     } catch (err) {
       toast({
@@ -1530,30 +1598,58 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
       const channel = channels.find(ch => ch.id === channelId)
       
-      if (!channelPatterns?.regex) return
+      // Get regex patterns in the appropriate format
+      let regexPatterns = []
+      if (channelPatterns?.regex_patterns) {
+        regexPatterns = channelPatterns.regex_patterns
+      } else if (channelPatterns?.regex) {
+        // Convert old format
+        const oldM3uAccounts = channelPatterns.m3u_accounts
+        regexPatterns = channelPatterns.regex.map(p => ({
+          pattern: p,
+          m3u_accounts: oldM3uAccounts
+        }))
+      } else {
+        return // No patterns to delete
+      }
 
-      const updatedRegex = channelPatterns.regex.filter((_, index) => index !== patternIndex)
+      const updatedRegexPatterns = regexPatterns.filter((_, index) => index !== patternIndex)
       
-      if (updatedRegex.length === 0) {
+      if (updatedRegexPatterns.length === 0) {
         // If no patterns left, delete the entire pattern config
         await regexAPI.deletePattern(channelId)
+        
+        // Update state to remove patterns
+        setPatterns(prevPatterns => {
+          const newPatterns = { ...prevPatterns }
+          delete newPatterns[channelId]
+          delete newPatterns[String(channelId)]
+          return newPatterns
+        })
       } else {
-        // Update with remaining patterns, preserving playlist configuration
+        // Update with remaining patterns
         await regexAPI.addPattern({
           channel_id: channelId,
           name: channel?.name || '',
-          regex: updatedRegex,
-          enabled: channelPatterns.enabled !== false,
-          m3u_accounts: channelPatterns.m3u_accounts  // Preserve M3U account filtering
+          regex: updatedRegexPatterns,  // Send array of objects
+          enabled: channelPatterns.enabled !== false
         })
+        
+        // Update patterns state directly
+        setPatterns(prevPatterns => ({
+          ...prevPatterns,
+          [channelId]: {
+            ...channelPatterns,
+            regex_patterns: updatedRegexPatterns,
+            enabled: channelPatterns.enabled !== false
+          }
+        }))
       }
 
       toast({
         title: "Success",
         description: "Pattern deleted successfully"
       })
-
-      await loadData()
     } catch (err) {
       toast({
         title: "Error",
@@ -1749,6 +1845,140 @@ export default function ChannelConfiguration() {
       toast({
         title: "Error",
         description: err.response?.data?.error || "Failed to edit pattern",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleDeleteSingleCommonPattern = async (patternInfo) => {
+    try {
+      // Delete this pattern from all selected channels
+      const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
+      const channelsToDelete = patternInfo.channel_ids.filter(id => 
+        selectedChannelIdsSet.has(String(id))
+      )
+      
+      if (channelsToDelete.length === 0) {
+        toast({
+          title: "Error",
+          description: "No selected channels have this pattern",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      // Delete pattern from each channel
+      let successCount = 0
+      for (const channelId of channelsToDelete) {
+        try {
+          const channelPatterns = patterns[channelId] || patterns[String(channelId)]
+          const channel = channels.find(ch => ch.id === channelId || ch.id === String(channelId))
+          
+          // Normalize to new format
+          let regexPatterns = normalizePatternData(channelPatterns)
+          
+          // Remove the pattern
+          const updatedPatterns = regexPatterns.filter(p => p.pattern !== patternInfo.pattern)
+          
+          if (updatedPatterns.length === 0) {
+            // Delete entire channel pattern config
+            await regexAPI.deletePattern(channelId)
+          } else {
+            // Update with remaining patterns
+            await regexAPI.addPattern({
+              channel_id: channelId,
+              name: channel?.name || '',
+              regex: updatedPatterns,
+              enabled: channelPatterns?.enabled !== false
+            })
+          }
+          successCount++
+        } catch (err) {
+          console.error(`Failed to delete pattern from channel ${channelId}:`, err)
+        }
+      }
+      
+      toast({
+        title: "Success",
+        description: `Deleted pattern from ${successCount} channel${successCount !== 1 ? 's' : ''}`
+      })
+      
+      // Reload data and common patterns
+      await loadData()
+      const patternsResponse = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      setCommonPatterns(patternsResponse.data.patterns || [])
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to delete pattern",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleDeleteSelectedCommonPatterns = async () => {
+    if (selectedCommonPatterns.size === 0) {
+      toast({
+        title: "No Patterns Selected",
+        description: "Please select at least one pattern to delete",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      const patternsToDelete = commonPatterns.filter((_, idx) => selectedCommonPatterns.has(idx))
+      let totalSuccess = 0
+      
+      for (const patternInfo of patternsToDelete) {
+        const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
+        const channelsToDelete = patternInfo.channel_ids.filter(id => 
+          selectedChannelIdsSet.has(String(id))
+        )
+        
+        for (const channelId of channelsToDelete) {
+          try {
+            const channelPatterns = patterns[channelId] || patterns[String(channelId)]
+            const channel = channels.find(ch => ch.id === channelId || ch.id === String(channelId))
+            
+            let regexPatterns = normalizePatternData(channelPatterns)
+            const updatedPatterns = regexPatterns.filter(p => p.pattern !== patternInfo.pattern)
+            
+            if (updatedPatterns.length === 0) {
+              await regexAPI.deletePattern(channelId)
+            } else {
+              await regexAPI.addPattern({
+                channel_id: channelId,
+                name: channel?.name || '',
+                regex: updatedPatterns,
+                enabled: channelPatterns?.enabled !== false
+              })
+            }
+            totalSuccess++
+          } catch (err) {
+            console.error(`Failed to delete pattern from channel ${channelId}:`, err)
+          }
+        }
+      }
+      
+      toast({
+        title: "Success",
+        description: `Deleted ${selectedCommonPatterns.size} pattern${selectedCommonPatterns.size !== 1 ? 's' : ''} from ${totalSuccess} channel instance${totalSuccess !== 1 ? 's' : ''}`
+      })
+      
+      // Clear selection and reload
+      setSelectedCommonPatterns(new Set())
+      await loadData()
+      const patternsResponse = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      setCommonPatterns(patternsResponse.data.patterns || [])
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to delete patterns",
         variant: "destructive"
       })
     }
@@ -3062,87 +3292,195 @@ export default function ChannelConfiguration() {
       </AlertDialog>
       
       {/* Edit Common Regex Dialog */}
-      <Dialog open={editCommonDialogOpen} onOpenChange={setEditCommonDialogOpen}>
+      <Dialog open={editCommonDialogOpen} onOpenChange={(open) => {
+        setEditCommonDialogOpen(open)
+        if (!open) {
+          // Reset state when closing
+          setSelectedCommonPatterns(new Set())
+          setCommonPatternsSearch('')
+        }
+      }}>
         <DialogContent className="sm:max-w-[700px]">
           <DialogHeader>
             <DialogTitle>Edit Common Regex Patterns</DialogTitle>
             <DialogDescription>
-              These are the regex patterns shared across the {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}. Editing a pattern will update it ONLY in the selected channels, not in any other channels that may also have this pattern.
+              These are the regex patterns shared across the {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}. Editing or deleting a pattern will affect it ONLY in the selected channels.
             </DialogDescription>
           </DialogHeader>
           
-          <div className="space-y-4 py-4 max-h-[500px] overflow-y-auto">
-            {loadingCommonPatterns ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : commonPatterns.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No common patterns found across selected channels
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {commonPatterns.map((patternInfo, index) => (
-                  <div key={index} className="border rounded-lg p-4 space-y-3">
-                    {editingCommonPattern && editingCommonPattern.pattern === patternInfo.pattern ? (
-                      // Edit mode
-                      <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label>New Pattern</Label>
-                          <Input
-                            value={newCommonPattern}
-                            onChange={(e) => setNewCommonPattern(e.target.value)}
-                            className="font-mono"
-                            placeholder="Enter new pattern"
-                          />
-                        </div>
-                        <div className="flex gap-2 justify-end">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setEditingCommonPattern(null)
-                              setNewCommonPattern('')
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={handleEditCommonPattern}
-                            disabled={!newCommonPattern.trim()}
-                          >
-                            Save
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      // View mode
-                      <>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <code className="text-sm break-all block">{patternInfo.pattern}</code>
-                            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                              <span>Used in {patternInfo.count} of {selectedChannels.size} channels ({patternInfo.percentage}%)</span>
-                            </div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setEditingCommonPattern(patternInfo)
-                              setNewCommonPattern(patternInfo.pattern)
-                            }}
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
+          <div className="space-y-4 py-4">
+            {/* Search bar */}
+            {commonPatterns.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search patterns..."
+                    value={commonPatternsSearch}
+                    onChange={(e) => setCommonPatternsSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {selectedCommonPatterns.size > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleDeleteSelectedCommonPatterns}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete Selected ({selectedCommonPatterns.size})
+                  </Button>
+                )}
               </div>
             )}
+            
+            <div className="max-h-[500px] overflow-y-auto">
+              {loadingCommonPatterns ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : commonPatterns.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No common patterns found across selected channels
+                </div>
+              ) : (
+                <>
+                  {/* Select All Checkbox */}
+                  {(() => {
+                    const filterPattern = (p) => 
+                      p.pattern.toLowerCase().includes(commonPatternsSearch.toLowerCase())
+                    
+                    const filteredData = commonPatterns
+                      .map((p, idx) => ({ pattern: p, index: idx }))
+                      .filter(({ pattern }) => filterPattern(pattern))
+                    
+                    const filteredPatterns = filteredData.map(({ pattern }) => pattern)
+                    const filteredIndices = filteredData.map(({ index }) => index)
+                    
+                    const allFilteredSelected = filteredIndices.length > 0 && 
+                      filteredIndices.every(idx => selectedCommonPatterns.has(idx))
+                    
+                    return filteredPatterns.length > 0 && (
+                      <>
+                        <div className="flex items-center space-x-2 pb-3 border-b mb-3">
+                          <Checkbox
+                            id="select-all-common-patterns"
+                            checked={allFilteredSelected}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                // Select all filtered patterns
+                                setSelectedCommonPatterns(new Set(filteredIndices))
+                              } else {
+                                // Deselect all
+                                setSelectedCommonPatterns(new Set())
+                              }
+                            }}
+                          />
+                          <label htmlFor="select-all-common-patterns" className="text-sm font-medium cursor-pointer">
+                            Select All {commonPatternsSearch ? `(${filteredPatterns.length} filtered)` : `(${commonPatterns.length})`}
+                          </label>
+                        </div>
+                        
+                        <div className="space-y-3">
+                          {filteredData.map(({ pattern: patternInfo, index: actualIndex }) => {
+                            return (
+                              <div key={actualIndex} className="border rounded-lg p-4 space-y-3">
+                                {editingCommonPattern && editingCommonPattern.pattern === patternInfo.pattern ? (
+                                  // Edit mode
+                                  <div className="space-y-3">
+                                    <div className="space-y-2">
+                                      <Label>New Pattern</Label>
+                                      <Input
+                                        value={newCommonPattern}
+                                        onChange={(e) => setNewCommonPattern(e.target.value)}
+                                        className="font-mono"
+                                        placeholder="Enter new pattern"
+                                      />
+                                    </div>
+                                    <div className="flex gap-2 justify-end">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => {
+                                          setEditingCommonPattern(null)
+                                          setNewCommonPattern('')
+                                        }}
+                                      >
+                                        Cancel
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        onClick={handleEditCommonPattern}
+                                        disabled={!newCommonPattern.trim()}
+                                      >
+                                        Save
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  // View mode
+                                  <>
+                                    <div className="flex items-start gap-3">
+                                      <Checkbox
+                                        checked={selectedCommonPatterns.has(actualIndex)}
+                                        onCheckedChange={(checked) => {
+                                          setSelectedCommonPatterns(prev => {
+                                            const newSet = new Set(prev)
+                                            if (checked) {
+                                              newSet.add(actualIndex)
+                                            } else {
+                                              newSet.delete(actualIndex)
+                                            }
+                                            return newSet
+                                          })
+                                        }}
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <code className="text-sm break-all block">{patternInfo.pattern}</code>
+                                        <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                                          <span>Used in {patternInfo.count} of {selectedChannels.size} channels ({patternInfo.percentage}%)</span>
+                                        </div>
+                                      </div>
+                                      <div className="flex gap-1">
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => {
+                                            setEditingCommonPattern(patternInfo)
+                                            setNewCommonPattern(patternInfo.pattern)
+                                          }}
+                                        >
+                                          <Edit2 className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="destructive"
+                                          onClick={() => handleDeleteSingleCommonPattern(patternInfo)}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )
+                  })()}
+                  
+                  {commonPatterns.filter(p => 
+                    p.pattern.toLowerCase().includes(commonPatternsSearch.toLowerCase())
+                  ).length === 0 && commonPatternsSearch && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No patterns match your search
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
           
           <DialogFooter>
@@ -3150,6 +3488,8 @@ export default function ChannelConfiguration() {
               setEditCommonDialogOpen(false)
               setEditingCommonPattern(null)
               setNewCommonPattern('')
+              setSelectedCommonPatterns(new Set())
+              setCommonPatternsSearch('')
             }}>
               Close
             </Button>
