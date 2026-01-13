@@ -3347,15 +3347,15 @@ export default function ChannelConfiguration() {
                 <>
                   {/* Select All Checkbox */}
                   {(() => {
-                    const filteredPatterns = commonPatterns.filter((p, idx) => 
+                    const filterPattern = (p) => 
                       p.pattern.toLowerCase().includes(commonPatternsSearch.toLowerCase())
-                    )
-                    const filteredIndices = commonPatterns
+                    
+                    const filteredData = commonPatterns
                       .map((p, idx) => ({ pattern: p, index: idx }))
-                      .filter(({ pattern }) => 
-                        pattern.pattern.toLowerCase().includes(commonPatternsSearch.toLowerCase())
-                      )
-                      .map(({ index }) => index)
+                      .filter(({ pattern }) => filterPattern(pattern))
+                    
+                    const filteredPatterns = filteredData.map(({ pattern }) => pattern)
+                    const filteredIndices = filteredData.map(({ index }) => index)
                     
                     const allFilteredSelected = filteredIndices.length > 0 && 
                       filteredIndices.every(idx => selectedCommonPatterns.has(idx))
@@ -3382,10 +3382,7 @@ export default function ChannelConfiguration() {
                         </div>
                         
                         <div className="space-y-3">
-                          {filteredPatterns.map((patternInfo, originalIndex) => {
-                            // Find the original index in the full list
-                            const actualIndex = commonPatterns.findIndex(p => p.pattern === patternInfo.pattern)
-                            
+                          {filteredData.map(({ pattern: patternInfo, index: actualIndex }) => {
                             return (
                               <div key={actualIndex} className="border rounded-lg p-4 space-y-3">
                                 {editingCommonPattern && editingCommonPattern.pattern === patternInfo.pattern ? (

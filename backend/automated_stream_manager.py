@@ -18,7 +18,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Union
 from collections import defaultdict
 
 # Pre-compiled regex pattern for whitespace conversion (performance optimization)
@@ -440,7 +440,7 @@ class RegexChannelMatcher:
         
         return True, None
     
-    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns, enabled: bool = True, m3u_accounts: Optional[List[int]] = None):
+    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: 'Union[List[str], List[Dict]]', enabled: bool = True, m3u_accounts: Optional[List[int]] = None):
         """Add or update a channel pattern.
         
         Args:
