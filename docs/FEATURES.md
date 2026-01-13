@@ -91,12 +91,24 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
   - **Automatic Validation**: Invalid regex patterns are automatically detected and removed on load
   - **Self-Healing Configuration**: Corrupted patterns won't persist across restarts
   - **Clear Error Messages**: Log warnings indicate which patterns were removed and why
+  - **Per-Pattern M3U Account Filtering**: Each regex pattern can be restricted to specific M3U account sources
+    - Granular control over which patterns match streams from which sources
+    - Backward compatible with channel-level M3U account filtering
+    - Automatic migration from old format to new format
 - **Table-Based Interface**: Clean, sortable table layout for managing regex patterns across channels
 - **Mass Assignment**: Add a single regex pattern to multiple channels at once
   - Multi-select channels with checkboxes
   - Select All/Deselect All functionality
   - Group filtering to show only channels from specific groups
   - Group sorting for organized view
+- **Batch Regex Edit Window**: Advanced pattern management across multiple channels
+  - **Search and Filter**: Quickly find patterns using text search
+  - **Multi-Select with Checkboxes**: Select individual patterns or use "Select All"
+  - **Smart Select All**: When searching, "Select All" only selects visible/filtered results
+  - **Individual Delete**: Delete specific patterns with individual delete buttons
+  - **Bulk Delete**: Delete multiple selected patterns at once
+  - **Inline Editing**: Edit patterns directly in the batch window
+  - Displays usage statistics showing how many channels use each pattern
 - **Channel Name Variables**: Use `CHANNEL_NAME` in patterns to create reusable regex rules
   - Pattern example: `.*CHANNEL_NAME.*` matches any stream containing the channel name
   - One pattern works for multiple channels with different names
@@ -107,6 +119,7 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - **Pattern Testing Interface**: Live testing of patterns against available streams
 - **Pattern Import/Export**: Share regex configurations across installations
 - **New Stream Detection**: Automatically detects and assigns new streams on playlist refresh
+- **No Page Reload**: Pattern edits update instantly without losing scroll position or UI state
 - **Health Check Buttons**: Quick access to stream quality checks
   - Individual channel health check button with Activity icon next to expand/collapse
   - Bulk health check for all selected channels
