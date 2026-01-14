@@ -191,6 +191,133 @@ def should_disable_empty_channels() -> Tuple[bool, Optional[int], Optional[List[
         return False, None, None
 
 
+def re_enable_channels_with_working_streams(profile_id: int,
+                                            snapshot_channel_ids: Optional[List[int]] = None) -> Tuple[int, int]:
+    """Re-enable channels that now have working streams in a specific profile.
+    
+    This function identifies channels that are currently disabled but have at least
+    one working (non-dead) stream, and re-enables them in the specified profile.
+    
+    This is the complementary operation to disable_empty_channels_in_profile,
+    giving channels a second chance when their streams come back online.
+    
+    Args:
+        profile_id: Dispatcharr profile ID where channels should be re-enabled
+        snapshot_channel_ids: If provided, only consider channels in this list (snapshot mode)
+        
+    Returns:
+        Tuple of (enabled_count, total_checked) - number of channels re-enabled and total channels checked
+        
+    Raises:
+        Exception: If Dispatcharr base URL is not configured or API calls fail
+    """
+    try:
+        base_url = _get_base_url()
+        if not base_url:
+            raise Exception("Dispatcharr base URL not configured")
+        
+        # Get all channels from UDI
+        udi = get_udi_manager()
+        all_channels = udi.get_channels()
+        
+        if not all_channels:
+            logger.warning("No channels found in UDI")
+            return 0, 0
+        
+        # Initialize dead streams tracker
+        tracker = DeadStreamsTracker()
+        
+        # If snapshot_channel_ids is provided, filter to only those channels
+        if snapshot_channel_ids is not None:
+            channels_to_check = [ch for ch in all_channels if ch.get('id') in snapshot_channel_ids]
+            logger.info(f"Checking {len(channels_to_check)} channels from snapshot for re-enabling")
+        else:
+            channels_to_check = all_channels
+        
+        # Get profile channels to find which are currently disabled
+        try:
+            profile_channels = udi.get_profile_channels(profile_id)
+            if not profile_channels or not isinstance(profile_channels, dict):
+                logger.warning(f"Could not fetch valid profile channels data for profile {profile_id}")
+                return 0, 0
+            
+            # Get list of disabled channel IDs in this profile
+            disabled_channel_ids = set()
+            for ch in profile_channels.get('channels', []):
+                if isinstance(ch, dict) and not ch.get('enabled', True):
+                    disabled_channel_ids.add(ch.get('channel_id'))
+            
+            # Filter to only disabled channels
+            channels_to_check = [ch for ch in channels_to_check if ch.get('id') in disabled_channel_ids]
+            logger.info(f"Found {len(channels_to_check)} disabled channels to check in profile {profile_id}")
+        except Exception as e:
+            logger.warning(f"Could not fetch profile {profile_id} to filter disabled channels: {e}")
+            return 0, 0
+        
+        # Find channels with at least one working stream
+        channels_to_enable = []
+        
+        for channel in channels_to_check:
+            channel_id = channel.get('id')
+            if not channel_id:
+                continue
+            
+            # Get streams for this channel
+            stream_ids = channel.get('streams', [])
+            
+            if not stream_ids:
+                # Channel has no streams - keep it disabled
+                continue
+            
+            # Check if at least one stream is working (not dead)
+            has_working_stream = False
+            for stream_id in stream_ids:
+                stream = udi.get_stream_by_id(stream_id)
+                if stream and not tracker.is_dead(stream.get('url', '')):
+                    has_working_stream = True
+                    break
+            
+            if has_working_stream:
+                channels_to_enable.append(channel_id)
+                logger.debug(f"Channel {channel_id} has working streams - marking for re-enabling")
+        
+        # Re-enable channels in the profile via Dispatcharr API
+        from udi.fetcher import _get_auth_headers
+        
+        enabled_count = 0
+        for channel_id in channels_to_enable:
+            try:
+                # PATCH /api/channels/profiles/{profile_id}/channels/{channel_id}/
+                url = f"{base_url}/api/channels/profiles/{profile_id}/channels/{channel_id}/"
+                resp = requests.patch(
+                    url,
+                    headers=_get_auth_headers(),
+                    json={'enabled': True},
+                    timeout=30
+                )
+                
+                if resp.status_code in [200, 204]:
+                    enabled_count += 1
+                    logger.debug(f"Re-enabled channel {channel_id} in profile {profile_id}")
+                else:
+                    logger.warning(f"Failed to re-enable channel {channel_id} in profile {profile_id}: {resp.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"Error re-enabling channel {channel_id}: {e}")
+                continue
+        
+        if enabled_count > 0:
+            logger.info(f"Re-enabled {enabled_count} channels with working streams in profile {profile_id} (checked {len(channels_to_check)} channels)")
+        else:
+            logger.debug(f"No disabled channels with working streams to re-enable in profile {profile_id} (checked {len(channels_to_check)} channels)")
+        
+        return enabled_count, len(channels_to_check)
+        
+    except Exception as e:
+        logger.error(f"Error re-enabling channels in profile {profile_id}: {e}", exc_info=True)
+        raise
+
+
 def trigger_empty_channel_disabling() -> Optional[Tuple[int, int]]:
     """Trigger empty channel disabling if configured.
     
@@ -213,4 +340,33 @@ def trigger_empty_channel_disabling() -> Optional[Tuple[int, int]]:
         )
     except Exception as e:
         logger.error(f"Failed to disable empty channels: {e}")
+        return None
+
+
+def trigger_channel_re_enabling() -> Optional[Tuple[int, int]]:
+    """Trigger channel re-enabling if configured.
+    
+    This is a convenience function that checks if empty channel management and
+    snapshot mode are enabled, and triggers the re-enabling operation if so.
+    
+    This gives previously disabled channels a second chance when their streams
+    come back online.
+    
+    Returns:
+        Tuple of (enabled_count, total_checked) if operation was performed, None otherwise
+    """
+    enabled, target_profile_id, snapshot_channel_ids = should_disable_empty_channels()
+    
+    # Only re-enable if snapshot mode is enabled (use_snapshot)
+    # This ensures we're working with a known good channel list
+    if not enabled or not target_profile_id or snapshot_channel_ids is None:
+        return None
+    
+    try:
+        return re_enable_channels_with_working_streams(
+            profile_id=target_profile_id,
+            snapshot_channel_ids=snapshot_channel_ids
+        )
+    except Exception as e:
+        logger.error(f"Failed to re-enable channels: {e}")
         return None

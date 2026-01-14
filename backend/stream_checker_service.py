@@ -1596,7 +1596,10 @@ class StreamCheckerService:
                 
                 logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed in {duration_str}")
                 
-                # After batch finalization, trigger empty channel disabling if configured
+                # After batch finalization, trigger channel re-enabling first to give channels a second chance
+                self._trigger_channel_re_enabling()
+                
+                # Then trigger empty channel disabling if configured
                 self._trigger_empty_channel_disabling()
                 
             except Exception as e:
@@ -1624,6 +1627,26 @@ class StreamCheckerService:
                     logger.debug(f"Empty channel management: No empty channels found (checked {total_checked} channels)")
         except Exception as e:
             logger.error(f"Error triggering empty channel disabling: {e}", exc_info=True)
+    
+    def _trigger_channel_re_enabling(self):
+        """Trigger channel re-enabling if configured.
+        
+        This method checks if empty channel management with snapshot mode is enabled,
+        and triggers the re-enabling operation to give previously disabled channels
+        a second chance when their streams come back online.
+        """
+        try:
+            from empty_channel_manager import trigger_channel_re_enabling
+            
+            result = trigger_channel_re_enabling()
+            if result:
+                enabled_count, total_checked = result
+                if enabled_count > 0:
+                    logger.info(f"Channel re-enabling: Re-enabled {enabled_count} channels with working streams (checked {total_checked} channels)")
+                else:
+                    logger.debug(f"Channel re-enabling: No disabled channels with working streams (checked {total_checked} channels)")
+        except Exception as e:
+            logger.error(f"Error triggering channel re-enabling: {e}", exc_info=True)
     
     def _check_channel_limits(self, channel_id: int, channel_name: str, streams: List[Dict]) -> Optional[Dict]:
         """Check if a channel can be checked based on viewer and playlist limits.
@@ -3146,6 +3169,9 @@ class StreamCheckerService:
                     logger.warning(f"Failed to add changelog entry: {e}")
             
             logger.info(f"✓ Single channel check completed for {channel_name} in {duration_str}")
+            
+            # Trigger channel re-enabling first to give channels a second chance
+            self._trigger_channel_re_enabling()
             
             # Trigger empty channel disabling if configured
             # This ensures that if this channel became empty after checking, it gets disabled
