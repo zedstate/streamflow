@@ -1042,7 +1042,7 @@ def bulk_edit_regex_pattern():
         channel_ids = data['channel_ids']
         old_pattern = data['old_pattern']
         new_pattern = data['new_pattern']
-        new_m3u_accounts = data.get('new_m3u_accounts')  # Optional: new playlist filter
+        new_m3u_accounts = data.get('new_m3u_accounts')  # Optional: new playlist filter (list of M3U account IDs, or None to keep existing accounts, or null to apply to all playlists)
         
         if not isinstance(channel_ids, list) or len(channel_ids) == 0:
             return jsonify({"error": "channel_ids must be a non-empty list"}), 400

@@ -357,8 +357,9 @@ def trigger_channel_re_enabling() -> Optional[Tuple[int, int]]:
     """
     enabled, target_profile_id, snapshot_channel_ids = should_disable_empty_channels()
     
-    # Only re-enable if snapshot mode is enabled (use_snapshot)
-    # This ensures we're working with a known good channel list
+    # Only re-enable if snapshot mode is enabled (use_snapshot) and a snapshot exists
+    # This ensures we're working with a known good channel list from the snapshot
+    # Note: snapshot_channel_ids will be None if snapshot mode is disabled, or an empty/populated list if enabled
     if not enabled or not target_profile_id or snapshot_channel_ids is None:
         return None
     

@@ -1068,7 +1068,7 @@ export default function ChannelConfiguration() {
   const [loadingCommonPatterns, setLoadingCommonPatterns] = useState(false)
   const [editingCommonPattern, setEditingCommonPattern] = useState(null)
   const [newCommonPattern, setNewCommonPattern] = useState('')
-  const [newCommonPatternM3uAccounts, setNewCommonPatternM3uAccounts] = useState(null) // null = all accounts
+  const [newCommonPatternM3uAccounts, setNewCommonPatternM3uAccounts] = useState(null) // null = all playlists, array = selected playlists
   const [selectedCommonPatterns, setSelectedCommonPatterns] = useState(new Set())
   const [commonPatternsSearch, setCommonPatternsSearch] = useState('')
   
@@ -3437,6 +3437,7 @@ export default function ChannelConfiguration() {
                                                   setNewCommonPatternM3uAccounts(prev => {
                                                     if (prev === null) return []
                                                     const updated = prev.filter(id => id !== account.id)
+                                                    // Return null when all unchecked to mean "all playlists" (backend convention)
                                                     return updated.length === 0 ? null : updated
                                                   })
                                                 }
