@@ -980,15 +980,27 @@ def get_common_regex_patterns():
         
         for channel_id in channel_ids:
             channel_patterns = patterns_data.get('patterns', {}).get(str(channel_id), {})
-            regex_list = channel_patterns.get('regex', [])
             
-            for pattern in regex_list:
-                if pattern not in pattern_count:
-                    pattern_count[pattern] = 0
-                    pattern_to_channels[pattern] = []
+            # Support both old format (regex) and new format (regex_patterns)
+            regex_patterns = channel_patterns.get('regex_patterns')
+            if regex_patterns is None:
+                # Fallback to old format
+                regex_patterns = [{"pattern": p} for p in channel_patterns.get('regex', [])]
+            
+            for pattern_obj in regex_patterns:
+                if isinstance(pattern_obj, dict):
+                    pattern = pattern_obj.get('pattern', '')
+                else:
+                    # Legacy string format
+                    pattern = pattern_obj
                 
-                pattern_count[pattern] += 1
-                pattern_to_channels[pattern].append(str(channel_id))
+                if pattern:
+                    if pattern not in pattern_count:
+                        pattern_count[pattern] = 0
+                        pattern_to_channels[pattern] = []
+                    
+                    pattern_count[pattern] += 1
+                    pattern_to_channels[pattern].append(str(channel_id))
         
         # Sort patterns by frequency (most common first)
         sorted_patterns = sorted(pattern_count.items(), key=lambda x: x[1], reverse=True)
@@ -1060,21 +1072,46 @@ def bulk_edit_regex_pattern():
                 # Get existing patterns
                 patterns = matcher.get_patterns()
                 existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
-                existing_regex = existing_patterns.get('regex', [])
                 
-                # Replace old pattern with new pattern
-                # Note: This replaces ALL occurrences of old_pattern if it appears multiple times
-                # in the same channel's regex list, which is the intended behavior
-                if old_pattern in existing_regex:
-                    updated_regex = [new_pattern if p == old_pattern else p for p in existing_regex]
+                # Support both old format (regex) and new format (regex_patterns)
+                regex_patterns = existing_patterns.get('regex_patterns')
+                if regex_patterns is None:
+                    # Fallback to old format
+                    old_regex = existing_patterns.get('regex', [])
+                    old_m3u_accounts = existing_patterns.get('m3u_accounts')
+                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
+                
+                # Find and replace pattern
+                pattern_found = False
+                updated_patterns = []
+                for pattern_obj in regex_patterns:
+                    if isinstance(pattern_obj, dict):
+                        pattern = pattern_obj.get("pattern", "")
+                        pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                    else:
+                        # Legacy string format
+                        pattern = pattern_obj
+                        pattern_m3u_accounts = None
                     
-                    # Update pattern
+                    if pattern == old_pattern:
+                        pattern_found = True
+                        updated_patterns.append({
+                            "pattern": new_pattern,
+                            "m3u_accounts": pattern_m3u_accounts
+                        })
+                    else:
+                        updated_patterns.append({
+                            "pattern": pattern,
+                            "m3u_accounts": pattern_m3u_accounts
+                        })
+                
+                if pattern_found:
+                    # Update pattern using new format
                     matcher.add_channel_pattern(
                         str(channel_id),
                         channel_name,
-                        updated_regex,
-                        existing_patterns.get('enabled', True),
-                        m3u_accounts=existing_patterns.get('m3u_accounts')
+                        updated_patterns,
+                        existing_patterns.get('enabled', True)
                     )
                     success_count += 1
                 else:
