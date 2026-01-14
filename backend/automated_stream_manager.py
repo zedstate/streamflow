@@ -482,7 +482,7 @@ class RegexChannelMatcher:
                         "m3u_accounts": m3u_accounts  # Use channel-level m3u_accounts for all patterns
                     })
         else:
-            raise ValueError("regex_patterns must be a non-empty list")
+            raise ValueError("At least one regex pattern is required")
         
         # Validate patterns
         pattern_strings = [p["pattern"] for p in normalized_patterns]
@@ -500,6 +500,20 @@ class RegexChannelMatcher:
         self.channel_patterns["patterns"][str(channel_id)] = pattern_data
         self._save_patterns(self.channel_patterns)
         logger.info(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
+    
+    def delete_channel_pattern(self, channel_id: str):
+        """Delete all regex patterns for a channel.
+        
+        Args:
+            channel_id: Channel ID
+        """
+        channel_id = str(channel_id)
+        if channel_id in self.channel_patterns.get("patterns", {}):
+            del self.channel_patterns["patterns"][channel_id]
+            self._save_patterns(self.channel_patterns)
+            logger.info(f"Deleted all patterns for channel {channel_id}")
+        else:
+            logger.warning(f"No patterns found for channel {channel_id}")
     
     
     def reload_patterns(self):
