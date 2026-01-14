@@ -1068,6 +1068,7 @@ export default function ChannelConfiguration() {
   const [loadingCommonPatterns, setLoadingCommonPatterns] = useState(false)
   const [editingCommonPattern, setEditingCommonPattern] = useState(null)
   const [newCommonPattern, setNewCommonPattern] = useState('')
+  const [newCommonPatternM3uAccounts, setNewCommonPatternM3uAccounts] = useState(null) // null = all playlists, array = selected playlists
   const [selectedCommonPatterns, setSelectedCommonPatterns] = useState(new Set())
   const [commonPatternsSearch, setCommonPatternsSearch] = useState('')
   
@@ -1821,7 +1822,8 @@ export default function ChannelConfiguration() {
       const response = await regexAPI.bulkEditPattern({
         channel_ids: channelsToEdit,
         old_pattern: editingCommonPattern.pattern,
-        new_pattern: newCommonPattern
+        new_pattern: newCommonPattern,
+        new_m3u_accounts: newCommonPatternM3uAccounts  // Include playlist selection
       })
       
       toast({
@@ -1841,6 +1843,7 @@ export default function ChannelConfiguration() {
       // Close edit mode
       setEditingCommonPattern(null)
       setNewCommonPattern('')
+      setNewCommonPatternM3uAccounts(null)
     } catch (err) {
       toast({
         title: "Error",
@@ -3397,6 +3400,61 @@ export default function ChannelConfiguration() {
                                         placeholder="Enter new pattern"
                                       />
                                     </div>
+                                    
+                                    {/* M3U Account filter */}
+                                    <div className="space-y-2">
+                                      <Label>Playlists (M3U Accounts)</Label>
+                                      <div className="space-y-2 border rounded-lg p-3">
+                                        <div className="flex items-center gap-2">
+                                          <Checkbox
+                                            id="all-playlists-edit"
+                                            checked={newCommonPatternM3uAccounts === null}
+                                            onCheckedChange={(checked) => {
+                                              if (checked) {
+                                                setNewCommonPatternM3uAccounts(null)
+                                              }
+                                            }}
+                                          />
+                                          <label
+                                            htmlFor="all-playlists-edit"
+                                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                          >
+                                            All Playlists
+                                          </label>
+                                        </div>
+                                        
+                                        {m3uAccounts.filter(acc => acc.id !== 'custom').map(account => (
+                                          <div key={account.id} className="flex items-center gap-2">
+                                            <Checkbox
+                                              id={`playlist-edit-${account.id}`}
+                                              checked={newCommonPatternM3uAccounts !== null && newCommonPatternM3uAccounts.includes(account.id)}
+                                              onCheckedChange={(checked) => {
+                                                if (checked) {
+                                                  setNewCommonPatternM3uAccounts(prev => 
+                                                    prev === null ? [account.id] : [...prev, account.id]
+                                                  )
+                                                } else {
+                                                  setNewCommonPatternM3uAccounts(prev => {
+                                                    if (prev === null) return []
+                                                    const updated = prev.filter(id => id !== account.id)
+                                                    // Return null when all unchecked to mean "all playlists" (backend convention)
+                                                    return updated.length === 0 ? null : updated
+                                                  })
+                                                }
+                                              }}
+                                              disabled={newCommonPatternM3uAccounts === null}
+                                            />
+                                            <label
+                                              htmlFor={`playlist-edit-${account.id}`}
+                                              className="text-sm leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                            >
+                                              {account.name}
+                                            </label>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    
                                     <div className="flex gap-2 justify-end">
                                       <Button
                                         size="sm"
@@ -3404,6 +3462,7 @@ export default function ChannelConfiguration() {
                                         onClick={() => {
                                           setEditingCommonPattern(null)
                                           setNewCommonPattern('')
+                                          setNewCommonPatternM3uAccounts(null)
                                         }}
                                       >
                                         Cancel

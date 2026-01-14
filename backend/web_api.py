@@ -1026,7 +1026,10 @@ def get_common_regex_patterns():
 
 @app.route('/api/regex-patterns/bulk-edit', methods=['POST'])
 def bulk_edit_regex_pattern():
-    """Edit a specific regex pattern across multiple channels."""
+    """Edit a specific regex pattern across multiple channels.
+    
+    This endpoint allows editing both the pattern itself and its associated playlists (m3u_accounts).
+    """
     try:
         data = request.get_json()
         if not data:
@@ -1039,6 +1042,7 @@ def bulk_edit_regex_pattern():
         channel_ids = data['channel_ids']
         old_pattern = data['old_pattern']
         new_pattern = data['new_pattern']
+        new_m3u_accounts = data.get('new_m3u_accounts')  # Optional: new playlist filter (list of M3U account IDs, or None to keep existing accounts, or null to apply to all playlists)
         
         if not isinstance(channel_ids, list) or len(channel_ids) == 0:
             return jsonify({"error": "channel_ids must be a non-empty list"}), 400
@@ -1095,10 +1099,12 @@ def bulk_edit_regex_pattern():
                     
                     if pattern == old_pattern:
                         pattern_found = True
-                        updated_patterns.append({
+                        # Update the pattern and optionally the m3u_accounts
+                        updated_pattern = {
                             "pattern": new_pattern,
-                            "m3u_accounts": pattern_m3u_accounts
-                        })
+                            "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts
+                        }
+                        updated_patterns.append(updated_pattern)
                     else:
                         updated_patterns.append({
                             "pattern": pattern,
