@@ -3085,10 +3085,11 @@ export default function ChannelConfiguration() {
                         <Checkbox
                           id={`m3u-account-${account.id}`}
                           checked={selectedM3uAccounts.includes(account.id)}
-                          disabled={selectedM3uAccounts.length === 0}  // Disabled when "All" is selected
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              setSelectedM3uAccounts([...selectedM3uAccounts, account.id])
+                              setSelectedM3uAccounts(prev => 
+                                prev.length === 0 ? [account.id] : [...prev, account.id]
+                              )
                             } else {
                               setSelectedM3uAccounts(selectedM3uAccounts.filter(id => id !== account.id))
                             }
@@ -3232,10 +3233,11 @@ export default function ChannelConfiguration() {
                         <Checkbox
                           id={`bulk-m3u-account-${account.id}`}
                           checked={bulkSelectedM3uAccounts.includes(account.id)}
-                          disabled={bulkSelectedM3uAccounts.length === 0}  // Disabled when "All" is selected
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              setBulkSelectedM3uAccounts([...bulkSelectedM3uAccounts, account.id])
+                              setBulkSelectedM3uAccounts(prev => 
+                                prev.length === 0 ? [account.id] : [...prev, account.id]
+                              )
                             } else {
                               setBulkSelectedM3uAccounts(bulkSelectedM3uAccounts.filter(id => id !== account.id))
                             }
@@ -3412,6 +3414,12 @@ export default function ChannelConfiguration() {
                                             onCheckedChange={(checked) => {
                                               if (checked) {
                                                 setNewCommonPatternM3uAccounts(null)
+                                              } else {
+                                                // When unchecking "All", select first M3U account if available
+                                                const availableAccounts = m3uAccounts.filter(acc => acc.id !== 'custom')
+                                                if (availableAccounts.length > 0) {
+                                                  setNewCommonPatternM3uAccounts([availableAccounts[0].id])
+                                                }
                                               }
                                             }}
                                           />
@@ -3442,11 +3450,10 @@ export default function ChannelConfiguration() {
                                                   })
                                                 }
                                               }}
-                                              disabled={newCommonPatternM3uAccounts === null}
                                             />
                                             <label
                                               htmlFor={`playlist-edit-${account.id}`}
-                                              className="text-sm leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                              className={`text-sm leading-none cursor-pointer ${newCommonPatternM3uAccounts === null ? 'text-muted-foreground' : ''}`}
                                             >
                                               {account.name}
                                             </label>
