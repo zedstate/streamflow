@@ -482,7 +482,7 @@ class RegexChannelMatcher:
                         "m3u_accounts": m3u_accounts  # Use channel-level m3u_accounts for all patterns
                     })
         else:
-            raise ValueError("regex_patterns must be a non-empty list")
+            raise ValueError("At least one regex pattern is required")
         
         # Validate patterns
         pattern_strings = [p["pattern"] for p in normalized_patterns]
