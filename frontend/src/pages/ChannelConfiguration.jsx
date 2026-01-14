@@ -3532,7 +3532,13 @@ export default function ChannelConfiguration() {
                               id="mass-edit-all-playlists"
                               checked={massEditM3uAccounts.length === 0}
                               onCheckedChange={(checked) => {
-                                setMassEditM3uAccounts(checked ? [] : (m3uAccounts.filter(acc => acc.id !== 'custom').length > 0 ? [m3uAccounts.filter(acc => acc.id !== 'custom')[0].id] : []))
+                                if (checked) {
+                                  setMassEditM3uAccounts([])
+                                } else {
+                                  // Select first available playlist when unchecking "All"
+                                  const availablePlaylists = m3uAccounts.filter(acc => acc.id !== 'custom')
+                                  setMassEditM3uAccounts(availablePlaylists.length > 0 ? [availablePlaylists[0].id] : [])
+                                }
                               }}
                             />
                             <label htmlFor="mass-edit-all-playlists" className="text-sm cursor-pointer">

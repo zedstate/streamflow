@@ -1225,12 +1225,16 @@ def mass_edit_preview():
                         pattern_m3u_accounts = None
                     
                     # Check if this pattern will be affected
-                    if use_regex:
-                        # Use regex replace
-                        new_pattern = find_regex.sub(replace_pattern, pattern)
-                    else:
-                        # Use simple string replace
-                        new_pattern = pattern.replace(find_pattern, replace_pattern)
+                    try:
+                        if use_regex:
+                            # Use regex replace
+                            new_pattern = find_regex.sub(replace_pattern, pattern)
+                        else:
+                            # Use simple string replace
+                            new_pattern = pattern.replace(find_pattern, replace_pattern)
+                    except re.error as e:
+                        # Invalid replacement pattern (e.g., bad backreference)
+                        return jsonify({"error": f"Invalid replacement pattern: {str(e)}"}), 400
                     
                     # Only include if the pattern actually changes
                     if new_pattern != pattern:
@@ -1330,6 +1334,7 @@ def mass_edit_regex_patterns():
                 updated_patterns = []
                 seen_patterns = set()
                 patterns_changed = False
+                channel_failed = False
                 
                 for pattern_obj in regex_patterns:
                     if isinstance(pattern_obj, dict):
@@ -1340,10 +1345,18 @@ def mass_edit_regex_patterns():
                         pattern_m3u_accounts = None
                     
                     # Apply find/replace
-                    if use_regex:
-                        new_pattern = find_regex.sub(replace_pattern, pattern)
-                    else:
-                        new_pattern = pattern.replace(find_pattern, replace_pattern)
+                    try:
+                        if use_regex:
+                            new_pattern = find_regex.sub(replace_pattern, pattern)
+                        else:
+                            new_pattern = pattern.replace(find_pattern, replace_pattern)
+                    except re.error as e:
+                        failed_channels.append({
+                            "channel_id": channel_id,
+                            "error": f"Invalid replacement pattern: {str(e)}"
+                        })
+                        channel_failed = True
+                        break
                     
                     # Track if anything changed
                     if new_pattern != pattern:
@@ -1356,6 +1369,7 @@ def mass_edit_regex_patterns():
                             "channel_id": channel_id,
                             "error": f"Invalid resulting pattern '{new_pattern}': {error_msg}"
                         })
+                        channel_failed = True
                         break
                     
                     # Only add if not duplicate
@@ -1369,8 +1383,8 @@ def mass_edit_regex_patterns():
                         })
                         seen_patterns.add(new_pattern)
                 
-                # Only update if patterns actually changed
-                if patterns_changed and updated_patterns:
+                # Only update if patterns actually changed and no failures occurred
+                if not channel_failed and patterns_changed and updated_patterns:
                     matcher.add_channel_pattern(
                         str(channel_id),
                         channel_name,
