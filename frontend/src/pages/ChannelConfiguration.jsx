@@ -3511,12 +3511,12 @@ export default function ChannelConfiguration() {
                         <AlertDescription className="text-xs">
                           <strong>Regex replacement supports backreferences:</strong>
                           <ul className="list-disc list-inside mt-1 space-y-0.5">
-                            <li><code className="bg-background px-1 rounded">\g&lt;0&gt;</code> - Full match (equivalent to $0)</li>
-                            <li><code className="bg-background px-1 rounded">\1, \2, ...</code> - Capture groups</li>
-                            <li><code className="bg-background px-1 rounded">\g&lt;name&gt;</code> - Named groups</li>
+                            <li><code className="bg-background px-1 rounded">{`\\g<0>`}</code> - Full match (equivalent to $0)</li>
+                            <li><code className="bg-background px-1 rounded">{`\\1, \\2, ...`}</code> - Capture groups</li>
+                            <li><code className="bg-background px-1 rounded">{`\\g<name>`}</code> - Named groups</li>
                           </ul>
                           <div className="mt-2">
-                            <strong>Example:</strong> Find: <code className="bg-background px-1 rounded">(\w+)_HD</code>, Replace: <code className="bg-background px-1 rounded">\1_4K</code> → Changes ESPN_HD to ESPN_4K
+                            <strong>Example:</strong> Find: <code className="bg-background px-1 rounded">{`(\\w+)_HD`}</code>, Replace: <code className="bg-background px-1 rounded">{`\\1_4K`}</code> → Changes ESPN_HD to ESPN_4K
                           </div>
                         </AlertDescription>
                       </Alert>
