@@ -329,6 +329,7 @@ def has_custom_streams(account_id):
 
 ## See Also
 
-- [Performance M3U Accounts Fix](PERFORMANCE_M3U_ACCOUNTS_FIX.md)
+- [CHANGELOG](CHANGELOG.md) - Bug fixes and improvements history
 - [Channel Group Management](CHANNEL_GROUP_MANAGEMENT.md)
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md)
+- [Concurrent Stream Limits](CONCURRENT_STREAM_LIMITS.md)
