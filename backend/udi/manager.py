@@ -944,7 +944,13 @@ class UDIManager:
             profiles = account.get('profiles', [])
             if isinstance(profiles, list):
                 for profile in profiles:
-                    if profile.get('id') == profile_id:
+                    if isinstance(profile, dict) and profile.get('id') == profile_id:
+                        # Return account ID from profile's account_id field if available
+                        # Use explicit None check to handle account_id=0 case
+                        profile_account_id = profile.get('account_id')
+                        if profile_account_id is not None:
+                            return profile_account_id
+                        # Fallback to parent account's ID
                         return account.get('id')
         
         return None
@@ -1027,6 +1033,7 @@ class UDIManager:
         
         # Count active channels that are using profiles from this account
         active_count = 0
+        active_profiles = set()
         
         for channel_id_str, status in proxy_status.items():
             if not self._is_channel_status_active(status):
@@ -1047,9 +1054,17 @@ class UDIManager:
             # If this profile belongs to the account we're checking, count it
             if profile_account_id == account_id:
                 active_count += 1
-                logger.debug(f"Channel {channel_id_str} is using profile {profile_id} from account {account_id}")
+                active_profiles.add(profile_id)
+                profile_name = status.get('m3u_profile_name', f'Profile {profile_id}')
+                logger.debug(
+                    f"Channel {channel_id_str} is using profile {profile_id} ({profile_name}) "
+                    f"from account {account_id}"
+                )
         
-        logger.debug(f"Account {account_id} has {active_count} active streams")
+        logger.debug(
+            f"Account {account_id} has {active_count} active streams across "
+            f"{len(active_profiles)} profile(s): {sorted(active_profiles)}"
+        )
         return active_count
     
     def _sum_total_viewers(self, account_id: int) -> int:
@@ -1237,23 +1252,31 @@ class UDIManager:
         self._ensure_initialized()
         
         account_id = stream.get('m3u_account')
+        stream_id = stream.get('id')
+        
         if not account_id:
-            logger.debug(f"Stream {stream.get('id')} has no m3u_account")
+            logger.debug(f"Stream {stream_id} has no m3u_account")
             return None
         
         # Get the account and its profiles
         account = self.get_m3u_account_by_id(account_id)
         if not account:
-            logger.warning(f"Account {account_id} not found for stream {stream.get('id')}")
+            logger.warning(f"Account {account_id} not found for stream {stream_id}")
             return None
         
+        account_name = account.get('name', f'Account {account_id}')
         profiles = account.get('profiles', [])
         if not profiles:
-            logger.debug(f"Account {account_id} has no profiles")
+            logger.debug(f"Account {account_id} ({account_name}) has no profiles")
             return None
         
         # Get current usage per profile
         profile_usage = self.get_active_streams_count_per_profile(account_id)
+        
+        logger.debug(
+            f"Finding available profile for stream {stream_id} in account {account_id} ({account_name}): "
+            f"{len(profiles)} profile(s), current usage: {profile_usage}"
+        )
         
         # Find the first available profile
         for profile in profiles:
@@ -1261,29 +1284,42 @@ class UDIManager:
                 continue
             
             profile_id = profile.get('id')
+            profile_name = profile.get('name', f'Profile {profile_id}')
+            
             if not profile_id:
                 continue
             
             # Skip inactive profiles
             if not profile.get('is_active', True):
-                logger.debug(f"Profile {profile_id} is inactive, skipping")
+                logger.debug(f"Profile {profile_id} ({profile_name}) is inactive, skipping")
                 continue
             
             # Check if profile has available slots
             max_streams = profile.get('max_streams', 0)
+            active_count = profile_usage.get(profile_id, 0)
+            
             if max_streams == 0:
                 # Unlimited streams
-                logger.debug(f"Profile {profile_id} has unlimited streams, using it")
+                logger.debug(
+                    f"Profile {profile_id} ({profile_name}) has unlimited streams, selecting it for stream {stream_id}"
+                )
                 return profile
             
-            active_count = profile_usage.get(profile_id, 0)
             if active_count < max_streams:
-                logger.debug(f"Profile {profile_id} has {active_count}/{max_streams} active streams, available")
+                logger.debug(
+                    f"Profile {profile_id} ({profile_name}) has {active_count}/{max_streams} active streams, "
+                    f"selecting it for stream {stream_id}"
+                )
                 return profile
             else:
-                logger.debug(f"Profile {profile_id} is at capacity ({active_count}/{max_streams} streams)")
+                logger.debug(
+                    f"Profile {profile_id} ({profile_name}) is at capacity ({active_count}/{max_streams} streams)"
+                )
         
-        logger.debug(f"No available profile found for stream {stream.get('id')} in account {account_id}")
+        logger.warning(
+            f"No available profile found for stream {stream_id} in account {account_id} ({account_name}). "
+            f"All {len(profiles)} profile(s) are either inactive or at capacity."
+        )
         return None
     
     def check_stream_can_run(self, stream: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
