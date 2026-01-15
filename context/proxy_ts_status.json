@@ -1,0 +1,69 @@
+{
+    "channels": [
+        {
+            "channel_id": "eeaffb81-e69b-40bc-a6fe-9197900d6a3c",
+            "state": "active",
+            "url": "https://pl.eguzkilore.eu/live/test2/holahola/4.ts",
+            "stream_profile": "1",
+            "owner": "a64c9850180a:263",
+            "buffer_index": 747,
+            "client_count": 1,
+            "uptime": 199.11632132530212,
+            "stream_id": 4,
+            "stream_name": "DAZN LaLiga",
+            "total_bytes": 183615488,
+            "avg_bitrate_kbps": 7377.214957683837,
+            "avg_bitrate": "7.38 Mbps",
+            "clients": [
+                {
+                    "client_id": "client_1768475554819_8118",
+                    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0",
+                    "ip_address": "192.168.147.1",
+                    "connected_since": 199.01269936561584
+                }
+            ],
+            "m3u_profile_id": 4,
+            "m3u_profile_name": "extra",
+            "video_codec": "h264",
+            "resolution": "1920x1080",
+            "source_fps": 25.0,
+            "ffmpeg_speed": 1.45,
+            "audio_codec": "aac",
+            "audio_channels": "stereo",
+            "stream_type": "mpegts"
+        },
+        {
+            "channel_id": "9fdea9e5-9b9f-4036-9097-f273345be327",
+            "state": "active",
+            "url": "https://pl.eguzkilore.eu/live/test1/holahola/16.ts",
+            "stream_profile": "1",
+            "owner": "a64c9850180a:264",
+            "buffer_index": 1123,
+            "client_count": 1,
+            "uptime": 252.99176812171936,
+            "stream_id": 11,
+            "stream_name": "DAZN F1",
+            "total_bytes": 282263552,
+            "avg_bitrate_kbps": 8925.620121021404,
+            "avg_bitrate": "8.93 Mbps",
+            "clients": [
+                {
+                    "client_id": "client_1768475500954_4512",
+                    "user_agent": "VLC/3.0.21 LibVLC/3.0.21",
+                    "ip_address": "192.168.147.1",
+                    "connected_since": 252.8873052597046
+                }
+            ],
+            "m3u_profile_id": 3,
+            "m3u_profile_name": "eguzki1 Default",
+            "video_codec": "h264",
+            "resolution": "1920x1080",
+            "source_fps": 25.0,
+            "ffmpeg_speed": 1.16,
+            "audio_codec": "ac3",
+            "audio_channels": "stereo",
+            "stream_type": "mpegts"
+        }
+    ],
+    "count": 2
+}

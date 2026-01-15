@@ -1,0 +1,235 @@
+[
+    {
+        "id": 1,
+        "name": "custom",
+        "server_url": null,
+        "file_path": null,
+        "server_group": null,
+        "max_streams": 0,
+        "is_active": true,
+        "created_at": "2026-01-15T11:03:58.504598Z",
+        "updated_at": "2026-01-15T11:03:58.504603Z",
+        "filters": [],
+        "user_agent": null,
+        "profiles": [
+            {
+                "id": 1,
+                "name": "custom Default",
+                "max_streams": 0,
+                "is_active": true,
+                "is_default": true,
+                "current_viewers": 0,
+                "search_pattern": "^(.*)$",
+                "replace_pattern": "$1",
+                "custom_properties": {},
+                "account": {
+                    "id": 1,
+                    "name": "custom",
+                    "account_type": "STD",
+                    "is_xtream_codes": false
+                }
+            }
+        ],
+        "locked": true,
+        "channel_groups": [],
+        "refresh_interval": 24,
+        "custom_properties": null,
+        "account_type": "STD",
+        "username": null,
+        "password": null,
+        "stale_stream_days": 7,
+        "priority": 0,
+        "status": "idle",
+        "last_message": null,
+        "enable_vod": false,
+        "auto_enable_new_groups_live": true,
+        "auto_enable_new_groups_vod": true,
+        "auto_enable_new_groups_series": true
+    },
+    {
+        "id": 3,
+        "name": "eguzki1",
+        "server_url": "https://pl.eguzkilore.eu",
+        "file_path": null,
+        "server_group": null,
+        "max_streams": 1,
+        "is_active": true,
+        "created_at": "2026-01-15T11:08:00.651542Z",
+        "updated_at": "2026-01-15T11:09:02.614178Z",
+        "filters": [],
+        "user_agent": null,
+        "profiles": [
+            {
+                "id": 3,
+                "name": "eguzki1 Default",
+                "max_streams": 1,
+                "is_active": true,
+                "is_default": true,
+                "current_viewers": 0,
+                "search_pattern": "^(.*)$",
+                "replace_pattern": "$1",
+                "custom_properties": {
+                    "user_info": {
+                        "auth": 1,
+                        "status": "Active",
+                        "message": "Dispatcharr XC API",
+                        "exp_date": "1776251342",
+                        "is_trial": null,
+                        "password": "holahola",
+                        "username": "test1",
+                        "created_at": null,
+                        "active_cons": null,
+                        "max_connections": "50",
+                        "allowed_output_formats": [
+                            "ts"
+                        ]
+                    },
+                    "server_info": {
+                        "url": "pl.eguzkilore.eu",
+                        "port": "443",
+                        "time_now": "2026-01-15 11:09:02",
+                        "timezone": "UTC",
+                        "rtmp_port": null,
+                        "https_port": null,
+                        "timestamp_now": 1768475342,
+                        "server_protocol": "https"
+                    },
+                    "last_refresh": "2026-01-15T11:09:02.351335Z",
+                    "auth_timestamp": 1768475342.351364
+                },
+                "account": {
+                    "id": 3,
+                    "name": "eguzki1",
+                    "account_type": "XC",
+                    "is_xtream_codes": true
+                }
+            },
+            {
+                "id": 4,
+                "name": "extra",
+                "max_streams": 1,
+                "is_active": true,
+                "is_default": false,
+                "current_viewers": 0,
+                "search_pattern": "test1/holahola",
+                "replace_pattern": "test2/holahola",
+                "custom_properties": {
+                    "notes": ""
+                },
+                "account": {
+                    "id": 3,
+                    "name": "eguzki1",
+                    "account_type": "XC",
+                    "is_xtream_codes": true
+                }
+            }
+        ],
+        "locked": false,
+        "channel_groups": [
+            {
+                "channel_group": 1,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {},
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            },
+            {
+                "channel_group": 2,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {
+                    "xc_id": "3"
+                },
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            },
+            {
+                "channel_group": 3,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {
+                    "xc_id": "7"
+                },
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            },
+            {
+                "channel_group": 4,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {
+                    "xc_id": "5"
+                },
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            },
+            {
+                "channel_group": 5,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {
+                    "xc_id": "6"
+                },
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            },
+            {
+                "channel_group": 6,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {
+                    "xc_id": "2"
+                },
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            },
+            {
+                "channel_group": 7,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {
+                    "xc_id": "8"
+                },
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            },
+            {
+                "channel_group": 8,
+                "enabled": true,
+                "auto_channel_sync": false,
+                "auto_sync_channel_start": 1.0,
+                "custom_properties": {
+                    "xc_id": "4"
+                },
+                "is_stale": false,
+                "last_seen": "2026-01-15T11:09:01.721420Z"
+            }
+        ],
+        "refresh_interval": 24,
+        "custom_properties": {
+            "enable_vod": false,
+            "auto_enable_new_groups_vod": true,
+            "auto_enable_new_groups_live": true,
+            "auto_enable_new_groups_series": true
+        },
+        "account_type": "XC",
+        "username": "test1",
+        "password": "holahola",
+        "stale_stream_days": 7,
+        "priority": 0,
+        "status": "success",
+        "last_message": "Processing completed in 0.9 seconds. Streams: 0 created, 23 updated, 0 removed. Total processed: 23. Auto sync: 0 channels created, 0 updated, 0 deleted.",
+        "enable_vod": false,
+        "auto_enable_new_groups_live": true,
+        "auto_enable_new_groups_vod": true,
+        "auto_enable_new_groups_series": true
+    }
+]
