@@ -8,6 +8,8 @@ The Mass Regex Edit feature allows you to perform find and replace operations on
 - Standardizing pattern formats
 - Applying regex transformations to multiple patterns at once
 
+**Note:** This feature includes automatic duplicate prevention - when editing existing patterns, the system updates them in place rather than creating duplicates. See [CHANGELOG.md](CHANGELOG.md) for details on bug fixes and improvements.
+
 ## Accessing the Feature
 
 1. Navigate to the **Channel Configuration** page

@@ -946,8 +946,12 @@ class UDIManager:
                 for profile in profiles:
                     if isinstance(profile, dict) and profile.get('id') == profile_id:
                         # Return account ID from profile's account_id field if available
-                        # Otherwise return the parent account's ID
-                        return profile.get('account_id') or account.get('id')
+                        # Use explicit None check to handle account_id=0 case
+                        profile_account_id = profile.get('account_id')
+                        if profile_account_id is not None:
+                            return profile_account_id
+                        # Fallback to parent account's ID
+                        return account.get('id')
         
         return None
     

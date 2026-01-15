@@ -353,6 +353,87 @@ Each group shows:
 - **No Channel Modification**: Group settings don't modify individual channel configurations
 - **Inheritance**: Individual channel settings take precedence over group settings
 
+## Regex Pattern Matching Rules
+
+### Pattern Variables
+
+The system supports special variables in regex patterns for dynamic matching:
+
+**CHANNEL_NAME Variable:**
+- Use `CHANNEL_NAME` in your pattern to reference the current channel's name
+- The system automatically substitutes this with the actual channel name during matching
+- Makes patterns reusable across multiple channels
+
+**Example:**
+```regex
+Pattern: .*CHANNEL_NAME.*
+
+For channel "ESPN": Matches "HD ESPN", "ESPN Sports", "ESPN HD"
+For channel "CNN": Matches "CNN News", "CNN HD", "HD CNN"
+```
+
+**Special Character Handling:**
+- Channel names with regex special characters (`+`, `.`, `*`, `[`, `]`, etc.) are automatically escaped
+- Example: Channel "TV+" → Pattern uses `TV\+` internally
+- Prevents regex errors and unexpected matches
+- Transparent to users - just write patterns normally
+
+### Whitespace Flexibility
+
+The system automatically handles whitespace variations in patterns for user-friendly matching.
+
+**How It Works:**
+- Literal spaces in patterns are converted to `\s+` (one or more whitespace characters)
+- Matches spaces, tabs, multiple spaces, and other whitespace
+- Transparent conversion - users write patterns with normal spaces
+
+**Example:**
+```regex
+User writes:  TVP 1
+System converts: TVP\s+1
+
+Matches:
+✓ "TVP 1"      (single space)
+✓ "TVP  1"     (double space)
+✓ "TVP   1"    (triple space)  
+✓ "TVP	1"     (tab)
+✗ "TVP1"       (no space)
+```
+
+**Benefits:**
+- Don't need to worry about exact whitespace in stream names
+- Patterns work across providers with different spacing conventions
+- User-friendly - write patterns as you'd naturally type them
+- Reduces pattern errors and failed matches
+
+**When Exact Matching Needed:**
+If you need to match exact whitespace, use regex escapes explicitly:
+- `TVP\ 1` - matches exactly one space
+- `TVP\s1` - matches exactly one whitespace character
+- `TVP\s{2}1` - matches exactly two whitespace characters
+
+### Live Preview with Variables
+
+The live regex preview automatically substitutes variables and handles special characters:
+
+**What You See:**
+- `CHANNEL_NAME` is replaced with actual channel name
+- Special characters are escaped
+- Matched streams are highlighted
+- Provider names shown for disambiguation
+
+**Example Preview:**
+```
+Pattern: CHANNEL_NAME HD
+Channel: ESPN+
+
+Preview shows matches for pattern: ESPN\+ HD
+Results:
+✓ ESPN+ HD (Provider: Sports Plus)
+✓ ESPN+ HD Sports (Provider: Premium)
+✗ ESPN HD (missing the +)
+```
+
 ## Channel Order Tab Features
 
 ### Overview
@@ -377,6 +458,41 @@ Organize your channels using an intuitive drag-and-drop interface with multiple 
 3. Optionally, drag and drop channels to fine-tune the order
 4. Click "Save Order" to persist your changes
 5. Or click "Reset" to discard changes
+
+## Troubleshooting
+
+### Pattern Not Matching Expected Streams
+
+**Check:**
+1. **Variable Substitution**: If using `CHANNEL_NAME`, verify the channel name is correct
+2. **Special Characters**: Ensure channel name special characters are being escaped properly
+3. **Whitespace**: Pattern should work with any whitespace variation
+4. **Case Sensitivity**: Patterns are case-sensitive by default (use `(?i)` flag for case-insensitive)
+
+**Use Live Preview:**
+- Open the regex editor for the channel
+- Add your pattern
+- View matched streams in real-time
+- Check provider names if streams look identical
+
+### CHANNEL_NAME Not Working
+
+**Symptoms:**
+- Pattern with `CHANNEL_NAME` not matching expected streams
+- Live preview not showing substitution
+
+**Solutions:**
+- Ensure you're using `CHANNEL_NAME` (not `{CHANNEL_NAME}` or other formats)
+- Check channel actually has a name set
+- Verify pattern syntax is correct
+- Use live preview to see actual substitution
+
+### Whitespace Matching Issues
+
+**If pattern fails with multiple spaces:**
+- System automatically handles this - check other pattern issues
+- Verify the stream name doesn't have zero spaces (pattern requires at least one)
+- For exact space matching, use explicit regex: `\ ` or `\s{1}`
 
 ## Backwards Compatibility
 
