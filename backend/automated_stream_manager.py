@@ -440,7 +440,7 @@ class RegexChannelMatcher:
         
         return True, None
     
-    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: 'Union[List[str], List[Dict]]', enabled: bool = True, m3u_accounts: Optional[List[int]] = None):
+    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: 'Union[List[str], List[Dict]]', enabled: bool = True, m3u_accounts: Optional[List[int]] = None, silent: bool = False):
         """Add or update a channel pattern.
         
         Args:
@@ -457,6 +457,7 @@ class RegexChannelMatcher:
                          - None: Field not stored, applies to all M3U accounts (backward compatible)
                          - []: Empty list stored, explicitly means "all M3U accounts"
                          - [1, 2, 3]: Only match streams from M3U accounts with these IDs
+            silent: If True, log at DEBUG level instead of INFO (useful for batch operations)
             
         Raises:
             ValueError: If any regex pattern is invalid
@@ -499,7 +500,12 @@ class RegexChannelMatcher:
         
         self.channel_patterns["patterns"][str(channel_id)] = pattern_data
         self._save_patterns(self.channel_patterns)
-        logger.info(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
+        
+        # Log at appropriate level based on silent flag
+        if silent:
+            logger.debug(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
+        else:
+            logger.info(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
     
     def delete_channel_pattern(self, channel_id: str):
         """Delete all regex patterns for a channel.

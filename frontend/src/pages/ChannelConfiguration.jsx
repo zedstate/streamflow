@@ -11,9 +11,10 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
+import { Separator } from '@/components/ui/separator.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2 } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2, ArrowRight } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
@@ -1072,6 +1073,15 @@ export default function ChannelConfiguration() {
   const [selectedCommonPatterns, setSelectedCommonPatterns] = useState(new Set())
   const [commonPatternsSearch, setCommonPatternsSearch] = useState('')
   
+  // Mass edit state
+  const [massEditMode, setMassEditMode] = useState(false)
+  const [massEditFindPattern, setMassEditFindPattern] = useState('')
+  const [massEditReplacePattern, setMassEditReplacePattern] = useState('')
+  const [massEditUseRegex, setMassEditUseRegex] = useState(false)
+  const [massEditM3uAccounts, setMassEditM3uAccounts] = useState(null) // null = keep existing, array = update to selected
+  const [massEditPreview, setMassEditPreview] = useState(null)
+  const [loadingMassEditPreview, setLoadingMassEditPreview] = useState(false)
+  
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -1982,6 +1992,93 @@ export default function ChannelConfiguration() {
       toast({
         title: "Error",
         description: "Failed to delete patterns",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  // Mass edit handlers
+  const handleMassEditPreview = async () => {
+    if (!massEditFindPattern.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a find pattern",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      setLoadingMassEditPreview(true)
+      const response = await regexAPI.massEditPreview({
+        channel_ids: Array.from(selectedChannels),
+        find_pattern: massEditFindPattern,
+        replace_pattern: massEditReplacePattern,
+        use_regex: massEditUseRegex
+      })
+      
+      setMassEditPreview(response.data)
+      
+      if (response.data.total_patterns_affected === 0) {
+        toast({
+          title: "No Changes",
+          description: "No patterns will be affected by this find/replace operation",
+        })
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to preview mass edit",
+        variant: "destructive"
+      })
+      setMassEditPreview(null)
+    } finally {
+      setLoadingMassEditPreview(false)
+    }
+  }
+  
+  const handleApplyMassEdit = async () => {
+    if (!massEditFindPattern.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a find pattern",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      const response = await regexAPI.massEdit({
+        channel_ids: Array.from(selectedChannels),
+        find_pattern: massEditFindPattern,
+        replace_pattern: massEditReplacePattern,
+        use_regex: massEditUseRegex,
+        new_m3u_accounts: massEditM3uAccounts
+      })
+      
+      toast({
+        title: "Success",
+        description: response.data.message || `Updated ${response.data.success_count} channels`,
+      })
+      
+      // Reset mass edit mode
+      setMassEditMode(false)
+      setMassEditFindPattern('')
+      setMassEditReplacePattern('')
+      setMassEditUseRegex(false)
+      setMassEditM3uAccounts(null)
+      setMassEditPreview(null)
+      
+      // Reload data and common patterns
+      await loadData()
+      const patternsResponse = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      setCommonPatterns(patternsResponse.data.patterns || [])
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to apply mass edit",
         variant: "destructive"
       })
     }
@@ -3327,16 +3424,216 @@ export default function ChannelConfiguration() {
                   />
                 </div>
                 {selectedCommonPatterns.size > 0 && (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleDeleteSelectedCommonPatterns}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete Selected ({selectedCommonPatterns.size})
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setMassEditMode(!massEditMode)}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Edit Selected ({selectedCommonPatterns.size})
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleDeleteSelectedCommonPatterns}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Selected ({selectedCommonPatterns.size})
+                    </Button>
+                  </div>
                 )}
               </div>
+            )}
+            
+            {/* Mass Edit Section */}
+            {massEditMode && selectedCommonPatterns.size > 0 && (
+              <Card className="border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">Mass Find & Replace</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setMassEditMode(false)
+                        setMassEditFindPattern('')
+                        setMassEditReplacePattern('')
+                        setMassEditUseRegex(false)
+                        setMassEditM3uAccounts(null)
+                        setMassEditPreview(null)
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Find/Replace Inputs */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="mass-edit-find">Find Pattern</Label>
+                      <Input
+                        id="mass-edit-find"
+                        value={massEditFindPattern}
+                        onChange={(e) => setMassEditFindPattern(e.target.value)}
+                        placeholder="Enter text or regex to find"
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mass-edit-replace">Replace With</Label>
+                      <Input
+                        id="mass-edit-replace"
+                        value={massEditReplacePattern}
+                        onChange={(e) => setMassEditReplacePattern(e.target.value)}
+                        placeholder="Enter replacement text"
+                        className="font-mono"
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Options */}
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="mass-edit-use-regex"
+                        checked={massEditUseRegex}
+                        onCheckedChange={setMassEditUseRegex}
+                      />
+                      <label htmlFor="mass-edit-use-regex" className="text-sm cursor-pointer">
+                        Use Regular Expression
+                      </label>
+                    </div>
+                  </div>
+                  
+                  {/* M3U Account Selection */}
+                  <div className="space-y-2">
+                    <Label>Update Playlists (Optional)</Label>
+                    <div className="space-y-2 border rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="mass-edit-keep-playlists"
+                          checked={massEditM3uAccounts === null}
+                          onCheckedChange={(checked) => {
+                            setMassEditM3uAccounts(checked ? null : [])
+                          }}
+                        />
+                        <label htmlFor="mass-edit-keep-playlists" className="text-sm cursor-pointer">
+                          Keep Existing Playlists
+                        </label>
+                      </div>
+                      
+                      {massEditM3uAccounts !== null && (
+                        <>
+                          <Separator />
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id="mass-edit-all-playlists"
+                              checked={massEditM3uAccounts.length === 0}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setMassEditM3uAccounts([])
+                                } else {
+                                  // Select first available playlist when unchecking "All"
+                                  const availablePlaylists = m3uAccounts.filter(acc => acc.id !== 'custom')
+                                  setMassEditM3uAccounts(availablePlaylists.length > 0 ? [availablePlaylists[0].id] : [])
+                                }
+                              }}
+                            />
+                            <label htmlFor="mass-edit-all-playlists" className="text-sm cursor-pointer">
+                              All Playlists
+                            </label>
+                          </div>
+                          
+                          {m3uAccounts.filter(acc => acc.id !== 'custom').map(account => (
+                            <div key={account.id} className="flex items-center gap-2">
+                              <Checkbox
+                                id={`mass-edit-playlist-${account.id}`}
+                                checked={massEditM3uAccounts.length > 0 && massEditM3uAccounts.includes(account.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setMassEditM3uAccounts(prev => [...prev, account.id])
+                                  } else {
+                                    setMassEditM3uAccounts(prev => prev.filter(id => id !== account.id))
+                                  }
+                                }}
+                              />
+                              <label htmlFor={`mass-edit-playlist-${account.id}`} className="text-sm cursor-pointer">
+                                {account.name}
+                              </label>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Preview Button */}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleMassEditPreview}
+                      disabled={!massEditFindPattern.trim() || loadingMassEditPreview}
+                    >
+                      {loadingMassEditPreview ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Loading Preview...
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="h-4 w-4 mr-2" />
+                          Preview Changes
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={handleApplyMassEdit}
+                      disabled={!massEditFindPattern.trim() || !massEditPreview || massEditPreview.total_patterns_affected === 0}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      Apply Changes
+                    </Button>
+                  </div>
+                  
+                  {/* Preview Results */}
+                  {massEditPreview && (
+                    <div className="space-y-3 border rounded-lg p-4 bg-background">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold">Preview Results</h4>
+                        <div className="text-sm text-muted-foreground">
+                          {massEditPreview.total_patterns_affected} pattern{massEditPreview.total_patterns_affected !== 1 ? 's' : ''} in {massEditPreview.total_channels_affected} channel{massEditPreview.total_channels_affected !== 1 ? 's' : ''}
+                        </div>
+                      </div>
+                      
+                      <div className="max-h-[300px] overflow-y-auto space-y-2">
+                        {massEditPreview.affected_channels.map(channelInfo => (
+                          <div key={channelInfo.channel_id} className="border rounded p-3 space-y-2">
+                            <div className="font-medium text-sm">
+                              {channelInfo.channel_name}
+                              <span className="text-muted-foreground ml-2">({channelInfo.total_affected} pattern{channelInfo.total_affected !== 1 ? 's' : ''})</span>
+                            </div>
+                            <div className="space-y-1">
+                              {channelInfo.affected_patterns.map((patternChange, idx) => (
+                                <div key={idx} className="text-xs font-mono bg-muted p-2 rounded space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-red-600 dark:text-red-400 line-through">{patternChange.old_pattern}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <ArrowRight className="h-3 w-3" />
+                                    <span className="text-green-600 dark:text-green-400">{patternChange.new_pattern}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
             
             <div className="max-h-[500px] overflow-y-auto">

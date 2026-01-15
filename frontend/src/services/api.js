@@ -81,6 +81,8 @@ export const regexAPI = {
   bulkDeletePatterns: (data) => api.post('/regex-patterns/bulk-delete', data),
   getCommonPatterns: (data) => api.post('/regex-patterns/common', data),
   bulkEditPattern: (data) => api.post('/regex-patterns/bulk-edit', data),
+  massEditPreview: (data) => api.post('/regex-patterns/mass-edit-preview', data),
+  massEdit: (data) => api.post('/regex-patterns/mass-edit', data),
 };
 
 export const streamAPI = {
