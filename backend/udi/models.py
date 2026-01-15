@@ -213,11 +213,20 @@ class M3UAccountProfile:
     search_pattern: Optional[str] = None
     replace_pattern: Optional[str] = None
     custom_properties: Optional[Dict[str, Any]] = None
-    account: Optional[int] = None  # Parent M3U account ID
+    account_id: Optional[int] = None  # Parent M3U account ID
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'M3UAccountProfile':
         """Create an M3UAccountProfile from a dictionary (API response)."""
+        # Extract account ID from nested account object if present
+        account_data = data.get('account')
+        account_id = None
+        if isinstance(account_data, dict):
+            account_id = account_data.get('id')
+        elif isinstance(account_data, int):
+            # Fallback for direct ID
+            account_id = account_data
+        
         return cls(
             id=data.get('id'),
             name=data.get('name', ''),
@@ -228,7 +237,7 @@ class M3UAccountProfile:
             search_pattern=data.get('search_pattern'),
             replace_pattern=data.get('replace_pattern'),
             custom_properties=data.get('custom_properties'),
-            account=data.get('account')
+            account_id=account_id
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -243,7 +252,7 @@ class M3UAccountProfile:
             'search_pattern': self.search_pattern,
             'replace_pattern': self.replace_pattern,
             'custom_properties': self.custom_properties,
-            'account': self.account
+            'account_id': self.account_id
         }
 
 

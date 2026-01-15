@@ -944,8 +944,10 @@ class UDIManager:
             profiles = account.get('profiles', [])
             if isinstance(profiles, list):
                 for profile in profiles:
-                    if profile.get('id') == profile_id:
-                        return account.get('id')
+                    if isinstance(profile, dict) and profile.get('id') == profile_id:
+                        # Return account ID from profile's account_id field if available
+                        # Otherwise return the parent account's ID
+                        return profile.get('account_id') or account.get('id')
         
         return None
     
