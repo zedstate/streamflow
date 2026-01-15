@@ -29,12 +29,14 @@ The Mass Regex Edit feature allows you to perform find and replace operations on
 **Replace With**: Enter the replacement text or regex substitution
 - Example (text): `_4K`
 - Example (regex): `.*\1_UHD.*`
+- **Backreferences**: Use `\1`, `\2`, etc. for capture groups, or `\g<0>` for the full match (equivalent to $0 in JavaScript)
 
 ### 2. Options
 
 **Use Regular Expression**: When checked, enables regex-based find and replace
 - Find: Uses regex patterns with capture groups
-- Replace: Can use backreferences like `\1`, `\2`, etc.
+- Replace: Can use backreferences like `\1`, `\2`, etc. for capture groups
+- Replace: Use `\g<0>` to reference the full match (equivalent to $0 in JavaScript)
 
 **Update Playlists**: Optionally update M3U account filters for affected patterns
 - **Keep Existing Playlists**: Preserves current playlist settings (default)
@@ -94,7 +96,21 @@ Click **"Apply Changes"** to execute the mass edit operation:
 - `.*ESPN.*` → `US_.*ESPN.*`
 - `.*CNN.*` → `US_.*CNN.*`
 
-### Example 4: Update Playlists
+### Example 4: Using Full Match Reference
+
+**Scenario**: Wrap all patterns with additional pattern markers
+
+1. Find Pattern: `(.*)`
+2. Replace With: `^(\g<0>)$`
+3. Use Regular Expression: ✅ (checked)
+
+**Result**:
+- `.*ESPN.*` → `^(.*ESPN.*)$`
+- `.*CNN.*` → `^(.*CNN.*)$`
+
+Note: `\g<0>` references the full match (equivalent to $0 in JavaScript)
+
+### Example 5: Update Playlists
 
 **Scenario**: Change all HD patterns to 4K and limit to Premium playlist
 

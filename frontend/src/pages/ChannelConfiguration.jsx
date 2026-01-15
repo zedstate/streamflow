@@ -3402,7 +3402,7 @@ export default function ChannelConfiguration() {
           setCommonPatternsSearch('')
         }
       }}>
-        <DialogContent className="sm:max-w-[700px]">
+        <DialogContent className="sm:max-w-[90vw] lg:max-w-[1200px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Common Regex Patterns</DialogTitle>
             <DialogDescription>
@@ -3494,7 +3494,7 @@ export default function ChannelConfiguration() {
                   </div>
                   
                   {/* Options */}
-                  <div className="flex items-center gap-4">
+                  <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="mass-edit-use-regex"
@@ -3505,6 +3505,22 @@ export default function ChannelConfiguration() {
                         Use Regular Expression
                       </label>
                     </div>
+                    {massEditUseRegex && (
+                      <Alert className="bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-800">
+                        <Info className="h-4 w-4" />
+                        <AlertDescription className="text-xs">
+                          <strong>Regex replacement supports backreferences:</strong>
+                          <ul className="list-disc list-inside mt-1 space-y-0.5">
+                            <li><code className="bg-background px-1 rounded">\g&lt;0&gt;</code> - Full match (equivalent to $0)</li>
+                            <li><code className="bg-background px-1 rounded">\1, \2, ...</code> - Capture groups</li>
+                            <li><code className="bg-background px-1 rounded">\g&lt;name&gt;</code> - Named groups</li>
+                          </ul>
+                          <div className="mt-2">
+                            <strong>Example:</strong> Find: <code className="bg-background px-1 rounded">(\w+)_HD</code>, Replace: <code className="bg-background px-1 rounded">\1_4K</code> → Changes ESPN_HD to ESPN_4K
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                   
                   {/* M3U Account Selection */}
