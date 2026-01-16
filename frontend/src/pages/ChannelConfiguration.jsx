@@ -53,11 +53,12 @@ const CUSTOM_ACCOUNT_NAME = 'custom'
 const normalizePatternData = (channelPatterns) => {
   if (!channelPatterns) return []
   
-  // New format: regex_patterns is array of {pattern, m3u_accounts}
+  // New format: regex_patterns is array of {pattern, m3u_accounts, priority}
   if (channelPatterns.regex_patterns && Array.isArray(channelPatterns.regex_patterns)) {
     return channelPatterns.regex_patterns.map(p => ({
       pattern: p.pattern || p,
-      m3u_accounts: p.m3u_accounts || null
+      m3u_accounts: p.m3u_accounts || null,
+      priority: p.priority || 0
     }))
   }
   
@@ -66,7 +67,8 @@ const normalizePatternData = (channelPatterns) => {
     const channelM3uAccounts = channelPatterns.m3u_accounts || null
     return channelPatterns.regex.map(pattern => ({
       pattern: pattern,
-      m3u_accounts: channelM3uAccounts
+      m3u_accounts: channelM3uAccounts,
+      priority: 0
     }))
   }
   
@@ -338,7 +340,14 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                 <div className="space-y-2">
                   {normalizedPatterns.map((patternObj, index) => (
                     <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
-                      <code className="text-sm flex-1 break-all">{patternObj.pattern}</code>
+                      <div className="flex-1 min-w-0">
+                        <code className="text-sm break-all">{patternObj.pattern}</code>
+                        {patternObj.priority > 0 && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Priority: {patternObj.priority}
+                          </div>
+                        )}
+                      </div>
                       <div className="flex gap-1">
                         <Button
                           size="sm"
@@ -680,8 +689,11 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
                         <div className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
                           <div className="flex-1 space-y-1">
                             <code className="text-sm break-all">{patternObj.pattern}</code>
-                            <div className="text-xs text-muted-foreground">
-                              M3U Sources: {accountNames}
+                            <div className="text-xs text-muted-foreground space-y-0.5">
+                              <div>M3U Sources: {accountNames}</div>
+                              {patternObj.priority > 0 && (
+                                <div>Priority: {patternObj.priority}</div>
+                              )}
                             </div>
                           </div>
                           <div className="flex gap-1">
