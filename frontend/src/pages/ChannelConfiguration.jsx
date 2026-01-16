@@ -14,7 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2, ArrowRight } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2, ArrowRight, Settings } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
@@ -1946,6 +1946,60 @@ export default function ChannelConfiguration() {
     }
   }
   
+  const handleApplySettingsUpdate = async () => {
+    if (selectedCommonPatterns.size === 0) {
+      toast({
+        title: "No Patterns Selected",
+        description: "Please select at least one pattern to update",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      const patternsToUpdate = commonPatterns.filter((_, idx) => selectedCommonPatterns.has(idx))
+      let totalSuccess = 0
+      
+      for (const patternInfo of patternsToUpdate) {
+        const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
+        const channelsToUpdate = patternInfo.channel_ids.filter(id => 
+          selectedChannelIdsSet.has(String(id))
+        )
+        
+        // Use bulk edit to update just the settings (m3u_accounts and/or priority)
+        const response = await regexAPI.bulkEditPattern({
+          channel_ids: channelsToUpdate,
+          old_pattern: patternInfo.pattern,
+          new_pattern: patternInfo.pattern,  // Keep pattern the same
+          new_m3u_accounts: massEditM3uAccounts,
+          new_priority: massEditPriority
+        })
+        
+        totalSuccess += response.data.success_count || 0
+      }
+      
+      toast({
+        title: "Success",
+        description: `Updated settings for ${totalSuccess} pattern(s)`
+      })
+      
+      // Reload patterns
+      await loadData()
+      
+      // Close update mode and reset
+      setUpdateOnlyMode(false)
+      setMassEditM3uAccounts(null)
+      setMassEditPriority(null)
+      setSelectedCommonPatterns(new Set())
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to update pattern settings",
+        variant: "destructive"
+      })
+    }
+  }
+  
   const handleDeleteSelectedCommonPatterns = async () => {
     if (selectedCommonPatterns.size === 0) {
       toast({
@@ -3461,10 +3515,18 @@ export default function ChannelConfiguration() {
                     <Button
                       variant="outline"
                       size="sm"
+                      onClick={() => setUpdateOnlyMode(!updateOnlyMode)}
+                    >
+                      <Settings className="h-4 w-4 mr-2" />
+                      Update Settings ({selectedCommonPatterns.size})
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setMassEditMode(!massEditMode)}
                     >
                       <Edit className="h-4 w-4 mr-2" />
-                      Edit Selected ({selectedCommonPatterns.size})
+                      Mass Find & Replace ({selectedCommonPatterns.size})
                     </Button>
                     <Button
                       variant="destructive"
@@ -3479,12 +3541,150 @@ export default function ChannelConfiguration() {
               </div>
             )}
             
-            {/* Mass Edit Section */}
+            {/* Update Settings Section */}
+            {updateOnlyMode && selectedCommonPatterns.size > 0 && (
+              <Card className="border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-xl">Update Settings</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setUpdateOnlyMode(false)
+                        setMassEditM3uAccounts(null)
+                        setMassEditPriority(null)
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Update playlist and priority settings for {selectedCommonPatterns.size} selected pattern(s)
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Update Playlists */}
+                  <div className="space-y-2">
+                    <Label>Update Playlists (Optional)</Label>
+                    <div className="space-y-2 border rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="update-keep-playlists"
+                          checked={massEditM3uAccounts === null}
+                          onCheckedChange={(checked) => {
+                            setMassEditM3uAccounts(checked ? null : [])
+                          }}
+                        />
+                        <label htmlFor="update-keep-playlists" className="text-sm cursor-pointer">
+                          Keep Existing Playlists
+                        </label>
+                      </div>
+                      
+                      {massEditM3uAccounts !== null && (
+                        <>
+                          <Separator />
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id="update-all-playlists"
+                              checked={massEditM3uAccounts.length === 0}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setMassEditM3uAccounts([])
+                                } else {
+                                  const availablePlaylists = m3uAccounts.filter(acc => acc.id !== 'custom')
+                                  setMassEditM3uAccounts(availablePlaylists.length > 0 ? [availablePlaylists[0].id] : [])
+                                }
+                              }}
+                            />
+                            <label htmlFor="update-all-playlists" className="text-sm cursor-pointer">
+                              All Playlists
+                            </label>
+                          </div>
+                          
+                          {m3uAccounts.filter(acc => acc.id !== 'custom').map(account => (
+                            <div key={account.id} className="flex items-center gap-2">
+                              <Checkbox
+                                id={`update-playlist-${account.id}`}
+                                checked={massEditM3uAccounts.length > 0 && massEditM3uAccounts.includes(account.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setMassEditM3uAccounts(prev => [...prev, account.id])
+                                  } else {
+                                    setMassEditM3uAccounts(prev => prev.filter(id => id !== account.id))
+                                  }
+                                }}
+                              />
+                              <label htmlFor={`update-playlist-${account.id}`} className="text-sm cursor-pointer">
+                                {account.name}
+                              </label>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Update Priority */}
+                  <div className="space-y-2">
+                    <Label>Update Priority (Optional)</Label>
+                    <div className="space-y-2 border rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="update-keep-priority"
+                          checked={massEditPriority === null}
+                          onCheckedChange={(checked) => {
+                            setMassEditPriority(checked ? null : 0)
+                          }}
+                        />
+                        <label htmlFor="update-keep-priority" className="text-sm cursor-pointer">
+                          Keep Existing Priority
+                        </label>
+                      </div>
+                      
+                      {massEditPriority !== null && (
+                        <>
+                          <Separator />
+                          <div className="space-y-2">
+                            <Label htmlFor="update-priority-value">New Priority</Label>
+                            <Input
+                              id="update-priority-value"
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={massEditPriority}
+                              onChange={(e) => setMassEditPriority(parseInt(e.target.value) || 0)}
+                              className="w-32"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Higher priority patterns score better (0 = default)
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Apply Button */}
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={handleApplySettingsUpdate}
+                      disabled={massEditM3uAccounts === null && massEditPriority === null}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      Apply Changes
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* Mass Find & Replace Section */}
             {massEditMode && selectedCommonPatterns.size > 0 && (
               <Card className="border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">Mass Find & Replace</CardTitle>
+                    <CardTitle className="text-xl">Mass Find & Replace</CardTitle>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -3500,6 +3700,9 @@ export default function ChannelConfiguration() {
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Find and replace text across {selectedCommonPatterns.size} selected pattern(s)
+                  </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Find/Replace Inputs */}
