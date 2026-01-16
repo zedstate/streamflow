@@ -331,7 +331,8 @@ class RegexChannelMatcher:
                                     continue
                                 regex_patterns.append({
                                     "pattern": pattern_str,
-                                    "m3u_accounts": channel_m3u_accounts  # Apply channel-level to all patterns
+                                    "m3u_accounts": channel_m3u_accounts,  # Apply channel-level to all patterns
+                                    "priority": 0  # Default priority for migrated patterns
                                 })
                             
                             if regex_patterns:
@@ -345,7 +346,7 @@ class RegexChannelMatcher:
                         regex_patterns = pattern_data.get('regex_patterns', [])
                         if not regex_patterns:
                             # Fallback to old format
-                            regex_patterns = [{"pattern": p} for p in pattern_data.get('regex', [])]
+                            regex_patterns = [{"pattern": p, "priority": 0} for p in pattern_data.get('regex', [])]
                         
                         # Check if any regex patterns are invalid
                         has_invalid = False
@@ -473,14 +474,16 @@ class RegexChannelMatcher:
                         raise ValueError("Each pattern object must have a 'pattern' field")
                     normalized_patterns.append({
                         "pattern": item["pattern"],
-                        "m3u_accounts": item.get("m3u_accounts")
+                        "m3u_accounts": item.get("m3u_accounts"),
+                        "priority": item.get("priority", 0)  # Default priority is 0
                     })
             else:
                 # Legacy format: List[str] - convert to new format
                 for pattern in regex_patterns:
                     normalized_patterns.append({
                         "pattern": pattern,
-                        "m3u_accounts": m3u_accounts  # Use channel-level m3u_accounts for all patterns
+                        "m3u_accounts": m3u_accounts,  # Use channel-level m3u_accounts for all patterns
+                        "priority": 0  # Default priority for legacy patterns
                     })
         else:
             raise ValueError("At least one regex pattern is required")
@@ -625,6 +628,80 @@ class RegexChannelMatcher:
                     if re.search(search_pattern, search_name):
                         matches.append(channel_id)
                         logger.debug(f"Stream '{stream_name}' matched channel {channel_id} with pattern '{pattern}'")
+                        break  # Only match once per channel
+                except re.error as e:
+                    logger.error(f"Invalid regex pattern '{pattern}' for channel {channel_id}: {e}")
+        
+        return matches
+    
+    def match_stream_to_channels_with_priority(self, stream_name: str, stream_m3u_account: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Match a stream name to channel IDs based on regex patterns with priority information.
+        
+        Args:
+            stream_name: Name of the stream to match
+            stream_m3u_account: Optional M3U account ID of the stream.
+                               If provided, only matches patterns that apply to this M3U account.
+                               
+        Returns:
+            List of dicts with channel_id and priority for matching channels
+            Example: [{"channel_id": "123", "priority": 5}, {"channel_id": "456", "priority": 0}]
+        """
+        matches = []
+        case_sensitive = self.channel_patterns.get("global_settings", {}).get("case_sensitive", True)
+        
+        search_name = stream_name if case_sensitive else stream_name.lower()
+        
+        for channel_id, config in self.channel_patterns.get("patterns", {}).items():
+            if not config.get("enabled", True):
+                continue
+            
+            channel_name = config.get("name", "")
+            
+            # Support both new format (regex_patterns) and old format (regex) for backward compatibility
+            regex_patterns = config.get("regex_patterns")
+            if regex_patterns is None:
+                # Fallback to old format
+                old_regex = config.get("regex", [])
+                old_m3u_accounts = config.get("m3u_accounts")
+                regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts, "priority": 0} for p in old_regex]
+            
+            for pattern_obj in regex_patterns:
+                # Handle both dict and string patterns for flexibility
+                if isinstance(pattern_obj, dict):
+                    pattern = pattern_obj.get("pattern", "")
+                    pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                    pattern_priority = pattern_obj.get("priority", 0)
+                else:
+                    # Legacy string format
+                    pattern = pattern_obj
+                    pattern_m3u_accounts = None
+                    pattern_priority = 0
+                
+                if not pattern:
+                    continue
+                
+                # Check if this regex pattern applies to the stream's M3U account
+                if pattern_m3u_accounts is not None and len(pattern_m3u_accounts) > 0:
+                    # Pattern is limited to specific M3U accounts
+                    if stream_m3u_account is None or stream_m3u_account not in pattern_m3u_accounts:
+                        # Stream's M3U account is not in the allowed list, skip this pattern
+                        continue
+                
+                # Substitute channel name variable if present
+                substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
+                
+                search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
+                
+                # Convert literal spaces in pattern to flexible whitespace regex
+                search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
+                
+                try:
+                    if re.search(search_pattern, search_name):
+                        matches.append({
+                            "channel_id": channel_id,
+                            "priority": pattern_priority
+                        })
+                        logger.debug(f"Stream '{stream_name}' matched channel {channel_id} with pattern '{pattern}' (priority: {pattern_priority})")
                         break  # Only match once per channel
                 except re.error as e:
                     logger.error(f"Invalid regex pattern '{pattern}' for channel {channel_id}: {e}")
