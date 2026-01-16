@@ -2750,6 +2750,10 @@ class StreamCheckerService:
         if stream_id:
             priority_boost = self._get_priority_boost(stream_id, stream_data)
             score += priority_boost
+            
+            # Apply regex pattern priority boost
+            regex_priority_boost = self._get_regex_priority_boost(stream_id, stream_data)
+            score += regex_priority_boost
         
         return round(score, 2)
     
@@ -2808,6 +2812,60 @@ class StreamCheckerService:
             return 0.0
         except Exception as e:
             logger.error(f"Error calculating priority boost for stream {stream_id}: {e}")
+            return 0.0
+    
+    def _get_regex_priority_boost(self, stream_id: int, stream_data: Dict) -> float:
+        """Calculate priority boost for a stream based on which regex pattern matched it.
+        
+        When multiple streams from the same playlist match a channel, those matched by
+        higher-priority regex patterns should score higher.
+        
+        Args:
+            stream_id: The stream ID
+            stream_data: Stream data dictionary containing stream name and other info
+            
+        Returns:
+            Regex priority boost value (0.0 to 5.0+)
+        """
+        try:
+            # Get stream from UDI to find its name and M3U account
+            udi = get_udi_manager()
+            stream = udi.get_stream_by_id(stream_id)
+            if not stream:
+                return 0.0
+            
+            stream_name = stream.get('name', '')
+            stream_m3u_account = stream.get('m3u_account')
+            
+            if not stream_name:
+                return 0.0
+            
+            # Get the channel ID this stream belongs to
+            channel_id = stream_data.get('channel_id')
+            if not channel_id:
+                return 0.0
+            
+            # Import regex matcher to check which pattern matched this stream
+            from automated_stream_manager import get_regex_matcher
+            regex_matcher = get_regex_matcher()
+            
+            # Get match results with priority
+            matches = regex_matcher.match_stream_to_channels_with_priority(stream_name, stream_m3u_account)
+            
+            # Find the match for this channel
+            for match in matches:
+                if str(match.get('channel_id')) == str(channel_id):
+                    priority = match.get('priority', 0)
+                    if priority > 0:
+                        # Each priority point adds 0.1 to the score
+                        # This is smaller than M3U priority boost (0.5) but still significant
+                        boost = priority * 0.1
+                        logger.debug(f"Applying regex priority boost of {boost} to stream {stream_id} in channel {channel_id} (priority: {priority})")
+                        return boost
+            
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating regex priority boost for stream {stream_id}: {e}")
             return 0.0
     
     def get_status(self) -> Dict:

@@ -1028,7 +1028,7 @@ def get_common_regex_patterns():
 def bulk_edit_regex_pattern():
     """Edit a specific regex pattern across multiple channels.
     
-    This endpoint allows editing both the pattern itself and its associated playlists (m3u_accounts).
+    This endpoint allows editing the pattern itself, its associated playlists (m3u_accounts), and priority.
     """
     try:
         data = request.get_json()
@@ -1043,6 +1043,7 @@ def bulk_edit_regex_pattern():
         old_pattern = data['old_pattern']
         new_pattern = data['new_pattern']
         new_m3u_accounts = data.get('new_m3u_accounts')  # Optional: new playlist filter (list of M3U account IDs, or None to keep existing accounts, or null to apply to all playlists)
+        new_priority = data.get('new_priority')  # Optional: new priority value (integer, or None to keep existing priority)
         
         if not isinstance(channel_ids, list) or len(channel_ids) == 0:
             return jsonify({"error": "channel_ids must be a non-empty list"}), 400
@@ -1083,7 +1084,7 @@ def bulk_edit_regex_pattern():
                     # Fallback to old format
                     old_regex = existing_patterns.get('regex', [])
                     old_m3u_accounts = existing_patterns.get('m3u_accounts')
-                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
+                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts, "priority": 0} for p in old_regex]
                 
                 # Find and replace pattern
                 pattern_found = False
@@ -1094,19 +1095,22 @@ def bulk_edit_regex_pattern():
                     if isinstance(pattern_obj, dict):
                         pattern = pattern_obj.get("pattern", "")
                         pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                        pattern_priority = pattern_obj.get("priority", 0)
                     else:
                         # Legacy string format
                         pattern = pattern_obj
                         pattern_m3u_accounts = None
+                        pattern_priority = 0
                     
                     if pattern == old_pattern:
                         pattern_found = True
-                        # Update the pattern and optionally the m3u_accounts
+                        # Update the pattern and optionally the m3u_accounts and priority
                         # Only add if we haven't seen the new pattern yet (avoid duplicates)
                         if new_pattern not in seen_patterns:
                             updated_pattern = {
                                 "pattern": new_pattern,
-                                "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts
+                                "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts,
+                                "priority": new_priority if new_priority is not None else pattern_priority
                             }
                             updated_patterns.append(updated_pattern)
                             seen_patterns.add(new_pattern)
@@ -1115,7 +1119,8 @@ def bulk_edit_regex_pattern():
                         if pattern not in seen_patterns:
                             updated_patterns.append({
                                 "pattern": pattern,
-                                "m3u_accounts": pattern_m3u_accounts
+                                "m3u_accounts": pattern_m3u_accounts,
+                                "priority": pattern_priority
                             })
                             seen_patterns.add(pattern)
                 
