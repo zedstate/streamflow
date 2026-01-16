@@ -1049,6 +1049,7 @@ export default function ChannelConfiguration() {
   const [m3uAccounts, setM3uAccounts] = useState([])  // All M3U accounts
   const [selectedM3uAccounts, setSelectedM3uAccounts] = useState([])  // For individual regex dialog
   const [bulkSelectedM3uAccounts, setBulkSelectedM3uAccounts] = useState([])  // For bulk regex dialog
+  const [patternPriority, setPatternPriority] = useState(0)  // Priority for individual regex dialog
   
   // Profile filter state
   const [profileFilterActive, setProfileFilterActive] = useState(false)
@@ -1070,6 +1071,7 @@ export default function ChannelConfiguration() {
   const [editingCommonPattern, setEditingCommonPattern] = useState(null)
   const [newCommonPattern, setNewCommonPattern] = useState('')
   const [newCommonPatternM3uAccounts, setNewCommonPatternM3uAccounts] = useState(null) // null = all playlists, array = selected playlists
+  const [newCommonPatternPriority, setNewCommonPatternPriority] = useState(0) // Priority for common pattern editing
   const [selectedCommonPatterns, setSelectedCommonPatterns] = useState(new Set())
   const [commonPatternsSearch, setCommonPatternsSearch] = useState('')
   
@@ -1079,8 +1081,12 @@ export default function ChannelConfiguration() {
   const [massEditReplacePattern, setMassEditReplacePattern] = useState('')
   const [massEditUseRegex, setMassEditUseRegex] = useState(false)
   const [massEditM3uAccounts, setMassEditM3uAccounts] = useState(null) // null = keep existing, array = update to selected
+  const [massEditPriority, setMassEditPriority] = useState(null) // null = keep existing, number = update to value
   const [massEditPreview, setMassEditPreview] = useState(null)
   const [loadingMassEditPreview, setLoadingMassEditPreview] = useState(false)
+  
+  // Update settings only mode (for playlist/priority changes without find & replace)
+  const [updateOnlyMode, setUpdateOnlyMode] = useState(false)
   
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -1421,10 +1427,11 @@ export default function ChannelConfiguration() {
       
       // Support both new and old format
       if (channelPatterns?.regex_patterns && channelPatterns.regex_patterns[patternIndex]) {
-        // New format with per-pattern m3u_accounts
+        // New format with per-pattern m3u_accounts and priority
         const patternObj = channelPatterns.regex_patterns[patternIndex]
         setNewPattern(patternObj.pattern || '')
         setSelectedM3uAccounts(patternObj.m3u_accounts || [])
+        setPatternPriority(patternObj.priority || 0)
       } else if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
         // Old format - pattern is a string, m3u_accounts is channel-level
         setNewPattern(channelPatterns.regex[patternIndex])
@@ -1434,10 +1441,12 @@ export default function ChannelConfiguration() {
         } else {
           setSelectedM3uAccounts([])  // Empty means all M3U accounts
         }
+        setPatternPriority(0)  // Default priority for old format
       }
     } else {
       setNewPattern('')
       setSelectedM3uAccounts([])  // Default to all M3U accounts for new patterns
+      setPatternPriority(0)  // Default priority for new patterns
     }
     
     setTestResults(null)
@@ -1451,6 +1460,7 @@ export default function ChannelConfiguration() {
     setNewPattern('')
     setTestResults(null)
     setSelectedM3uAccounts([])  // Reset M3U account selection
+    setPatternPriority(0)  // Reset priority
   }
 
   const handleTestPattern = useCallback(async () => {
@@ -1553,7 +1563,8 @@ export default function ChannelConfiguration() {
         const oldM3uAccounts = channelPatterns.m3u_accounts
         updatedRegexPatterns = channelPatterns.regex.map(p => ({
           pattern: p,
-          m3u_accounts: oldM3uAccounts
+          m3u_accounts: oldM3uAccounts,
+          priority: 0
         }))
       }
       
@@ -1561,13 +1572,15 @@ export default function ChannelConfiguration() {
         // Editing existing pattern
         updatedRegexPatterns[editingPatternIndex] = {
           pattern: newPattern,
-          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null,
+          priority: patternPriority
         }
       } else {
         // Adding new pattern
         updatedRegexPatterns.push({
           pattern: newPattern,
-          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null,
+          priority: patternPriority
         })
       }
 
@@ -1833,7 +1846,8 @@ export default function ChannelConfiguration() {
         channel_ids: channelsToEdit,
         old_pattern: editingCommonPattern.pattern,
         new_pattern: newCommonPattern,
-        new_m3u_accounts: newCommonPatternM3uAccounts  // Include playlist selection
+        new_m3u_accounts: newCommonPatternM3uAccounts,  // Include playlist selection
+        new_priority: newCommonPatternPriority  // Include priority
       })
       
       toast({
@@ -1854,6 +1868,7 @@ export default function ChannelConfiguration() {
       setEditingCommonPattern(null)
       setNewCommonPattern('')
       setNewCommonPatternM3uAccounts(null)
+      setNewCommonPatternPriority(0)
     } catch (err) {
       toast({
         title: "Error",
@@ -3202,6 +3217,23 @@ export default function ChannelConfiguration() {
               </div>
             </div>
 
+            {/* Priority Input */}
+            <div className="space-y-2">
+              <Label htmlFor="pattern-priority">Priority</Label>
+              <div className="text-xs text-muted-foreground mb-2">
+                Among streams from the same playlist, higher priority patterns score better (0 = default priority).
+              </div>
+              <Input
+                id="pattern-priority"
+                type="number"
+                min="0"
+                max="100"
+                value={patternPriority}
+                onChange={(e) => setPatternPriority(parseInt(e.target.value) || 0)}
+                className="w-32"
+              />
+            </div>
+
             {/* Live Test Results */}
             {testingPattern && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground animate-in fade-in duration-200">
@@ -3400,6 +3432,7 @@ export default function ChannelConfiguration() {
           // Reset state when closing
           setSelectedCommonPatterns(new Set())
           setCommonPatternsSearch('')
+          setNewCommonPatternPriority(0)
         }
       }}>
         <DialogContent className="sm:max-w-[90vw] lg:max-w-[1200px] max-h-[90vh] overflow-y-auto">
@@ -3775,6 +3808,23 @@ export default function ChannelConfiguration() {
                                       </div>
                                     </div>
                                     
+                                    {/* Priority Input */}
+                                    <div className="space-y-2">
+                                      <Label htmlFor="common-pattern-priority">Priority</Label>
+                                      <div className="text-xs text-muted-foreground mb-2">
+                                        Among streams from the same playlist, higher priority patterns score better (0 = default).
+                                      </div>
+                                      <Input
+                                        id="common-pattern-priority"
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        value={newCommonPatternPriority}
+                                        onChange={(e) => setNewCommonPatternPriority(parseInt(e.target.value) || 0)}
+                                        className="w-32"
+                                      />
+                                    </div>
+                                    
                                     <div className="flex gap-2 justify-end">
                                       <Button
                                         size="sm"
@@ -3783,6 +3833,7 @@ export default function ChannelConfiguration() {
                                           setEditingCommonPattern(null)
                                           setNewCommonPattern('')
                                           setNewCommonPatternM3uAccounts(null)
+                                          setNewCommonPatternPriority(0)
                                         }}
                                       >
                                         Cancel
@@ -3869,6 +3920,7 @@ export default function ChannelConfiguration() {
               setNewCommonPattern('')
               setSelectedCommonPatterns(new Set())
               setCommonPatternsSearch('')
+              setNewCommonPatternPriority(0)
             }}>
               Close
             </Button>
