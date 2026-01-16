@@ -985,7 +985,7 @@ def get_common_regex_patterns():
             regex_patterns = channel_patterns.get('regex_patterns')
             if regex_patterns is None:
                 # Fallback to old format
-                regex_patterns = [{"pattern": p} for p in channel_patterns.get('regex', [])]
+                regex_patterns = [{"pattern": p, "priority": 0} for p in channel_patterns.get('regex', [])]
             
             for pattern_obj in regex_patterns:
                 if isinstance(pattern_obj, dict):
@@ -1225,9 +1225,11 @@ def mass_edit_preview():
                     if isinstance(pattern_obj, dict):
                         pattern = pattern_obj.get("pattern", "")
                         pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                        pattern_priority = pattern_obj.get("priority", 0)
                     else:
                         pattern = pattern_obj
                         pattern_m3u_accounts = None
+                        pattern_priority = 0
                     
                     # Check if this pattern will be affected
                     try:
@@ -1246,7 +1248,8 @@ def mass_edit_preview():
                         affected_patterns.append({
                             "old_pattern": pattern,
                             "new_pattern": new_pattern,
-                            "m3u_accounts": pattern_m3u_accounts
+                            "m3u_accounts": pattern_m3u_accounts,
+                            "priority": pattern_priority
                         })
                 
                 if affected_patterns:
@@ -1345,9 +1348,11 @@ def mass_edit_regex_patterns():
                     if isinstance(pattern_obj, dict):
                         pattern = pattern_obj.get("pattern", "")
                         pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                        pattern_priority = pattern_obj.get("priority", 0)
                     else:
                         pattern = pattern_obj
                         pattern_m3u_accounts = None
+                        pattern_priority = 0
                     
                     # Apply find/replace
                     try:
@@ -1384,7 +1389,8 @@ def mass_edit_regex_patterns():
                         
                         updated_patterns.append({
                             "pattern": new_pattern,
-                            "m3u_accounts": final_m3u_accounts
+                            "m3u_accounts": final_m3u_accounts,
+                            "priority": pattern_priority  # Preserve priority
                         })
                         seen_patterns.add(new_pattern)
                 
