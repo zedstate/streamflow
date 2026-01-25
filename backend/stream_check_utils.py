@@ -16,7 +16,9 @@ system and provides a clean, maintainable API for stream quality analysis.
 
 import json
 import logging
+import os
 import re
+import shlex
 import subprocess
 import time
 from datetime import datetime
@@ -43,6 +45,19 @@ FOURCC_TO_CODEC = {
     'vp08': 'vp8',
     'mp4a': 'aac',  # AAC audio in MP4 container
 }
+
+def _get_ffmpeg_extra_args() -> list:
+    """
+    Return extra ffmpeg args from the environment, if provided.
+    """
+    extra_args = os.getenv('FFMPEG_EXTRA_ARGS', '').strip()
+    if not extra_args:
+        return []
+    try:
+        return shlex.split(extra_args)
+    except ValueError as exc:
+        logger.warning(f"Invalid FFMPEG_EXTRA_ARGS (ignored): {exc}")
+        return []
 
 
 def _log_ffmpeg_errors(output: str, logger: logging.Logger, error_patterns: list) -> None:
@@ -333,8 +348,10 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
     
     logger.debug(f"Analyzing stream with ffmpeg for {duration}s: {url[:50]}...")
     # Use list arguments to pass URL safely to subprocess without shell interpretation
+    extra_args = _get_ffmpeg_extra_args()
     command = [
         'ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent,
+    ] + extra_args + [
         '-i', url, '-t', str(duration), '-f', 'null', '-'
     ]
 
@@ -543,8 +560,10 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
         elapsed_time: Time taken for the operation
     """
     logger.debug(f"Analyzing bitrate for {duration}s...")
+    extra_args = _get_ffmpeg_extra_args()
     command = [
         'ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent,
+    ] + extra_args + [
         '-i', url, '-t', str(duration), '-f', 'null', '-'
     ]
 
