@@ -134,7 +134,9 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     if (status.setup_complete) {
       setActiveStep(3)
     } else if (status.dispatcharr_connection && status.has_channels) {
-      if (status.has_patterns) {
+      // Patterns are now optional - if automation config exists, go to final step
+      // Otherwise go to patterns step
+      if (status.automation_config_exists) {
         setActiveStep(2)
       } else {
         setActiveStep(1)
@@ -561,6 +563,13 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       case 1:
         return (
           <div className="space-y-6">
+            <Alert>
+              <AlertDescription>
+                <strong>Optional Step:</strong> Regex patterns allow automatic stream-to-channel assignment. 
+                You can skip this step and configure patterns later, or click "Add Pattern" to set them up now.
+              </AlertDescription>
+            </Alert>
+            
             <div className="flex justify-between items-center">
               <p className="text-sm text-muted-foreground">
                 Configure regex patterns to automatically assign streams to channels
@@ -601,7 +610,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                   <Alert>
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>
-                      No patterns configured yet. Click "Add Pattern" to create your first pattern.
+                      No patterns configured yet. Click "Add Pattern" to create your first pattern, or click "Next" to skip this step.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -994,7 +1003,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
               <ul className="space-y-1 text-sm text-muted-foreground">
                 <li>✓ Dispatcharr connection configured</li>
                 <li>✓ Channels loaded</li>
-                <li>✓ Regex patterns configured</li>
+                <li>{Object.keys(patterns).length > 0 ? '✓' : '○'} Regex patterns {Object.keys(patterns).length > 0 ? 'configured' : 'ready to configure'}</li>
                 <li>✓ Automation settings saved</li>
               </ul>
             </div>
@@ -1083,9 +1092,32 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                       })
                       return
                     }
-                    // Load channels and patterns before moving to step 1
-                    await loadChannelsAndPatterns()
-                    setActiveStep(prev => Math.min(3, prev + 1))
+                    // Ensure config files exist before moving to step 1
+                    try {
+                      await setupAPI.ensureConfig()
+                      // Load channels and patterns before moving to step 1
+                      await loadChannelsAndPatterns()
+                      setActiveStep(prev => Math.min(3, prev + 1))
+                    } catch (err) {
+                      toast({
+                        title: "Error",
+                        description: "Failed to initialize configuration",
+                        variant: "destructive"
+                      })
+                    }
+                  } else if (activeStep === 1) {
+                    // On step 1, ensure regex config exists before proceeding
+                    // This handles the case where user doesn't add any patterns
+                    try {
+                      await setupAPI.ensureConfig()
+                      setActiveStep(prev => Math.min(3, prev + 1))
+                    } catch (err) {
+                      toast({
+                        title: "Error",
+                        description: "Failed to save configuration",
+                        variant: "destructive"
+                      })
+                    }
                   } else if (activeStep === 2) {
                     // Save automation config before moving to next step
                     await handleSaveAutomationConfig()

@@ -2817,6 +2817,34 @@ def get_setup_wizard_status():
         logger.error(f"Error getting setup wizard status: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/setup-wizard/ensure-config', methods=['POST'])
+def ensure_wizard_config():
+    """Ensure wizard configuration files exist (creates empty files if needed).
+    
+    This endpoint is called during wizard progression to ensure required config
+    files exist, even if users skip optional steps like pattern configuration.
+    """
+    try:
+        # Ensure regex config exists (even if empty)
+        regex_file = CONFIG_DIR / 'channel_regex_config.json'
+        if not regex_file.exists():
+            default_regex_config = {
+                "patterns": {},
+                "global_settings": {
+                    "case_sensitive": False,
+                    "require_exact_match": False
+                }
+            }
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(regex_file, 'w') as f:
+                json.dump(default_regex_config, f, indent=2)
+            logger.info("Created empty regex config file for wizard")
+        
+        return jsonify({"message": "Configuration files ensured"})
+    except Exception as e:
+        logger.error(f"Error ensuring wizard config: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/setup-wizard/create-sample-patterns', methods=['POST'])
 def create_sample_patterns():
     """Create sample regex patterns for testing setup completion."""

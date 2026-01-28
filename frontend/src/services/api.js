@@ -131,6 +131,7 @@ export const deadStreamsAPI = {
 
 export const setupAPI = {
   getStatus: () => api.get('/setup-wizard'),
+  ensureConfig: () => api.post('/setup-wizard/ensure-config'),
 };
 
 export const dispatcharrAPI = {
