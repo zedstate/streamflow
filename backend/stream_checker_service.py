@@ -1179,12 +1179,20 @@ class StreamCheckerService:
             try:
                 dead_count = len(self.dead_streams_tracker.get_dead_streams())
                 if dead_count > 0:
+                    logger.info(f"Found {dead_count} dead stream(s) before clearing")
                     self.dead_streams_tracker.clear_all_dead_streams()
                     logger.info(f"✓ Cleared {dead_count} dead stream(s) from tracker - they will be given a second chance")
+                    
+                    # Verify the streams were actually cleared
+                    remaining_dead = len(self.dead_streams_tracker.get_dead_streams())
+                    if remaining_dead > 0:
+                        logger.warning(f"⚠ {remaining_dead} dead stream(s) still remain after clearing - this may indicate an issue")
+                    else:
+                        logger.info("✓ Verified: All dead streams successfully removed from tracker")
                 else:
                     logger.info("✓ No dead streams to clear from tracker")
             except Exception as e:
-                logger.error(f"✗ Failed to clear dead streams: {e}")
+                logger.error(f"✗ Failed to clear dead streams: {e}", exc_info=True)
             
             automation_manager = None
             
@@ -3046,16 +3054,30 @@ class StreamCheckerService:
             # Step 3: Clear dead streams for this channel to give them a second chance
             logger.info(f"Step 3/6: Clearing dead streams for channel {channel_name} to give them a second chance...")
             try:
+                # First, check how many dead streams exist for this channel
+                dead_streams_for_channel = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+                initial_dead_count = len(dead_streams_for_channel)
+                
+                if initial_dead_count > 0:
+                    logger.info(f"Found {initial_dead_count} dead stream(s) for channel {channel_id} before clearing")
+                
                 # Clear all dead streams that belong to this channel by channel_id
                 # This handles cases where playlist refresh creates new streams with different URLs
                 cleared_count = self.dead_streams_tracker.remove_dead_streams_by_channel_id(channel_id)
                 
                 if cleared_count > 0:
                     logger.info(f"✓ Cleared {cleared_count} dead stream(s) from tracker - they will be given a second chance")
+                    
+                    # Verify the streams were actually cleared
+                    remaining_dead = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+                    if len(remaining_dead) > 0:
+                        logger.warning(f"⚠ {len(remaining_dead)} dead stream(s) still remain after clearing - this may indicate an issue")
+                    else:
+                        logger.info("✓ Verified: All dead streams successfully removed from tracker")
                 else:
                     logger.info("✓ No dead streams to clear for this channel")
             except Exception as e:
-                logger.error(f"✗ Failed to clear dead streams: {e}")
+                logger.error(f"✗ Failed to clear dead streams: {e}", exc_info=True)
             
             # Step 4: Validate existing streams against regex patterns (if matching is enabled)
             if matching_enabled:
