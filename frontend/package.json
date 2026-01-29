@@ -1,6 +1,6 @@
 {
   "name": "dispatcharr-stream-manager-ui",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "description": "React frontend for StreamFlow for Dispatcharr with ShadCN UI",
   "type": "module",
   "scripts": {
