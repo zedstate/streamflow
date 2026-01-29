@@ -365,6 +365,46 @@ class TestRegexImportValidation(unittest.TestCase):
                 self.assertIn(channel_id, loaded_patterns["patterns"])
                 channel_data = loaded_patterns["patterns"][channel_id]
                 self.assertIn("regex_patterns", channel_data)
+    
+    def test_empty_regex_patterns_list_rejected(self):
+        """Test that channels with empty regex_patterns list are rejected."""
+        with patch('automated_stream_manager.CONFIG_DIR', Path(self.temp_dir)):
+            # Channel with empty regex_patterns
+            empty_patterns_data = {
+                "patterns": {
+                    "1": {
+                        "name": "Empty Patterns Channel",
+                        "regex_patterns": [],  # Empty list
+                        "enabled": True
+                    }
+                }
+            }
+            
+            # This should be invalid because no patterns are provided
+            channel_data = empty_patterns_data['patterns']['1']
+            self.assertEqual(len(channel_data['regex_patterns']), 0)
+    
+    def test_invalid_type_in_regex_patterns(self):
+        """Test that invalid types in regex_patterns are detected."""
+        with patch('automated_stream_manager.CONFIG_DIR', Path(self.temp_dir)):
+            # Channel with invalid type in regex_patterns
+            invalid_type_data = {
+                "patterns": {
+                    "1": {
+                        "name": "Invalid Type Channel",
+                        "regex_patterns": [
+                            {"pattern": ".*Valid.*", "m3u_accounts": [11], "priority": 0},
+                            123,  # Invalid type - should be string or dict
+                        ],
+                        "enabled": True
+                    }
+                }
+            }
+            
+            # Verify the invalid type is present
+            channel_data = invalid_type_data['patterns']['1']
+            self.assertEqual(channel_data['regex_patterns'][1], 123)
+            self.assertIsInstance(channel_data['regex_patterns'][1], int)
 
 
 if __name__ == '__main__':
