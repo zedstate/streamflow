@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils.js'
 export default function Scheduling() {
   const [events, setEvents] = useState([])
   const [channels, setChannels] = useState([])
+  const [channelGroups, setChannelGroups] = useState([])  // Add channel groups state
   const [programs, setPrograms] = useState([])
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -44,6 +45,8 @@ export default function Scheduling() {
   const [ruleDialogOpen, setRuleDialogOpen] = useState(false)
   const [ruleChannelComboboxOpen, setRuleChannelComboboxOpen] = useState(false)
   const [ruleSelectedChannels, setRuleSelectedChannels] = useState([])  // Changed to array
+  const [ruleSelectedChannelGroups, setRuleSelectedChannelGroups] = useState([])  // Add channel groups state
+  const [ruleChannelGroupComboboxOpen, setRuleChannelGroupComboboxOpen] = useState(false)
   const [ruleName, setRuleName] = useState('')
   const [ruleRegexPattern, setRuleRegexPattern] = useState('')
   const [ruleMinutesBefore, setRuleMinutesBefore] = useState(5)
@@ -89,9 +92,10 @@ export default function Scheduling() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [eventsResponse, channelsResponse, configResponse, rulesResponse, autoConfigResponse] = await Promise.all([
+      const [eventsResponse, channelsResponse, groupsResponse, configResponse, rulesResponse, autoConfigResponse] = await Promise.all([
         schedulingAPI.getEvents(),
         channelsAPI.getChannels(),
+        channelsAPI.getGroups(),
         schedulingAPI.getConfig(),
         schedulingAPI.getAutoCreateRules(),
         automationAPI.getConfig()
@@ -99,6 +103,7 @@ export default function Scheduling() {
       
       setEvents(eventsResponse.data || [])
       setChannels(channelsResponse.data || [])
+      setChannelGroups(groupsResponse.data || [])
       setConfig(configResponse.data || {})
       setRefreshInterval(configResponse.data?.epg_refresh_interval_minutes || 60)
       setAutoCreateRules(rulesResponse.data || [])
@@ -223,12 +228,28 @@ export default function Scheduling() {
     // Clear regex matches when channels change
     setRegexMatches([])
   }
+  
+  const handleRuleChannelGroupSelect = (groupId) => {
+    const group = channelGroups.find(g => g.id === parseInt(groupId))
+    if (!group) return
+    
+    // Toggle group selection
+    const isSelected = ruleSelectedChannelGroups.some(g => g.id === group.id)
+    if (isSelected) {
+      setRuleSelectedChannelGroups(ruleSelectedChannelGroups.filter(g => g.id !== group.id))
+    } else {
+      setRuleSelectedChannelGroups([...ruleSelectedChannelGroups, group])
+    }
+    
+    // Clear regex matches when groups change
+    setRegexMatches([])
+  }
 
   const handleTestRegex = async () => {
-    if (ruleSelectedChannels.length === 0 || !ruleRegexPattern) {
+    if ((ruleSelectedChannels.length === 0 && ruleSelectedChannelGroups.length === 0) || !ruleRegexPattern) {
       toast({
         title: "Validation Error",
-        description: "Please select at least one channel and enter a regex pattern",
+        description: "Please select at least one channel or channel group and enter a regex pattern",
         variant: "destructive"
       })
       return
@@ -236,9 +257,30 @@ export default function Scheduling() {
 
     try {
       setTestingRegex(true)
-      // Test regex against first selected channel for preview
+      // Test regex against first selected channel or first channel from first selected group
+      let testChannelId = null
+      if (ruleSelectedChannels.length > 0) {
+        testChannelId = ruleSelectedChannels[0].id
+      } else if (ruleSelectedChannelGroups.length > 0) {
+        // Find first channel in the first selected group
+        const firstGroup = ruleSelectedChannelGroups[0]
+        const groupChannels = channels.filter(c => c.channel_group_id === firstGroup.id)
+        if (groupChannels.length > 0) {
+          testChannelId = groupChannels[0].id
+        }
+      }
+      
+      if (!testChannelId) {
+        toast({
+          title: "No Channels",
+          description: "No channels found in selected groups",
+          variant: "destructive"
+        })
+        return
+      }
+      
       const response = await schedulingAPI.testAutoCreateRule({
-        channel_id: ruleSelectedChannels[0].id,
+        channel_id: testChannelId,
         regex_pattern: ruleRegexPattern
       })
       
@@ -247,7 +289,7 @@ export default function Scheduling() {
       if (response.data.matches === 0) {
         toast({
           title: "No Matches",
-          description: "The regex pattern didn't match any programs in the EPG (tested on first selected channel)",
+          description: "The regex pattern didn't match any programs in the EPG (tested on first available channel)",
           variant: "default"
         })
       }
@@ -265,10 +307,10 @@ export default function Scheduling() {
   }
 
   const handleCreateRule = async () => {
-    if (!ruleName || ruleSelectedChannels.length === 0 || !ruleRegexPattern) {
+    if (!ruleName || (ruleSelectedChannels.length === 0 && ruleSelectedChannelGroups.length === 0) || !ruleRegexPattern) {
       toast({
         title: "Validation Error",
-        description: "Please fill in all required fields and select at least one channel",
+        description: "Please fill in all required fields and select at least one channel or channel group",
         variant: "destructive"
       })
       return
@@ -289,6 +331,7 @@ export default function Scheduling() {
       const ruleData = {
         name: ruleName,
         channel_ids: ruleSelectedChannels.map(c => c.id),
+        channel_group_ids: ruleSelectedChannelGroups.map(g => g.id),
         regex_pattern: ruleRegexPattern,
         minutes_before: minutesBeforeValue
       }
@@ -313,10 +356,12 @@ export default function Scheduling() {
       setEditingRuleId(null)
       setRuleName('')
       setRuleSelectedChannels([])
+      setRuleSelectedChannelGroups([])
       setRuleRegexPattern('')
       setRuleMinutesBefore(5)
       setRegexMatches([])
       setRuleChannelComboboxOpen(false)
+      setRuleChannelGroupComboboxOpen(false)
       await loadData()
     } catch (err) {
       console.error('Failed to save rule:', err)
@@ -375,6 +420,19 @@ export default function Scheduling() {
     }
     
     setRuleSelectedChannels(selectedChannels)
+    
+    // Find and set channel groups
+    const selectedGroups = []
+    if (rule.channel_group_ids && Array.isArray(rule.channel_group_ids)) {
+      rule.channel_group_ids.forEach(groupId => {
+        const group = channelGroups.find(g => g.id === groupId)
+        if (group) {
+          selectedGroups.push(group)
+        }
+      })
+    }
+    
+    setRuleSelectedChannelGroups(selectedGroups)
     
     // Clear previous test results
     setRegexMatches([])
@@ -1229,7 +1287,7 @@ export default function Scheduling() {
 
                   {/* Channel Selection - Multi-select */}
                   <div className="space-y-2">
-                    <Label htmlFor="rule-channel-select">Channels</Label>
+                    <Label htmlFor="rule-channel-select">Channels (Individual)</Label>
                     <Popover open={ruleChannelComboboxOpen} onOpenChange={setRuleChannelComboboxOpen}>
                       <PopoverTrigger asChild>
                         <Button
@@ -1301,8 +1359,83 @@ export default function Scheduling() {
                     )}
                   </div>
 
+                  {/* Channel Group Selection - Multi-select */}
+                  <div className="space-y-2">
+                    <Label htmlFor="rule-channel-group-select">Channel Groups</Label>
+                    <Popover open={ruleChannelGroupComboboxOpen} onOpenChange={setRuleChannelGroupComboboxOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={ruleChannelGroupComboboxOpen}
+                          className="w-full justify-between"
+                        >
+                          {ruleSelectedChannelGroups.length > 0
+                            ? `${ruleSelectedChannelGroups.length} group${ruleSelectedChannelGroups.length > 1 ? 's' : ''} selected`
+                            : "Search and select channel groups..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[600px] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search channel groups..." className="h-9" />
+                          <CommandList>
+                            <CommandEmpty>No channel group found.</CommandEmpty>
+                            <CommandGroup>
+                              {channelGroups.map((group) => {
+                                const isSelected = ruleSelectedChannelGroups.some(g => g.id === group.id);
+                                return (
+                                <CommandItem
+                                  key={group.id}
+                                  value={group.name.toLowerCase()}
+                                  onSelect={() => handleRuleChannelGroupSelect(group.id)}
+                                >
+                                  {group.name} ({group.channel_count || 0} channels)
+                                  <Check
+                                    className={cn(
+                                      "ml-auto h-4 w-4",
+                                      isSelected ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                    {ruleSelectedChannelGroups.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {ruleSelectedChannelGroups.map((group) => (
+                          <Badge key={group.id} variant="outline" className="flex items-center gap-1">
+                            {group.name} ({group.channel_count || 0})
+                            <button
+                              type="button"
+                              onClick={() => handleRuleChannelGroupSelect(group.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  handleRuleChannelGroupSelect(group.id);
+                                }
+                              }}
+                              className="ml-1 hover:text-destructive"
+                              aria-label={`Remove ${group.name}`}
+                              tabIndex={0}
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-sm text-muted-foreground">
+                      Selected groups will automatically include current and future channels in those groups
+                    </p>
+                  </div>
+
                   {/* Regex Pattern */}
-                  {ruleSelectedChannels.length > 0 && (
+                  {(ruleSelectedChannels.length > 0 || ruleSelectedChannelGroups.length > 0) && (
                     <>
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
@@ -1373,18 +1506,21 @@ export default function Scheduling() {
                 <DialogFooter>
                   <Button variant="outline" onClick={() => {
                     setRuleDialogOpen(false)
+                    setEditingRuleId(null)
                     setRuleName('')
                     setRuleSelectedChannels([])
+                    setRuleSelectedChannelGroups([])
                     setRuleRegexPattern('')
                     setRuleMinutesBefore(5)
                     setRegexMatches([])
                     setRuleChannelComboboxOpen(false)
+                    setRuleChannelGroupComboboxOpen(false)
                   }}>
                     Cancel
                   </Button>
                   <Button 
                     onClick={handleCreateRule}
-                    disabled={!ruleName || ruleSelectedChannels.length === 0 || !ruleRegexPattern}
+                    disabled={!ruleName || (ruleSelectedChannels.length === 0 && ruleSelectedChannelGroups.length === 0) || !ruleRegexPattern}
                   >
                     {editingRuleId ? 'Update Rule' : 'Create Rule'}
                   </Button>
@@ -1415,7 +1551,7 @@ export default function Scheduling() {
                 </TableHeader>
                 <TableBody>
                   {autoCreateRules.map((rule) => {
-                    // Support both old (single channel) and new (multiple channels) format
+                    // Support both old (single channel) and new (multiple channels + groups) format
                     const channelsInfo = rule.channels_info || 
                       (rule.channel_id ? [{
                         id: rule.channel_id,
@@ -1423,39 +1559,71 @@ export default function Scheduling() {
                         logo_url: rule.channel_logo_url
                       }] : []);
                     
+                    const channelGroupsInfo = rule.channel_groups_info || [];
+                    const hasIndividualChannels = (rule.channel_ids && rule.channel_ids.length > 0);
+                    const hasGroups = (channelGroupsInfo.length > 0);
+                    
                     return (
                     <TableRow key={rule.id}>
                       <TableCell className="font-medium">{rule.name}</TableCell>
                       <TableCell>
-                        {channelsInfo.length === 1 ? (
-                          <div className="flex items-center gap-2">
-                            {channelsInfo[0].logo_url && (
-                              <img
-                                src={channelsInfo[0].logo_url}
-                                alt={channelsInfo[0].name}
-                                className="h-6 w-6 object-contain rounded"
-                                onError={(e) => { e.target.style.display = 'none' }}
-                              />
-                            )}
-                            <span>{channelsInfo[0].name}</span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-1">
-                            <span className="text-sm font-medium">{channelsInfo.length} channels</span>
-                            <div className="flex flex-wrap gap-1">
-                              {channelsInfo.slice(0, 3).map((ch, idx) => (
-                                <Badge key={idx} variant="outline" className="text-xs">
-                                  {ch.name}
-                                </Badge>
-                              ))}
-                              {channelsInfo.length > 3 && (
-                                <Badge variant="outline" className="text-xs">
-                                  +{channelsInfo.length - 3} more
-                                </Badge>
+                        <div className="flex flex-col gap-2">
+                          {/* Individual channels */}
+                          {hasIndividualChannels && (
+                            <div>
+                              {rule.channel_ids.length === 1 ? (
+                                <div className="flex items-center gap-2">
+                                  {channelsInfo[0]?.logo_url && (
+                                    <img
+                                      src={channelsInfo[0].logo_url}
+                                      alt={channelsInfo[0].name}
+                                      className="h-6 w-6 object-contain rounded"
+                                      onError={(e) => { e.target.style.display = 'none' }}
+                                    />
+                                  )}
+                                  <span>{channelsInfo[0]?.name}</span>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-sm font-medium">{rule.channel_ids.length} individual channels</span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {channelsInfo.slice(0, 3).map((ch, idx) => (
+                                      <Badge key={idx} variant="secondary" className="text-xs">
+                                        {ch.name}
+                                      </Badge>
+                                    ))}
+                                    {channelsInfo.length > 3 && (
+                                      <Badge variant="secondary" className="text-xs">
+                                        +{channelsInfo.length - 3} more
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
                               )}
                             </div>
-                          </div>
-                        )}
+                          )}
+                          
+                          {/* Channel groups */}
+                          {hasGroups && (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-sm font-medium">{channelGroupsInfo.length} group{channelGroupsInfo.length > 1 ? 's' : ''}</span>
+                              <div className="flex flex-wrap gap-1">
+                                {channelGroupsInfo.map((group, idx) => (
+                                  <Badge key={idx} variant="outline" className="text-xs">
+                                    {group.name} ({group.channel_count || 0})
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Total channel count - show only for expanded display */}
+                          {channelsInfo.length > 1 && (
+                            <span className="text-xs text-muted-foreground">
+                              Applied to: {channelsInfo.length} channel{channelsInfo.length !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <code className="text-xs bg-muted px-2 py-1 rounded">{rule.regex_pattern}</code>

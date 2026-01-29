@@ -37,34 +37,6 @@ const STEPS = [
   },
 ]
 
-const PIPELINE_MODES = [
-  { 
-    value: 'pipeline_1', 
-    label: 'Pipeline 1 - Continuous',
-    hint: 'Continuously checks streams and updates playlists. Best for always-up-to-date streams.'
-  },
-  { 
-    value: 'pipeline_1_5', 
-    label: 'Pipeline 1.5 - Continuous + Scheduled',
-    hint: 'Combines continuous checking with scheduled global actions. Balanced approach.'
-  },
-  { 
-    value: 'pipeline_2', 
-    label: 'Pipeline 2 - Update Only',
-    hint: 'Only updates playlists, no automatic checking. Manual control over stream quality.'
-  },
-  { 
-    value: 'pipeline_2_5', 
-    label: 'Pipeline 2.5 - Update + Scheduled',
-    hint: 'Updates playlists with scheduled global checks. Good for regular maintenance.'
-  },
-  { 
-    value: 'pipeline_3', 
-    label: 'Pipeline 3 - Scheduled Only',
-    hint: 'Only scheduled actions, no automatic updates. Full manual control.'
-  },
-]
-
 export default function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
   const [activeStep, setActiveStep] = useState(0)
   const [setupStatus, setSetupStatus] = useState(initialSetupStatus)
@@ -84,6 +56,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   const [testingConnection, setTestingConnection] = useState(false)
   const [udiInitialized, setUdiInitialized] = useState(false)
   const [initializingUdi, setInitializingUdi] = useState(false)
+  const [loadingProgress, setLoadingProgress] = useState(0)
 
   // Channel configuration state
   const [channels, setChannels] = useState([])
@@ -113,7 +86,13 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
 
   // Stream checker config
   const [streamCheckerConfig, setStreamCheckerConfig] = useState({
-    pipeline_mode: 'pipeline_1_5',
+    automation_controls: {
+      auto_m3u_updates: true,
+      auto_stream_matching: true,
+      auto_quality_checking: true,
+      scheduled_global_action: false,
+      remove_non_matching_streams: false
+    },
     global_check_schedule: {
       enabled: true,
       cron_expression: '0 3 * * *',
@@ -143,23 +122,6 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     loadDispatcharrConfig()
   }, [initialSetupStatus])
 
-  // Update enabled features based on pipeline mode
-  useEffect(() => {
-    const pipelineMode = streamCheckerConfig.pipeline_mode
-    const hasAutoUpdates = ['pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5'].includes(pipelineMode)
-    const hasAutoChecking = ['pipeline_1', 'pipeline_1_5'].includes(pipelineMode)
-    
-    setConfig(prev => ({
-      ...prev,
-      enabled_features: {
-        auto_playlist_update: hasAutoUpdates,
-        auto_stream_discovery: hasAutoUpdates,
-        auto_quality_reordering: hasAutoChecking,
-        changelog_tracking: true
-      }
-    }))
-  }, [streamCheckerConfig.pipeline_mode])
-
   // Load channels and patterns when entering step 1
   // Only depends on activeStep to avoid unnecessary reloads
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -173,7 +135,9 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     if (status.setup_complete) {
       setActiveStep(3)
     } else if (status.dispatcharr_connection && status.has_channels) {
-      if (status.has_patterns) {
+      // Patterns are now optional - if automation config exists, go to final step
+      // Otherwise go to patterns step
+      if (status.automation_config_exists) {
         setActiveStep(2)
       } else {
         setActiveStep(1)
@@ -245,6 +209,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       setLoading(true)
       setInitializingUdi(true)
       setUdiInitialized(false)
+      setLoadingProgress(0)
       
       // Save configuration (backend will initialize UDI automatically)
       await dispatcharrAPI.updateConfig(dispatcharrConfig)
@@ -261,12 +226,18 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       
       while (attempts < maxAttempts && !dataLoaded) {
         await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        // Update progress based on attempts
+        const progress = Math.min(((attempts + 1) / maxAttempts) * 100, 95)
+        setLoadingProgress(progress)
+        
         const response = await setupAPI.getStatus()
         setSetupStatus(response.data)
         determineActiveStep(response.data)
         
         if (response.data.has_channels && response.data.dispatcharr_connection) {
           dataLoaded = true
+          setLoadingProgress(100)
           setUdiInitialized(true)
           toast({
             title: "Data Loaded",
@@ -294,6 +265,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     } finally {
       setInitializingUdi(false)
       setLoading(false)
+      setLoadingProgress(0)
     }
   }
 
@@ -570,10 +542,14 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
 
             {initializingUdi && (
               <Alert>
-                <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                  <AlertDescription>Loading channel data from Dispatcharr...</AlertDescription>
-                </div>
+                <AlertDescription className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                    <span>Loading channel data from Dispatcharr...</span>
+                  </div>
+                  <Progress value={loadingProgress} className="w-full" />
+                  <p className="text-xs text-muted-foreground">{Math.round(loadingProgress)}% complete</p>
+                </AlertDescription>
               </Alert>
             )}
 
@@ -600,6 +576,13 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       case 1:
         return (
           <div className="space-y-6">
+            <Alert>
+              <AlertDescription>
+                <strong>Optional Step:</strong> Regex patterns allow automatic stream-to-channel assignment. 
+                You can skip this step and configure patterns later, or click "Add Pattern" to set them up now.
+              </AlertDescription>
+            </Alert>
+            
             <div className="flex justify-between items-center">
               <p className="text-sm text-muted-foreground">
                 Configure regex patterns to automatically assign streams to channels
@@ -640,7 +623,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                   <Alert>
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>
-                      No patterns configured yet. Click "Add Pattern" to create your first pattern.
+                      No patterns configured yet. Click "Add Pattern" to create your first pattern, or click "Next" to skip this step.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -796,28 +779,121 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
         return (
           <div className="space-y-6">
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="pipeline_mode">Pipeline Mode</Label>
-                <Select
-                  value={streamCheckerConfig.pipeline_mode}
-                  onValueChange={(value) => setStreamCheckerConfig({ ...streamCheckerConfig, pipeline_mode: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PIPELINE_MODES.map(mode => (
-                      <SelectItem key={mode.value} value={mode.value}>
-                        {mode.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {PIPELINE_MODES.find(m => m.value === streamCheckerConfig.pipeline_mode)?.hint && (
-                  <p className="text-xs text-muted-foreground">
-                    {PIPELINE_MODES.find(m => m.value === streamCheckerConfig.pipeline_mode).hint}
-                  </p>
-                )}
+              <div className="space-y-4">
+                <Label className="text-base font-semibold">Automation Features</Label>
+                <p className="text-sm text-muted-foreground">
+                  Configure which automation features to enable
+                </p>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="auto_m3u_updates" className="text-sm font-medium">
+                      Automatic M3U Updates
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically refresh M3U playlists from configured sources
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto_m3u_updates"
+                    checked={streamCheckerConfig.automation_controls?.auto_m3u_updates ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        auto_m3u_updates: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="auto_stream_matching" className="text-sm font-medium">
+                      Automatic Stream Matching
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically match streams to channels using regex patterns
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto_stream_matching"
+                    checked={streamCheckerConfig.automation_controls?.auto_stream_matching ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        auto_stream_matching: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="auto_quality_checking" className="text-sm font-medium">
+                      Automatic Quality Checking
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically analyze and reorder streams by quality
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto_quality_checking"
+                    checked={streamCheckerConfig.automation_controls?.auto_quality_checking ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        auto_quality_checking: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="scheduled_global_action" className="text-sm font-medium">
+                      Scheduled Global Action
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Run complete automation cycle on a schedule
+                    </p>
+                  </div>
+                  <Switch
+                    id="scheduled_global_action"
+                    checked={streamCheckerConfig.automation_controls?.scheduled_global_action ?? true}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        scheduled_global_action: checked
+                      }
+                    })}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="remove_non_matching_streams" className="text-sm font-medium">
+                      Remove Non-Matching Streams
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Remove streams that no longer match regex patterns
+                    </p>
+                  </div>
+                  <Switch
+                    id="remove_non_matching_streams"
+                    checked={streamCheckerConfig.automation_controls?.remove_non_matching_streams ?? false}
+                    onCheckedChange={(checked) => setStreamCheckerConfig({
+                      ...streamCheckerConfig,
+                      automation_controls: {
+                        ...streamCheckerConfig.automation_controls,
+                        remove_non_matching_streams: checked
+                      }
+                    })}
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -940,7 +1016,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
               <ul className="space-y-1 text-sm text-muted-foreground">
                 <li>✓ Dispatcharr connection configured</li>
                 <li>✓ Channels loaded</li>
-                <li>✓ Regex patterns configured</li>
+                <li>{Object.keys(patterns).length > 0 ? '✓' : '○'} Regex patterns {Object.keys(patterns).length > 0 ? 'configured' : 'ready to configure'}</li>
                 <li>✓ Automation settings saved</li>
               </ul>
             </div>
@@ -1029,9 +1105,32 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                       })
                       return
                     }
-                    // Load channels and patterns before moving to step 1
-                    await loadChannelsAndPatterns()
-                    setActiveStep(prev => Math.min(3, prev + 1))
+                    // Ensure config files exist before moving to step 1
+                    try {
+                      await setupAPI.ensureConfig()
+                      // Load channels and patterns before moving to step 1
+                      await loadChannelsAndPatterns()
+                      setActiveStep(prev => Math.min(3, prev + 1))
+                    } catch (err) {
+                      toast({
+                        title: "Error",
+                        description: "Failed to initialize configuration",
+                        variant: "destructive"
+                      })
+                    }
+                  } else if (activeStep === 1) {
+                    // On step 1, ensure regex config exists before proceeding
+                    // This handles the case where user doesn't add any patterns
+                    try {
+                      await setupAPI.ensureConfig()
+                      setActiveStep(prev => Math.min(3, prev + 1))
+                    } catch (err) {
+                      toast({
+                        title: "Error",
+                        description: "Failed to save configuration",
+                        variant: "destructive"
+                      })
+                    }
                   } else if (activeStep === 2) {
                     // Save automation config before moving to next step
                     await handleSaveAutomationConfig()

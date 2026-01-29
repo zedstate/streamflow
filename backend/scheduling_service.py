@@ -636,7 +636,9 @@ class SchedulingService:
         Args:
             rule_data: Rule data dictionary containing:
                 - name: Rule name
-                - channel_ids: List of Channel IDs to match (or channel_id for backward compatibility)
+                - channel_ids: List of Channel IDs to match (optional)
+                - channel_group_ids: List of Channel Group IDs to match (optional)
+                - channel_id: Single channel ID for backward compatibility (optional)
                 - regex_pattern: Regex pattern to match program names
                 - minutes_before: Minutes before program start to check
                 
@@ -650,20 +652,61 @@ class SchedulingService:
             # Get channel info - support both channel_id (single) and channel_ids (multiple)
             udi = get_udi_manager()
             
+            # Collect channel IDs from multiple sources
+            channel_ids = []
+            channel_group_ids = []
+            
             # Handle backward compatibility: convert channel_id to channel_ids
-            if 'channel_id' in rule_data and 'channel_ids' not in rule_data:
+            if 'channel_id' in rule_data and 'channel_ids' not in rule_data and 'channel_group_ids' not in rule_data:
                 channel_ids = [rule_data['channel_id']]
-            elif 'channel_ids' in rule_data:
-                channel_ids = rule_data['channel_ids']
             else:
-                raise ValueError("Either channel_id or channel_ids must be provided")
+                # Get individual channel IDs
+                if 'channel_ids' in rule_data:
+                    channel_ids = list(rule_data['channel_ids'])
+                
+                # Get channel group IDs
+                if 'channel_group_ids' in rule_data:
+                    channel_group_ids = list(rule_data['channel_group_ids'])
+            
+            # Validate that at least one channel or channel group is provided
+            if not channel_ids and not channel_group_ids:
+                raise ValueError("At least one channel_id, channel_ids, or channel_group_ids must be provided")
+            
+            # Expand channel groups to individual channels for processing
+            all_channel_ids = set(channel_ids)
+            
+            # Validate and expand channel groups
+            channel_groups_info = []
+            if channel_group_ids:
+                for group_id in channel_group_ids:
+                    # Get all channels in this group
+                    group_channels = udi.get_channels_by_group(group_id)
+                    if group_channels is None:
+                        raise ValueError(f"Channel group {group_id} not found")
+                    
+                    # Get group info for display
+                    group = udi.get_channel_group_by_id(group_id)
+                    if group:
+                        channel_groups_info.append({
+                            'id': group_id,
+                            'name': group.get('name', ''),
+                            'channel_count': len(group_channels)
+                        })
+                    
+                    # Add all channel IDs from this group
+                    for channel in group_channels:
+                        all_channel_ids.add(channel['id'])
+            
+            # Convert back to list
+            all_channel_ids = list(all_channel_ids)
             
             # Validate all channels exist and collect their info
             channels_info = []
-            for channel_id in channel_ids:
+            for channel_id in all_channel_ids:
                 channel = udi.get_channel_by_id(channel_id)
                 if not channel:
-                    raise ValueError(f"Channel {channel_id} not found")
+                    logger.warning(f"Channel {channel_id} not found, skipping")
+                    continue
                 
                 # Get channel logo info
                 logo_id = channel.get('logo_id')
@@ -680,9 +723,14 @@ class SchedulingService:
                     'tvg_id': channel.get('tvg_id')
                 })
             
+            if not channels_info:
+                raise ValueError("No valid channels found for this rule")
+            
             # Validate regex pattern
+            # Temporarily substitute CHANNEL_NAME with a placeholder for validation
             try:
-                re.compile(rule_data['regex_pattern'])
+                validation_pattern = rule_data['regex_pattern'].replace('CHANNEL_NAME', 'PLACEHOLDER')
+                re.compile(validation_pattern)
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
             
@@ -690,8 +738,10 @@ class SchedulingService:
             rule = {
                 'id': rule_id,
                 'name': rule_data['name'],
-                'channel_ids': channel_ids,
-                'channels_info': channels_info,  # Store full channel info for display
+                'channel_ids': channel_ids,  # Store originally selected individual channels
+                'channel_group_ids': channel_group_ids,  # Store originally selected channel groups
+                'channel_groups_info': channel_groups_info,  # Store group metadata for display
+                'channels_info': channels_info,  # Store full channel info for display (expanded)
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
                 'created_at': datetime.now(timezone.utc).isoformat()
@@ -700,8 +750,13 @@ class SchedulingService:
             self._auto_create_rules.append(rule)
             self._save_auto_create_rules()
             
-            channel_names = ', '.join([ch['name'] for ch in channels_info])
-            logger.info(f"Created auto-create rule {rule_id} for channels: {channel_names}")
+            # Log rule creation
+            desc_parts = []
+            if channel_ids:
+                desc_parts.append(f"{len(channel_ids)} individual channel(s)")
+            if channel_group_ids:
+                desc_parts.append(f"{len(channel_group_ids)} channel group(s)")
+            logger.info(f"Created auto-create rule {rule_id} '{rule_data['name']}' for {', '.join(desc_parts)} (total {len(channels_info)} channels)")
             
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
@@ -779,20 +834,59 @@ class SchedulingService:
             # Validate and update fields
             udi = get_udi_manager()
             
-            # Update channels if provided - support both old (channel_id) and new (channel_ids) format
-            if 'channel_id' in rule_data or 'channel_ids' in rule_data:
+            # Update channels and/or channel groups if provided
+            if 'channel_id' in rule_data or 'channel_ids' in rule_data or 'channel_group_ids' in rule_data:
+                # Collect channel IDs from multiple sources
+                channel_ids = []
+                channel_group_ids = []
+                
                 # Convert channel_id to channel_ids for backward compatibility
-                if 'channel_id' in rule_data and 'channel_ids' not in rule_data:
+                if 'channel_id' in rule_data and 'channel_ids' not in rule_data and 'channel_group_ids' not in rule_data:
                     channel_ids = [rule_data['channel_id']]
                 else:
-                    channel_ids = rule_data['channel_ids']
+                    # Get individual channel IDs
+                    if 'channel_ids' in rule_data:
+                        channel_ids = list(rule_data['channel_ids'])
+                    
+                    # Get channel group IDs
+                    if 'channel_group_ids' in rule_data:
+                        channel_group_ids = list(rule_data['channel_group_ids'])
+                
+                # Expand channel groups to individual channels for processing
+                all_channel_ids = set(channel_ids)
+                
+                # Validate and expand channel groups
+                channel_groups_info = []
+                if channel_group_ids:
+                    for group_id in channel_group_ids:
+                        # Get all channels in this group
+                        group_channels = udi.get_channels_by_group(group_id)
+                        if group_channels is None:
+                            raise ValueError(f"Channel group {group_id} not found")
+                        
+                        # Get group info for display
+                        group = udi.get_channel_group_by_id(group_id)
+                        if group:
+                            channel_groups_info.append({
+                                'id': group_id,
+                                'name': group.get('name', ''),
+                                'channel_count': len(group_channels)
+                            })
+                        
+                        # Add all channel IDs from this group
+                        for channel in group_channels:
+                            all_channel_ids.add(channel['id'])
+                
+                # Convert back to list
+                all_channel_ids = list(all_channel_ids)
                 
                 # Validate all channels exist and collect their info
                 channels_info = []
-                for channel_id in channel_ids:
+                for channel_id in all_channel_ids:
                     channel = udi.get_channel_by_id(channel_id)
                     if not channel:
-                        raise ValueError(f"Channel {channel_id} not found")
+                        logger.warning(f"Channel {channel_id} not found, skipping")
+                        continue
                     
                     # Get channel logo info
                     logo_id = channel.get('logo_id')
@@ -809,8 +903,13 @@ class SchedulingService:
                         'tvg_id': channel.get('tvg_id')
                     })
                 
+                if not channels_info:
+                    raise ValueError("No valid channels found for this rule")
+                
                 # Update channel-related fields
                 rule['channel_ids'] = channel_ids
+                rule['channel_group_ids'] = channel_group_ids
+                rule['channel_groups_info'] = channel_groups_info
                 rule['channels_info'] = channels_info
                 
                 # Keep old fields for backward compatibility but mark as deprecated
@@ -826,7 +925,9 @@ class SchedulingService:
             # Update regex pattern if provided
             if 'regex_pattern' in rule_data:
                 try:
-                    re.compile(rule_data['regex_pattern'])
+                    # Temporarily substitute CHANNEL_NAME with a placeholder for validation
+                    validation_pattern = rule_data['regex_pattern'].replace('CHANNEL_NAME', 'PLACEHOLDER')
+                    re.compile(validation_pattern)
                     rule['regex_pattern'] = rule_data['regex_pattern']
                 except re.error as e:
                     raise ValueError(f"Invalid regex pattern: {e}")
@@ -878,10 +979,16 @@ class SchedulingService:
             List of matching programs
         """
         # Validate regex pattern
+        # Temporarily substitute CHANNEL_NAME with a placeholder for validation
         try:
-            pattern = re.compile(regex_pattern, re.IGNORECASE)
+            validation_pattern = regex_pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
+            re.compile(validation_pattern, re.IGNORECASE)
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}")
+        
+        # Compile the actual pattern for matching
+        # Note: CHANNEL_NAME is not substituted here as this is for EPG program matching
+        pattern = re.compile(regex_pattern, re.IGNORECASE)
         
         # Get programs for channel
         programs = self.get_programs_by_channel(channel_id)
@@ -940,33 +1047,51 @@ class SchedulingService:
             programs_by_tvg_id[tvg_id].sort(key=lambda p: p.get('start_time', ''))
         
         for rule in rules_snapshot:
-            # Support both old format (channel_id) and new format (channel_ids)
+            # Support both old format (channel_id) and new format (channel_ids + channel_group_ids)
             channel_ids = rule.get('channel_ids') or ([rule.get('channel_id')] if rule.get('channel_id') else [])
+            channel_group_ids = rule.get('channel_group_ids', [])
             regex_pattern = rule.get('regex_pattern')
             minutes_before = rule.get('minutes_before', 5)
             
-            if not channel_ids:
+            # Dynamically expand channel groups to get current list of channels
+            all_channel_ids = set(channel_ids)
+            
+            # Expand channel groups in real-time to include newly added channels
+            if channel_group_ids:
+                for group_id in channel_group_ids:
+                    group_channels = udi.get_channels_by_group(group_id)
+                    if group_channels:
+                        for channel in group_channels:
+                            all_channel_ids.add(channel['id'])
+            
+            # Convert to list
+            all_channel_ids = list(all_channel_ids)
+            
+            if not all_channel_ids:
                 logger.warning(f"Rule {rule.get('id')} has no channels, skipping")
                 continue
             
-            # Collect channels_info for old rules that don't have it
-            channels_info = rule.get('channels_info')
-            if not channels_info:
-                # Build channels_info from old format
-                channels_info = []
-                for channel_id in channel_ids:
-                    channel = udi.get_channel_by_id(channel_id)
-                    if channel:
-                        channels_info.append({
-                            'id': channel_id,
-                            'tvg_id': channel.get('tvg_id')
-                        })
+            # Build channels_info from expanded channel list
+            channels_info = []
+            for channel_id in all_channel_ids:
+                channel = udi.get_channel_by_id(channel_id)
+                if channel:
+                    channels_info.append({
+                        'id': channel_id,
+                        'tvg_id': channel.get('tvg_id')
+                    })
             
             try:
-                pattern = re.compile(regex_pattern, re.IGNORECASE)
+                # Temporarily substitute CHANNEL_NAME with a placeholder for validation
+                validation_pattern = regex_pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
+                re.compile(validation_pattern, re.IGNORECASE)
             except re.error as e:
                 logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
                 continue
+            
+            # Compile the actual pattern for matching
+            # Note: CHANNEL_NAME is not substituted here as this is for EPG program matching
+            pattern = re.compile(regex_pattern, re.IGNORECASE)
             
             # Process each channel in the rule
             for channel_info in channels_info:
@@ -1140,6 +1265,7 @@ class SchedulingService:
         Note:
             For backward compatibility with single-channel rules, both 'channel_id' 
             (single) and 'channel_ids' (array) are included when there's only one channel.
+            Channel groups are exported as 'channel_group_ids'.
         """
         exported_rules = []
         for rule in self._auto_create_rules:
@@ -1147,11 +1273,12 @@ class SchedulingService:
             exported_rule = {
                 'name': rule.get('name'),
                 'channel_ids': rule.get('channel_ids', []),
+                'channel_group_ids': rule.get('channel_group_ids', []),
                 'regex_pattern': rule.get('regex_pattern'),
                 'minutes_before': rule.get('minutes_before', 5)
             }
-            # For backward compatibility, also include channel_id if there's only one channel
-            if len(exported_rule['channel_ids']) == 1:
+            # For backward compatibility, also include channel_id if there's only one channel and no groups
+            if len(exported_rule['channel_ids']) == 1 and not exported_rule['channel_group_ids']:
                 exported_rule['channel_id'] = exported_rule['channel_ids'][0]
             
             exported_rules.append(exported_rule)
@@ -1163,8 +1290,8 @@ class SchedulingService:
         """Import auto-create rules from JSON data.
         
         Deduplication logic:
-        - If exact same regex and channels exist, replace with imported rule
-        - If same regex but different channels exist, merge channels into existing rule
+        - If exact same regex, channels, and groups exist, replace with imported rule
+        - If same regex but different channels/groups exist, merge into existing rule
         
         Args:
             rules_data: List of rule dictionaries to import
@@ -1189,17 +1316,19 @@ class SchedulingService:
                     if field not in rule_data:
                         raise ValueError(f"Missing required field: {field}")
                 
-                # Check that either channel_id or channel_ids is provided
-                if 'channel_id' not in rule_data and 'channel_ids' not in rule_data:
-                    raise ValueError("Missing required field: channel_id or channel_ids")
+                # Check that either channel_id, channel_ids, or channel_group_ids is provided
+                if 'channel_id' not in rule_data and 'channel_ids' not in rule_data and 'channel_group_ids' not in rule_data:
+                    raise ValueError("Missing required field: channel_id, channel_ids, or channel_group_ids")
                 
-                # Normalize to channel_ids list
+                # Normalize to lists
                 if 'channel_ids' in rule_data:
-                    import_channel_ids = rule_data['channel_ids']
-                else:
-                    # Must have channel_id if channel_ids is not present
+                    import_channel_ids = list(rule_data['channel_ids'])
+                elif 'channel_id' in rule_data:
                     import_channel_ids = [rule_data['channel_id']]
+                else:
+                    import_channel_ids = []
                 
+                import_channel_group_ids = list(rule_data.get('channel_group_ids', []))
                 import_regex = rule_data['regex_pattern']
                 import_name = rule_data['name']
                 
@@ -1212,19 +1341,46 @@ class SchedulingService:
                             break
                     
                     if matching_rule:
-                        existing_channel_ids = set(matching_rule['channel_ids'])
+                        existing_channel_ids = set(matching_rule.get('channel_ids', []))
+                        existing_channel_group_ids = set(matching_rule.get('channel_group_ids', []))
                         import_channel_ids_set = set(import_channel_ids)
+                        import_channel_group_ids_set = set(import_channel_group_ids)
                         
-                        # Check if it's an exact match (same regex and same channels)
-                        if existing_channel_ids == import_channel_ids_set:
+                        # Check if it's an exact match (same regex, channels, and groups)
+                        if (existing_channel_ids == import_channel_ids_set and 
+                            existing_channel_group_ids == import_channel_group_ids_set):
                             # Replace: Update the name and other properties from imported rule
                             matching_rule['name'] = import_name
                             matching_rule['minutes_before'] = rule_data.get('minutes_before', 5)
                             
-                            # Update channel info
+                            # Refresh channel and group info
                             udi = get_udi_manager()
+                            
+                            # Update channel groups info
+                            channel_groups_info = []
+                            for group_id in import_channel_group_ids:
+                                group = udi.get_channel_group_by_id(group_id)
+                                if group:
+                                    group_channels = udi.get_channels_by_group(group_id)
+                                    channel_groups_info.append({
+                                        'id': group_id,
+                                        'name': group.get('name', ''),
+                                        'channel_count': len(group_channels) if group_channels else 0
+                                    })
+                            
+                            matching_rule['channel_groups_info'] = channel_groups_info
+                            
+                            # Expand all channels (individual + from groups)
+                            all_channel_ids = set(import_channel_ids)
+                            for group_id in import_channel_group_ids:
+                                group_channels = udi.get_channels_by_group(group_id)
+                                if group_channels:
+                                    for ch in group_channels:
+                                        all_channel_ids.add(ch['id'])
+                            
+                            # Update channels info
                             channels_info = []
-                            for channel_id in import_channel_ids:
+                            for channel_id in all_channel_ids:
                                 channel = udi.get_channel_by_id(channel_id)
                                 if channel:
                                     logo_id = channel.get('logo_id')

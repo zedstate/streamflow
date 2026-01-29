@@ -525,6 +525,58 @@ class UDIFetcher:
         logger.info(f"Fetched channel data for {len(profile_channels)} profiles")
         return profile_channels
     
+    def _process_channels_from_response(self, status_data: Any) -> Dict[str, Any]:
+        """Process proxy status response and extract channels as a dict.
+        
+        Handles the API response format:
+        - Standard format: {"channels": [...], "count": N}
+        
+        Args:
+            status_data: Raw response from the proxy status endpoint
+            
+        Returns:
+            Dictionary with channel_id -> status mapping
+        """
+        result = {}
+        
+        # Handle the API response format with nested channels array
+        if isinstance(status_data, dict) and 'channels' in status_data:
+            channels_list = status_data.get('channels', [])
+            if isinstance(channels_list, list):
+                for item in channels_list:
+                    if isinstance(item, dict) and 'channel_id' in item:
+                        result[str(item['channel_id'])] = item
+                logger.debug(f"Processed {len(result)} channels from proxy status")
+                return result
+        
+        logger.warning(f"Unexpected proxy status format: {type(status_data)}")
+        return result
+    
+    def fetch_proxy_status(self) -> Dict[str, Any]:
+        """Fetch real-time stream status from the proxy server.
+        
+        This fetches the actual running stream status from /proxy/ts/status endpoint,
+        which provides accurate information about which streams are currently active.
+        
+        The endpoint returns the format:
+        - Standard format: {"channels": [...], "count": N}
+        
+        Returns:
+            Dictionary with channel_id -> status mapping, or empty dict if unavailable
+        """
+        if not self.base_url:
+            logger.debug("DISPATCHARR_BASE_URL not set, cannot fetch proxy status")
+            return {}
+        
+        url = f"{self.base_url}/proxy/ts/status"
+        try:
+            status_data = self._fetch_url(url)
+            return self._process_channels_from_response(status_data)
+        except Exception as e:
+            logger.debug(f"Could not fetch proxy status: {e}")
+        
+        return {}
+    
     def refresh_all(self) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch all data from Dispatcharr.
         

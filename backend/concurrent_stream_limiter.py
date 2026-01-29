@@ -32,39 +32,70 @@ class AccountStreamLimiter:
     """
     Manages concurrent stream limits per M3U account.
     
-    Uses semaphores to enforce per-account concurrency limits while allowing
-    maximum parallelism across different accounts.
+    Uses tracking counters to enforce per-account concurrency limits while allowing
+    maximum parallelism across different accounts. Also considers active viewers
+    from the UDI when determining available slots.
+    
+    The limiter ensures: active_viewers + checking_streams <= max_streams
     """
     
-    def __init__(self):
-        """Initialize the account stream limiter."""
-        self.account_semaphores: Dict[int, threading.Semaphore] = {}
+    def __init__(self, udi_manager=None):
+        """Initialize the account stream limiter.
+        
+        Args:
+            udi_manager: Optional UDI manager instance for checking active viewers
+        """
         self.account_limits: Dict[int, int] = {}
+        self.account_checking_counts: Dict[int, int] = {}  # Track streams currently being checked
         self.lock = threading.Lock()
+        self.udi_manager = udi_manager
         logger.info("AccountStreamLimiter initialized")
     
-    def set_account_limit(self, account_id: int, max_streams: int):
+    def set_account_limit(self, account_id: int, max_streams: int, profiles: List[Dict[str, Any]] = None):
         """
         Set the maximum concurrent streams for an account.
         
+        This now supports M3U account profiles. If profiles are provided, the total
+        limit is calculated by summing the max_streams of all active profiles.
+        
         Args:
             account_id: M3U account ID
-            max_streams: Maximum concurrent streams (0 = unlimited)
+            max_streams: Maximum concurrent streams at account level (0 = unlimited)
+            profiles: Optional list of profile dictionaries with 'max_streams' and 'is_active' fields
         """
         with self.lock:
-            # Store the limit
-            self.account_limits[account_id] = max_streams
+            # Calculate total limit by summing active profile limits if profiles exist
+            total_limit = max_streams
+            if profiles:
+                # Sum up limits from all active profiles using generator expression
+                profile_total = sum(
+                    p.get('max_streams', 0) 
+                    for p in profiles 
+                    if p.get('is_active', True)
+                )
+                
+                # Use profile total if it's greater than account-level limit
+                # This handles the case where account has multiple profiles
+                if profile_total > 0:
+                    total_limit = profile_total
+                    active_profile_count = sum(1 for p in profiles if p.get('is_active', True))
+                    logger.debug(
+                        f"Account {account_id} has {active_profile_count} "
+                        f"active profile(s) with total limit: {total_limit}"
+                    )
             
-            # Create or update semaphore
-            if max_streams > 0:
-                # Create semaphore with the specified limit
-                self.account_semaphores[account_id] = threading.Semaphore(max_streams)
-                logger.debug(f"Set limit for account {account_id}: {max_streams} concurrent streams")
-            else:
-                # Unlimited - remove semaphore if it exists
-                if account_id in self.account_semaphores:
-                    del self.account_semaphores[account_id]
-                logger.debug(f"Set limit for account {account_id}: unlimited concurrent streams")
+            # Store the calculated limit
+            self.account_limits[account_id] = total_limit
+            
+            # Initialize checking count for this account
+            if account_id not in self.account_checking_counts:
+                self.account_checking_counts[account_id] = 0
+            
+            logger.debug(
+                f"Set limit for account {account_id}: {total_limit} concurrent streams" 
+                if total_limit > 0 
+                else f"Set limit for account {account_id}: unlimited concurrent streams"
+            )
     
     def get_account_limit(self, account_id: int) -> int:
         """
@@ -78,37 +109,111 @@ class AccountStreamLimiter:
         """
         return self.account_limits.get(account_id, 0)
     
-    def acquire(self, account_id: Optional[int], timeout: float = None) -> bool:
+    def get_available_slots(self, account_id: int) -> int:
+        """
+        Get the number of available stream slots for an account.
+        
+        Considers both active viewers (from UDI) and currently checking streams.
+        
+        Args:
+            account_id: M3U account ID
+            
+        Returns:
+            Number of available slots (0 if at limit, -1 if unlimited)
+        """
+        limit = self.get_account_limit(account_id)
+        
+        if limit == 0:
+            # Unlimited
+            return -1
+        
+        # Get active streams from UDI if available
+        active_count = 0
+        if self.udi_manager:
+            try:
+                active_count = self.udi_manager.get_active_streams_for_account(account_id)
+            except Exception as e:
+                logger.warning(f"Could not get active streams for account {account_id}: {e}")
+        
+        # Get currently checking streams
+        with self.lock:
+            checking_count = self.account_checking_counts.get(account_id, 0)
+        
+        # Available slots = limit - active streams - checking streams
+        available = limit - active_count - checking_count
+        return max(0, available)
+    
+    def acquire(self, account_id: Optional[int], timeout: float = None) -> tuple[bool, str]:
         """
         Acquire permission to check a stream from the given account.
+        
+        Considers active viewers (from UDI) when determining if a slot is available.
+        This ensures that: active_viewers + checking_streams <= max_streams
+        
+        Blocks/waits until a slot becomes available or timeout expires.
         
         Args:
             account_id: M3U account ID (None for custom streams)
             timeout: Maximum time to wait in seconds (None = wait forever)
             
         Returns:
-            True if acquired, False if timed out
+            Tuple of (acquired: bool, reason: str)
+            - (True, 'acquired') if slot was acquired
+            - (False, 'active_viewers') if limit reached due to active viewers and timeout
+            - (False, 'timeout') if timed out waiting for slot
         """
         if account_id is None:
             # Custom stream with no account - always allow
-            return True
+            return (True, 'acquired')
         
-        with self.lock:
-            semaphore = self.account_semaphores.get(account_id)
+        limit = self.get_account_limit(account_id)
+        if limit == 0:
+            # Unlimited - always allow
+            return (True, 'acquired')
         
-        if semaphore is None:
-            # No limit set for this account (or unlimited)
-            return True
+        # Poll for available slot with exponential backoff
+        start_time = time.time()
+        wait_time = 0.1  # Start with 100ms
+        max_wait = 2.0  # Max 2 seconds between checks
         
-        # Try to acquire the semaphore
-        acquired = semaphore.acquire(blocking=True, timeout=timeout)
-        
-        if acquired:
-            logger.debug(f"Acquired stream slot for account {account_id}")
-        else:
-            logger.warning(f"Timeout acquiring stream slot for account {account_id}")
-        
-        return acquired
+        while True:
+            # Get active streams from UDI if available
+            active_count = 0
+            if self.udi_manager:
+                try:
+                    active_count = self.udi_manager.get_active_streams_for_account(account_id)
+                except Exception as e:
+                    logger.warning(f"Could not get active streams for account {account_id}: {e}")
+            
+            # Check if we have available slots: active_viewers + checking_streams < max_streams
+            # We need to check this atomically with acquiring the semaphore
+            with self.lock:
+                checking_count = self.account_checking_counts.get(account_id, 0)
+                total_in_use = active_count + checking_count
+                
+                if total_in_use < limit:
+                    # We have a slot available, increment checking count
+                    self.account_checking_counts[account_id] = checking_count + 1
+                    logger.debug(
+                        f"Acquired stream slot for account {account_id} "
+                        f"({active_count} active + {checking_count + 1} checking = "
+                        f"{total_in_use + 1}/{limit})"
+                    )
+                    return (True, 'acquired')
+            
+            # No slot available, check timeout
+            if timeout is not None:
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    logger.warning(
+                        f"Timeout acquiring slot for account {account_id} after {elapsed:.1f}s "
+                        f"({active_count} active + {checking_count} checking = {total_in_use}/{limit})"
+                    )
+                    return (False, 'timeout')
+            
+            # Wait before retrying (exponential backoff)
+            time.sleep(wait_time)
+            wait_time = min(wait_time * 1.5, max_wait)
     
     def release(self, account_id: Optional[int]):
         """
@@ -121,18 +226,30 @@ class AccountStreamLimiter:
             # Custom stream with no account - nothing to release
             return
         
-        with self.lock:
-            semaphore = self.account_semaphores.get(account_id)
+        limit = self.get_account_limit(account_id)
+        if limit == 0:
+            # Unlimited account - nothing to track or release
+            return
         
-        if semaphore is not None:
-            semaphore.release()
-            logger.debug(f"Released stream slot for account {account_id}")
+        with self.lock:
+            checking_count = self.account_checking_counts.get(account_id, 0)
+            if checking_count > 0:
+                self.account_checking_counts[account_id] = checking_count - 1
+                logger.debug(
+                    f"Released stream slot for account {account_id} "
+                    f"(now {self.account_checking_counts[account_id]} checking)"
+                )
+            else:
+                logger.warning(
+                    f"Attempted to release slot for account {account_id} "
+                    f"but checking count is already 0"
+                )
     
     def clear(self):
-        """Clear all account limits and semaphores."""
+        """Clear all account limits and checking counts."""
         with self.lock:
-            self.account_semaphores.clear()
             self.account_limits.clear()
+            self.account_checking_counts.clear()
         logger.info("Cleared all account limits")
 
 
@@ -211,20 +328,80 @@ class SmartStreamScheduler:
             futures: Dict[Future, Dict[str, Any]] = {}
             
             def submit_stream_check(stream: Dict[str, Any]):
-                """Submit a stream check with account limit enforcement."""
+                """Submit a stream check with profile-aware limit enforcement."""
                 account_id = stream.get('m3u_account')
                 
+                # Check if stream can run using profile-aware checking
+                # This replaces the old account-level acquire/release with per-profile awareness
+                if account_id and self.account_limiter.udi_manager:
+                    can_run, reason = self.account_limiter.udi_manager.check_stream_can_run(stream)
+                    
+                    if not can_run:
+                        logger.info(f"Skipping check for stream {stream['id']}: {reason}, using cached stats")
+                        
+                        # Get cached stream stats from UDI
+                        try:
+                            cached_stream = self.account_limiter.udi_manager.get_stream_by_id(stream['id'])
+                            if cached_stream and cached_stream.get('stream_stats'):
+                                # Return a result with cached stats
+                                return {
+                                    'stream_id': stream['id'],
+                                    'stream_name': stream.get('name', 'Unknown'),
+                                    'stream_url': stream.get('url', ''),
+                                    'cached': True,
+                                    'skipped_reason': 'no_available_profile',
+                                    'reason_detail': reason,
+                                    **cached_stream.get('stream_stats', {})
+                                }
+                            else:
+                                logger.warning(f"No cached stats available for stream {stream['id']}, skipping")
+                        except Exception as e:
+                            logger.error(f"Error retrieving cached stats for stream {stream['id']}: {e}")
+                        return None
+                
                 # Acquire account slot before submitting to executor
-                # This ensures we don't exceed per-account limits
-                if not self.account_limiter.acquire(account_id, timeout=300):
-                    logger.error(f"Timeout acquiring slot for account {account_id}, skipping stream {stream['id']}")
-                    return None
+                # This ensures we don't exceed per-account limits at a global level
+                acquired, reason = self.account_limiter.acquire(account_id, timeout=300)
+                
+                if not acquired:
+                    if reason == 'active_viewers':
+                        # Quota fully consumed by active viewers - use cached stats
+                        logger.info(f"Skipping check for stream {stream['id']} - quota consumed by active viewers, using cached stats")
+                        
+                        # Get cached stream stats from UDI
+                        if self.account_limiter.udi_manager:
+                            try:
+                                cached_stream = self.account_limiter.udi_manager.get_stream_by_id(stream['id'])
+                                if cached_stream and cached_stream.get('stream_stats'):
+                                    # Return a result with cached stats
+                                    return {
+                                        'stream_id': stream['id'],
+                                        'stream_name': stream.get('name', 'Unknown'),
+                                        'stream_url': stream.get('url', ''),
+                                        'cached': True,
+                                        'skipped_reason': 'quota_consumed_by_active_viewers',
+                                        **cached_stream.get('stream_stats', {})
+                                    }
+                                else:
+                                    logger.warning(f"No cached stats available for stream {stream['id']}, skipping")
+                            except Exception as e:
+                                logger.error(f"Error retrieving cached stats for stream {stream['id']}: {e}")
+                        return None
+                    else:
+                        # Timeout - skip stream
+                        logger.error(f"Timeout acquiring slot for account {account_id}, skipping stream {stream['id']}")
+                        return None
                 
                 def wrapped_check():
                     """Wrapper that ensures semaphore is released."""
                     try:
+                        # Apply URL transformation if using M3U profile with search/replace patterns
+                        stream_url = stream.get('url', '')
+                        if self.account_limiter.udi_manager:
+                            stream_url = self.account_limiter.udi_manager.apply_profile_url_transformation(stream)
+                        
                         result = check_function(
-                            stream_url=stream.get('url', ''),
+                            stream_url=stream_url,
                             stream_id=stream['id'],
                             stream_name=stream.get('name', 'Unknown'),
                             **check_params
@@ -243,10 +420,18 @@ class SmartStreamScheduler:
                 if stagger_delay > 0 and futures:
                     time.sleep(stagger_delay)
                 
-                future = submit_stream_check(stream)
-                if future is not None:
-                    futures[future] = stream
-                    logger.debug(f"Submitted stream {stream['id']} for checking")
+                future_or_result = submit_stream_check(stream)
+                if future_or_result is not None:
+                    if isinstance(future_or_result, dict):
+                        # This is a cached result, not a future
+                        with lock:
+                            results.append(future_or_result)
+                            completed_count += 1
+                        logger.debug(f"Using cached stats for stream {stream['id']}")
+                    else:
+                        # This is a future for async check
+                        futures[future_or_result] = stream
+                        logger.debug(f"Submitted stream {stream['id']} for checking")
             
             # Process completed tasks as they finish (in completion order for better parallelism)
             from concurrent.futures import as_completed
@@ -310,7 +495,10 @@ def get_account_limiter() -> AccountStreamLimiter:
     global _account_limiter
     with _limiter_lock:
         if _account_limiter is None:
-            _account_limiter = AccountStreamLimiter()
+            # Import UDI manager here to avoid circular imports
+            from udi import get_udi_manager
+            udi_manager = get_udi_manager()
+            _account_limiter = AccountStreamLimiter(udi_manager=udi_manager)
         return _account_limiter
 
 
@@ -336,16 +524,25 @@ def initialize_account_limits(accounts: List[Dict[str, Any]]):
     """
     Initialize account limits from M3U account data.
     
+    NOTE: This function now works in conjunction with profile-aware checking.
+    The limits set here are used as a fallback/global cap, but the primary
+    limit enforcement is done per-profile via UDI's check_stream_can_run().
+    
+    When profiles are present, the total limit is calculated by summing max_streams
+    from all active profiles to provide a global upper bound for the account.
+    However, actual stream checking uses profile-specific availability.
+    
     Args:
-        accounts: List of M3U account dictionaries with 'id' and 'max_streams' fields
+        accounts: List of M3U account dictionaries with 'id', 'max_streams', and optionally 'profiles' fields
     """
     limiter = get_account_limiter()
     
     for account in accounts:
         account_id = account.get('id')
         max_streams = account.get('max_streams', 0)
+        profiles = account.get('profiles', [])
         
         if account_id is not None:
-            limiter.set_account_limit(account_id, max_streams)
+            limiter.set_account_limit(account_id, max_streams, profiles)
     
-    logger.info(f"Initialized limits for {len(accounts)} accounts")
+    logger.info(f"Initialized limits for {len(accounts)} accounts (profile-aware checking enabled)")

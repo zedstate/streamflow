@@ -53,12 +53,13 @@ See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation
 - Updates channels immediately when M3U refreshes
 - Tracks update history in changelog
 - **M3U Priority System**: Configure stream selection priority
-  - **Global Priority Mode**: Single mode applies to all M3U accounts
+  - **Global Priority Mode**: Default mode that applies to all M3U accounts unless overridden
     - Disabled: Priority ignored, streams selected by quality only
     - Same Resolution Only: Priority applied within same resolution groups
     - All Streams: Always prefer higher priority accounts regardless of quality
-  - Per-account priority values (0-100)
-  - Priority fields disabled when mode is "disabled"
+  - Per-account priority values (0-100) set in Dispatcharr
+  - Per-account priority mode override (optional): Can override global setting for specific accounts
+  - Priority fields disabled when global mode is "disabled"
   - Only enabled/active playlists shown in priority UI
 
 ### Intelligent Stream Quality Checking
@@ -86,10 +87,45 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - Preserves stream availability
 
 ### Stream Discovery
-- Regex pattern matching for automatic assignment
-- New stream detection on playlist refresh
-- Automatic channel assignment based on patterns
-- Pattern testing interface
+- **Regex Pattern Matching**: Automatic stream-to-channel assignment based on patterns
+  - **Automatic Validation**: Invalid regex patterns are automatically detected and removed on load
+  - **Self-Healing Configuration**: Corrupted patterns won't persist across restarts
+  - **Clear Error Messages**: Log warnings indicate which patterns were removed and why
+  - **Per-Pattern M3U Account Filtering**: Each regex pattern can be restricted to specific M3U account sources
+    - Granular control over which patterns match streams from which sources
+    - Backward compatible with channel-level M3U account filtering
+    - Automatic migration from old format to new format
+- **Table-Based Interface**: Clean, sortable table layout for managing regex patterns across channels
+- **Mass Assignment**: Add a single regex pattern to multiple channels at once
+  - Multi-select channels with checkboxes
+  - Select All/Deselect All functionality
+  - Group filtering to show only channels from specific groups
+  - Group sorting for organized view
+- **Batch Regex Edit Window**: Advanced pattern management across multiple channels
+  - **Search and Filter**: Quickly find patterns using text search
+  - **Multi-Select with Checkboxes**: Select individual patterns or use "Select All"
+  - **Smart Select All**: When searching, "Select All" only selects visible/filtered results
+  - **Individual Delete**: Delete specific patterns with individual delete buttons
+  - **Bulk Delete**: Delete multiple selected patterns at once
+  - **Inline Editing**: Edit patterns directly in the batch window
+  - Displays usage statistics showing how many channels use each pattern
+- **Channel Name Variables**: Use `CHANNEL_NAME` in patterns to create reusable regex rules
+  - Pattern example: `.*CHANNEL_NAME.*` matches any stream containing the channel name
+  - One pattern works for multiple channels with different names
+  - Variables are substituted at match time, not storage time
+  - **Resilient Design**: Fully supports channel names with special characters (+, ., *, [], (), |, etc.), unicode, and emoji
+  - **Security**: Automatic escaping prevents regex injection attacks
+  - **Note**: Patterns with `CHANNEL_NAME` are fully supported in validation, live preview, and actual matching
+- **Pattern Testing Interface**: Live testing of patterns against available streams
+- **Pattern Import/Export**: Share regex configurations across installations
+- **New Stream Detection**: Automatically detects and assigns new streams on playlist refresh
+- **No Page Reload**: Pattern edits update instantly without losing scroll position or UI state
+- **Health Check Buttons**: Quick access to stream quality checks
+  - Individual channel health check button with Activity icon next to expand/collapse
+  - Bulk health check for all selected channels
+  - Color-coded buttons: blue in light mode, green in dark mode
+  - Loading states with spinner animations
+  - Tooltip guidance for better UX
 
 ## Quality Analysis
 
@@ -494,12 +530,29 @@ Schedule channel checks to run before EPG program events for optimal stream qual
 ### User Workflow - Auto-Create Rules
 1. Navigate to Scheduling section in the UI
 2. Click "Create Auto-Create Rule" button
-3. Configure rule name, channel, and regex pattern
-4. Test pattern against live EPG data (optional)
-5. Set minutes before program start
-6. Save the rule
-7. Events are automatically created as EPG refreshes
-8. No further action required!
+3. Configure rule name
+4. Select channels:
+   - **Individual Channels**: Choose specific channels from the dropdown
+   - **Channel Groups**: Select entire channel groups (automatically includes all current and future channels in the group)
+   - **Mixed Selection**: Combine both individual channels and channel groups in a single rule
+5. Define regex pattern to match program titles
+6. Test pattern against live EPG data (optional)
+7. Set minutes before program start for the check
+8. Save the rule
+9. Events are automatically created as EPG refreshes
+10. New channels added to selected groups are automatically included - no updates required!
+
+**Benefits of Channel Groups:**
+- Automatically applies rules to all channels in a group
+- New channels added to the group are included automatically
+- No manual updates needed when channels change
+- Perfect for dynamic channel groups (e.g., sports event channels created by Teamarr)
+
+**Example Use Case:**
+- Create a rule for "NBA Teamarr" channel group
+- Use regex pattern: `(?i)^(?:coming up:\s*)?NBA Basketball`
+- All NBA event channels get pre-event stream checks automatically
+- When Teamarr creates new event channels, they're included without updates
 
 ## API Integration
 

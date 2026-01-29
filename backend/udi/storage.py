@@ -361,9 +361,21 @@ class UDIStorage:
         """
         with self._profile_channels_lock:
             data = self._load_json(self.profile_channels_file)
-            # Convert string keys back to integers
+            # Convert string keys back to integers and validate values are dictionaries
             if isinstance(data, dict):
-                return {int(k): v for k, v in data.items() if k.isdigit() or isinstance(k, int)}
+                result = {}
+                for k, v in data.items():
+                    try:
+                        # Convert key to integer
+                        key = int(k) if isinstance(k, str) else k
+                        # Validate value is a dictionary, skip if not
+                        if isinstance(v, dict):
+                            result[key] = v
+                        else:
+                            logger.warning(f"Skipping invalid profile_channels data for profile {k}: value is {type(v).__name__}, not dict")
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Skipping invalid profile_channels key {k}: {e}")
+                return result
             return {}
     
     def save_profile_channels(self, profile_channels: Dict[int, Dict[str, Any]]) -> bool:

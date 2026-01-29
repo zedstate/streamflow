@@ -34,6 +34,11 @@ class TestAccountStreamLimiter(unittest.TestCase):
         """Set up test fixtures."""
         self.limiter = AccountStreamLimiter()
     
+    def _acquire(self, account_id, timeout=None):
+        """Helper to acquire and return just the boolean result."""
+        acquired, _ = self.limiter.acquire(account_id, timeout=timeout)
+        return acquired
+    
     def test_set_account_limit(self):
         """Test setting account limits."""
         self.limiter.set_account_limit(1, 2)
@@ -48,7 +53,7 @@ class TestAccountStreamLimiter(unittest.TestCase):
         
         # Should be able to acquire many times
         for _ in range(100):
-            self.assertTrue(self.limiter.acquire(1))
+            self.assertTrue(self._acquire(1))
         
         # Releases should not fail
         for _ in range(100):
@@ -59,29 +64,29 @@ class TestAccountStreamLimiter(unittest.TestCase):
         self.limiter.set_account_limit(1, 1)
         
         # First acquire should succeed
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
         
         # Second acquire should timeout
-        self.assertFalse(self.limiter.acquire(1, timeout=0.1))
+        self.assertFalse(self._acquire(1, timeout=0.1))
         
         # After release, should be able to acquire again
         self.limiter.release(1)
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
     
     def test_multiple_stream_limit(self):
         """Test account with max_streams=2."""
         self.limiter.set_account_limit(1, 2)
         
         # First two acquires should succeed
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
         
         # Third acquire should timeout
-        self.assertFalse(self.limiter.acquire(1, timeout=0.1))
+        self.assertFalse(self._acquire(1, timeout=0.1))
         
         # After one release, should be able to acquire one more
         self.limiter.release(1)
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
     
     def test_multiple_accounts_independent(self):
         """Test that different accounts have independent limits."""
@@ -89,19 +94,19 @@ class TestAccountStreamLimiter(unittest.TestCase):
         self.limiter.set_account_limit(2, 2)
         
         # Account 1: max 1 stream
-        self.assertTrue(self.limiter.acquire(1, timeout=0.1))
-        self.assertFalse(self.limiter.acquire(1, timeout=0.1))
+        self.assertTrue(self._acquire(1, timeout=0.1))
+        self.assertFalse(self._acquire(1, timeout=0.1))
         
         # Account 2: max 2 streams (should still work)
-        self.assertTrue(self.limiter.acquire(2, timeout=0.1))
-        self.assertTrue(self.limiter.acquire(2, timeout=0.1))
-        self.assertFalse(self.limiter.acquire(2, timeout=0.1))
+        self.assertTrue(self._acquire(2, timeout=0.1))
+        self.assertTrue(self._acquire(2, timeout=0.1))
+        self.assertFalse(self._acquire(2, timeout=0.1))
     
     def test_custom_stream_always_allowed(self):
         """Test that custom streams (None account) are always allowed."""
         # Even without setting any limits
         for _ in range(100):
-            self.assertTrue(self.limiter.acquire(None))
+            self.assertTrue(self._acquire(None))
         
         # Releases should not fail
         for _ in range(100):
@@ -299,6 +304,62 @@ class TestSmartStreamScheduler(unittest.TestCase):
         # Overall, should be able to run 3 streams concurrently (A1+B1+B2)
         self.assertEqual(max_concurrent[0], 3)
     
+    def test_active_viewers_limit_concurrent_checks(self):
+        """Test that active viewers reduce available slots for concurrent checks.
+        
+        This is the scenario from the problem statement:
+        - M3U account has max_streams=2
+        - 1 stream is currently being played (active viewer)
+        - Channel check runs with concurrent checking enabled
+        - Only 1 stream should be checked at a time (respecting the limit)
+        """
+        # Create a mock UDI manager that reports 1 active stream
+        mock_udi = Mock()
+        mock_udi.get_active_streams_for_account.return_value = 1
+        # Mock the new profile-aware checking to always allow (let the limiter handle it)
+        mock_udi.check_stream_can_run.return_value = (True, None)
+        
+        # Create limiter with mock UDI
+        limiter = AccountStreamLimiter(udi_manager=mock_udi)
+        limiter.set_account_limit(1, 2)  # max_streams=2
+        
+        scheduler = SmartStreamScheduler(limiter, global_limit=10)
+        
+        max_concurrent = [0]
+        current_concurrent = [0]
+        lock = threading.Lock()
+        
+        def mock_check(**kwargs):
+            with lock:
+                current_concurrent[0] += 1
+                if current_concurrent[0] > max_concurrent[0]:
+                    max_concurrent[0] = current_concurrent[0]
+            
+            time.sleep(0.2)  # Simulate work
+            
+            with lock:
+                current_concurrent[0] -= 1
+            
+            return {'stream_id': kwargs['stream_id'], 'status': 'OK'}
+        
+        # All streams from the same account
+        streams = [
+            {'id': 1, 'name': 'Stream 1', 'url': 'http://test.com/1', 'm3u_account': 1},
+            {'id': 2, 'name': 'Stream 2', 'url': 'http://test.com/2', 'm3u_account': 1},
+            {'id': 3, 'name': 'Stream 3', 'url': 'http://test.com/3', 'm3u_account': 1},
+        ]
+        
+        results = scheduler.check_streams_with_limits(
+            streams=streams,
+            check_function=mock_check
+        )
+        
+        self.assertEqual(len(results), 3)
+        # With 1 active viewer and max_streams=2, only 1 check should run at a time
+        # (1 active + 1 checking = 2/2 limit)
+        self.assertEqual(max_concurrent[0], 1, 
+                        "Should only check 1 stream at a time when 1 active viewer exists")
+    
     def test_progress_callback(self):
         """Test that progress callback is called correctly."""
         self.limiter.set_account_limit(1, 2)
@@ -362,6 +423,226 @@ class TestInitializeAccountLimits(unittest.TestCase):
         self.assertEqual(limiter.get_account_limit(1), 1)
         self.assertEqual(limiter.get_account_limit(2), 2)
         self.assertEqual(limiter.get_account_limit(3), 0)
+    
+    def test_initialize_account_with_profiles(self):
+        """Test initializing account with multiple profiles - should sum profile limits."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        # Account DE-00 has max_streams=1 but has 2 active profiles with 1 stream each
+        # Total should be 2 (sum of profile limits)
+        accounts = [
+            {
+                'id': 26,
+                'name': 'DE-00',
+                'max_streams': 1,
+                'profiles': [
+                    {'id': 38, 'name': 'D4 - 01', 'max_streams': 1, 'is_active': True},
+                    {'id': 27, 'name': 'D4 - 00', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should be 2 (sum of two profile limits), not 1 (account-level limit)
+        self.assertEqual(limiter.get_account_limit(26), 2)
+    
+    def test_initialize_account_with_inactive_profile(self):
+        """Test that inactive profiles are excluded from limit calculation."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        accounts = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'max_streams': 1,
+                'profiles': [
+                    {'id': 1, 'name': 'Profile 1', 'max_streams': 2, 'is_active': True},
+                    {'id': 2, 'name': 'Profile 2', 'max_streams': 3, 'is_active': False}  # Inactive
+                ]
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should only count the active profile (2), not the inactive one (3)
+        self.assertEqual(limiter.get_account_limit(1), 2)
+    
+    def test_initialize_account_with_no_profiles(self):
+        """Test account without profiles uses account-level limit."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        accounts = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'max_streams': 5,
+                'profiles': []  # No profiles
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should use account-level limit
+        self.assertEqual(limiter.get_account_limit(1), 5)
+    
+    def test_initialize_account_profile_limit_higher_than_account(self):
+        """Test that profile limit sum is used when higher than account limit."""
+        limiter = get_account_limiter()
+        limiter.clear()
+        
+        accounts = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'max_streams': 1,  # Account says 1
+                'profiles': [
+                    {'id': 1, 'name': 'Profile 1', 'max_streams': 3, 'is_active': True},
+                    {'id': 2, 'name': 'Profile 2', 'max_streams': 2, 'is_active': True}
+                ]
+                # Total profile limit = 5, which is > account limit of 1
+            }
+        ]
+        
+        initialize_account_limits(accounts)
+        
+        # Should use profile sum (5), not account limit (1)
+        self.assertEqual(limiter.get_account_limit(1), 5)
+
+
+class TestProfileAwareStreamChecking(unittest.TestCase):
+    """Test cases for profile-aware stream checking via UDI."""
+    
+    def test_find_available_profile_with_free_slots(self):
+        """Test finding an available profile when one has free slots."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 2, 'is_active': True},
+                    {'id': 11, 'name': 'Profile 2', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage (Profile 1 has 1/2 slots used, Profile 2 has 0/1)
+        def mock_get_usage(account_id):
+            if account_id == 1:
+                return {10: 1, 11: 0}  # Profile 10 has 1 active, Profile 11 has 0
+            return {}
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        # Test stream with account 1
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        profile = udi.find_available_profile_for_stream(stream)
+        
+        # Should find Profile 1 (first available)
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile['id'], 10)
+    
+    def test_find_available_profile_all_at_capacity(self):
+        """Test that no profile is returned when all are at capacity."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 1, 'is_active': True},
+                    {'id': 11, 'name': 'Profile 2', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage (both profiles at capacity)
+        def mock_get_usage(account_id):
+            if account_id == 1:
+                return {10: 1, 11: 1}  # Both at 1/1
+            return {}
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        # Test stream with account 1
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        profile = udi.find_available_profile_for_stream(stream)
+        
+        # Should return None (all at capacity)
+        self.assertIsNone(profile)
+    
+    def test_check_stream_can_run_with_available_profile(self):
+        """Test stream can run check when profile is available."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 2, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage
+        def mock_get_usage(account_id):
+            return {10: 0}  # No active streams
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        can_run, reason = udi.check_stream_can_run(stream)
+        
+        # Should be able to run
+        self.assertTrue(can_run)
+        self.assertIsNone(reason)
+    
+    def test_check_stream_can_run_all_profiles_at_capacity(self):
+        """Test stream cannot run when all profiles are at capacity."""
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Mock the UDI data
+        udi._m3u_accounts_cache = [
+            {
+                'id': 1,
+                'name': 'Test Account',
+                'profiles': [
+                    {'id': 10, 'name': 'Profile 1', 'max_streams': 1, 'is_active': True}
+                ]
+            }
+        ]
+        
+        # Mock profile usage (at capacity)
+        def mock_get_usage(account_id):
+            return {10: 1}  # 1/1 active
+        
+        udi.get_active_streams_count_per_profile = mock_get_usage
+        
+        stream = {'id': 100, 'm3u_account': 1, 'url': 'http://example.com/stream'}
+        
+        can_run, reason = udi.check_stream_can_run(stream)
+        
+        # Should not be able to run
+        self.assertFalse(can_run)
+        self.assertIsNotNone(reason)
+        self.assertIn('Test Account', reason)
 
 
 if __name__ == '__main__':

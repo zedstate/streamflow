@@ -12,6 +12,14 @@ import { Loader2, AlertCircle, CheckCircle2, Trash2, Plus } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamCheckerAPI, dispatcharrAPI } from '@/services/api.js'
 
+// Default values for automation controls
+const DEFAULT_AUTOMATION_CONTROLS = {
+  auto_m3u_updates: true,
+  auto_stream_matching: true,
+  auto_quality_checking: true,
+  scheduled_global_action: false
+}
+
 export default function AutomationSettings() {
   const [config, setConfig] = useState(null)
   const [streamCheckerConfig, setStreamCheckerConfig] = useState(null)
@@ -184,25 +192,32 @@ export default function AutomationSettings() {
     )
   }
 
-  const pipelineMode = streamCheckerConfig?.pipeline_mode
+  const automationControls = streamCheckerConfig?.automation_controls || {}
   
-  // Determine which settings to show based on pipeline mode
-  const showScheduleSettings = ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3'].includes(pipelineMode)
-  const showUpdateInterval = ['pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5'].includes(pipelineMode)
+  // Always use individual controls (legacy pipeline mode no longer supported)
+  const usingIndividualControls = true
+  
+  // Determine which settings to show based on pipeline mode or individual controls
+  const showScheduleSettings = usingIndividualControls 
+    ? automationControls.scheduled_global_action
+    : ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3'].includes(pipelineMode)
+  const showUpdateInterval = usingIndividualControls
+    ? automationControls.auto_m3u_updates
+    : ['pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5'].includes(pipelineMode)
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Automation Settings</h1>
         <p className="text-muted-foreground">
-          Configure Dispatcharr connection, pipeline mode, scheduling, and automation parameters
+          Configure Dispatcharr connection, automation features, scheduling, and parameters
         </p>
       </div>
 
       <Tabs defaultValue="connection" className="w-full">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="connection">Connection</TabsTrigger>
-          <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
+          <TabsTrigger value="automation">Automation</TabsTrigger>
           <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
           <TabsTrigger value="queue">Queue</TabsTrigger>
         </TabsList>
@@ -292,162 +307,112 @@ export default function AutomationSettings() {
           </div>
         </TabsContent>
         
-        <TabsContent value="pipeline" className="space-y-6">
-          {/* Pipeline Selection */}
+        <TabsContent value="automation" className="space-y-6">
+          {/* Individual Automation Controls */}
           <Card>
             <CardHeader>
-              <CardTitle>Pipeline Selection</CardTitle>
+              <CardTitle>Automation Features</CardTitle>
               <CardDescription>
-                Select the automation pipeline that best fits your needs. Each pipeline determines when and how streams are checked.
+                Enable or disable individual automation features. Toggle each feature independently to customize your automation workflow.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <RadioGroup
-                value={pipelineMode}
-                onValueChange={(value) => handleStreamCheckerConfigChange('pipeline_mode', value)}
-                className="space-y-3"
-              >
-                {/* Disabled */}
-                <Card className={`${pipelineMode === 'disabled' ? 'ring-2 ring-destructive' : ''}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start space-x-3">
-                      <RadioGroupItem value="disabled" id="disabled" />
-                      <div className="flex-1">
-                        <Label htmlFor="disabled" className="text-base font-semibold">Disabled</Label>
-                        <p className="text-sm text-muted-foreground mt-1">Features:</p>
-                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 space-y-1">
-                          <li>Complete automation system disabled</li>
-                          <li>No automatic updates, matching, or checking</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+            <CardContent className="space-y-6">
+              {/* Auto M3U Updates */}
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="auto_m3u_updates" className="text-base font-semibold cursor-pointer">
+                      Automatic M3U Updates
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically refresh M3U playlists from configured sources at the specified interval or schedule.
+                  </p>
+                </div>
+                <Switch
+                  id="auto_m3u_updates"
+                  checked={automationControls.auto_m3u_updates ?? DEFAULT_AUTOMATION_CONTROLS.auto_m3u_updates}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.auto_m3u_updates', checked)}
+                />
+              </div>
 
-                {/* Pipeline 1 */}
-                <Card className={`${pipelineMode === 'pipeline_1' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start space-x-3">
-                      <RadioGroupItem value="pipeline_1" id="pipeline_1" />
-                      <div className="flex-1">
-                        <Label htmlFor="pipeline_1" className="text-base font-semibold">Pipeline 1: Update → Match → Check (with 2hr immunity)</Label>
-                        <p className="text-sm text-muted-foreground mt-1">Features:</p>
-                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 space-y-1">
-                          <li>Automatic M3U updates</li>
-                          <li>Stream matching</li>
-                          <li>Quality checking with 2-hour immunity</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              {/* Auto Stream Matching */}
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="auto_stream_matching" className="text-base font-semibold cursor-pointer">
+                      Automatic Stream Matching
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically match streams to channels using configured regex patterns whenever new streams are discovered.
+                  </p>
+                </div>
+                <Switch
+                  id="auto_stream_matching"
+                  checked={automationControls.auto_stream_matching ?? DEFAULT_AUTOMATION_CONTROLS.auto_stream_matching}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.auto_stream_matching', checked)}
+                />
+              </div>
 
-                {/* Pipeline 1.5 */}
-                <Card className={`${pipelineMode === 'pipeline_1_5' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start space-x-3">
-                      <RadioGroupItem value="pipeline_1_5" id="pipeline_1_5" />
-                      <div className="flex-1">
-                        <Label htmlFor="pipeline_1_5" className="text-base font-semibold">Pipeline 1.5: Pipeline 1 + Scheduled Global Action</Label>
-                        <p className="text-sm text-muted-foreground mt-1">Features:</p>
-                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 space-y-1">
-                          <li>Automatic M3U updates</li>
-                          <li>Stream matching</li>
-                          <li>Quality checking with 2-hour immunity</li>
-                          <li>Scheduled Global Action (daily/monthly)</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              {/* Auto Quality Checking */}
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="auto_quality_checking" className="text-base font-semibold cursor-pointer">
+                      Automatic Quality Checking
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically analyze stream quality (bitrate, resolution, FPS) and reorder streams when channels receive updates. Includes 2-hour immunity to prevent excessive checking.
+                  </p>
+                </div>
+                <Switch
+                  id="auto_quality_checking"
+                  checked={automationControls.auto_quality_checking ?? DEFAULT_AUTOMATION_CONTROLS.auto_quality_checking}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.auto_quality_checking', checked)}
+                />
+              </div>
 
-                {/* Pipeline 2 */}
-                <Card className={`${pipelineMode === 'pipeline_2' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start space-x-3">
-                      <RadioGroupItem value="pipeline_2" id="pipeline_2" />
-                      <div className="flex-1">
-                        <Label htmlFor="pipeline_2" className="text-base font-semibold">Pipeline 2: Update → Match only (no automatic checking)</Label>
-                        <p className="text-sm text-muted-foreground mt-1">Features:</p>
-                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 space-y-1">
-                          <li>Automatic M3U updates</li>
-                          <li>Stream matching</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              {/* Scheduled Global Action */}
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="scheduled_global_action" className="text-base font-semibold cursor-pointer">
+                      Scheduled Global Action
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Run a complete automation cycle (Update → Match → Check all channels) on a scheduled basis, bypassing the 2-hour immunity. Configure the schedule in the Scheduling tab.
+                  </p>
+                </div>
+                <Switch
+                  id="scheduled_global_action"
+                  checked={automationControls.scheduled_global_action ?? DEFAULT_AUTOMATION_CONTROLS.scheduled_global_action}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.scheduled_global_action', checked)}
+                />
+              </div>
 
-                {/* Pipeline 2.5 */}
-                <Card className={`${pipelineMode === 'pipeline_2_5' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start space-x-3">
-                      <RadioGroupItem value="pipeline_2_5" id="pipeline_2_5" />
-                      <div className="flex-1">
-                        <Label htmlFor="pipeline_2_5" className="text-base font-semibold">Pipeline 2.5: Pipeline 2 + Scheduled Global Action</Label>
-                        <p className="text-sm text-muted-foreground mt-1">Features:</p>
-                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 space-y-1">
-                          <li>Automatic M3U updates</li>
-                          <li>Stream matching</li>
-                          <li>Scheduled Global Action (daily/monthly)</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Pipeline 3 */}
-                <Card className={`${pipelineMode === 'pipeline_3' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start space-x-3">
-                      <RadioGroupItem value="pipeline_3" id="pipeline_3" />
-                      <div className="flex-1">
-                        <Label htmlFor="pipeline_3" className="text-base font-semibold">Pipeline 3: Only Scheduled Global Action</Label>
-                        <p className="text-sm text-muted-foreground mt-1">Features:</p>
-                        <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 space-y-1">
-                          <li>Scheduled Global Action ONLY (daily/monthly)</li>
-                          <li>NO automatic updates or checking</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </RadioGroup>
+              {/* Remove Non-Matching Streams */}
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="remove_non_matching_streams" className="text-base font-semibold cursor-pointer">
+                      Remove Non-Matching Streams
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically remove streams from channels if they no longer match the configured regex patterns. Useful when providers change stream names but keep the same URLs.
+                  </p>
+                </div>
+                <Switch
+                  id="remove_non_matching_streams"
+                  checked={automationControls.remove_non_matching_streams ?? false}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.remove_non_matching_streams', checked)}
+                />
+              </div>
             </CardContent>
           </Card>
-
-          {/* No Active Pipeline Warning */}
-          {(pipelineMode === null || pipelineMode === undefined || pipelineMode === '') && (
-            <Alert variant="warning">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>No Active Pipeline</AlertTitle>
-              <AlertDescription>
-                Please select a pipeline above to configure automation settings. All configuration options will appear once a pipeline is selected.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Disabled Mode Warning */}
-          {pipelineMode === 'disabled' && (
-            <Alert variant="warning">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Automation System Disabled</AlertTitle>
-              <AlertDescription>
-                The complete automation system is currently disabled. No automatic updates, stream matching, or quality checking will occur. Select a pipeline above to enable automation.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Stream Checker Service Info */}
-          {pipelineMode && pipelineMode !== 'disabled' && (
-            <Alert>
-              <CheckCircle2 className="h-4 w-4" />
-              <AlertTitle>Stream Checker Service</AlertTitle>
-              <AlertDescription>
-                The stream checker service automatically starts when the application launches with a pipeline other than "Disabled" selected.
-              </AlertDescription>
-            </Alert>
-          )}
 
           {/* Save Button */}
           <div className="flex justify-end">
@@ -606,7 +571,7 @@ export default function AutomationSettings() {
         
         <TabsContent value="queue" className="space-y-6">
           {/* Queue Settings */}
-          {pipelineMode && pipelineMode !== 'disabled' && (
+          {(usingIndividualControls ? (automationControls.auto_quality_checking || automationControls.scheduled_global_action) : (pipelineMode && pipelineMode !== 'disabled')) && (
             <Card>
               <CardHeader>
                 <CardTitle>Queue Settings</CardTitle>
@@ -654,12 +619,12 @@ export default function AutomationSettings() {
             </Card>
           )}
 
-          {(!pipelineMode || pipelineMode === 'disabled') && (
+          {(usingIndividualControls ? (!automationControls.auto_quality_checking && !automationControls.scheduled_global_action) : (!pipelineMode || pipelineMode === 'disabled')) && (
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>No Queue Settings</AlertTitle>
               <AlertDescription>
-                Queue settings are not available when automation is disabled. Please select an active pipeline to configure queue settings.
+                Queue settings are not available when both automatic quality checking and scheduled global action are disabled. Enable at least one of these features in the Automation tab to configure queue settings.
               </AlertDescription>
             </Alert>
           )}

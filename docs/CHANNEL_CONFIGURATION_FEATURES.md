@@ -18,90 +18,250 @@ Organize and reorder channels using drag-and-drop functionality.
 
 ### Regex Configuration Tab Features
 
-### 1. Search/Filter Field
-- **Location**: Top of the table, below the page description
-- **Functionality**: Real-time filtering of channels
-- **Search by**:
+#### 1. Table-Based Layout
+The Regex Configuration tab now features a clean, table-based interface for managing patterns:
+
+**Column Headers**:
+- **Select**: Checkbox for multi-select functionality
+- **#**: Channel number
+- **Logo**: Channel logo/icon (shows first letter if logo unavailable)
+- **Channel Name**: Name of the channel
+- **Channel Group**: Group the channel belongs to
+- **Regex Patterns**: Count of configured patterns
+- **Actions**: Dropdown menu for channel actions
+
+#### 2. Multi-Select Functionality
+- **Individual Selection**: Click checkbox on any row to select/deselect a channel
+- **Select All**: Check the header checkbox to select all visible channels on current page
+- **Deselect All**: Uncheck the header checkbox or use "Deselect All" button
+- **Selection Counter**: Badge showing number of selected channels
+
+#### 3. Group Filtering and Sorting
+- **Filter by Group**: Dropdown to show only channels from a specific group
+  - "All Groups" option to show channels from all groups
+  - Individual group options for focused management
+- **Sort by Group**: Checkbox to organize channels by group name
+  - Maintains channel number order within each group
+  - Makes it easy to work with channels from the same group
+
+#### 4. Mass Regex Assignment
+Add a single regex pattern to multiple channels at once:
+
+1. **Select Channels**: Use checkboxes to select target channels
+2. **Click "Add Regex to Selected"**: Opens bulk assignment dialog
+3. **Enter Pattern**: Type your regex pattern
+4. **Use Variables**: Include `CHANNEL_NAME` to create reusable patterns
+5. **Apply**: Pattern is added to all selected channels
+
+**Pattern Variable Support**:
+- `CHANNEL_NAME` is replaced with each channel's actual name at match time
+- Example: Pattern `.*CHANNEL_NAME.*` becomes:
+  - `.*ESPN.*` for channel "ESPN"
+  - `.*CNN.*` for channel "CNN"
+  - `.*ABC.*` for channel "ABC"
+- One pattern works for multiple channels with different names
+- Reduces duplication and makes pattern management easier
+- **Live Preview**: The live regex preview automatically substitutes `CHANNEL_NAME` with the actual channel name, so you can see what streams will be matched in real-time
+  - **Provider Differentiation**: When streams have the same name but come from different M3U providers, the preview shows the provider name below each stream (in italics) so you can distinguish between them
+  - Example: If two providers both offer "ESPN HD", you'll see:
+    - ESPN HD
+    - *Provider: Premium Sports*
+    - ESPN HD
+    - *Provider: Basic Package*
+- **Special Characters**: Channel names with special regex characters (like `+`, `.`, `*`, etc.) are automatically escaped to prevent regex errors
+
+#### 5. Search/Filter Field
+- **Location**: Top of the page
+- **Search across**:
   - Channel Number (e.g., "101", "5")
   - Channel Name (e.g., "ESPN", "CNN")
-- **Case insensitive**: Search works regardless of case
+  - Channel Group (e.g., "Sports", "News")
+- **Real-time filtering**: Table updates as you type
+- **Case insensitive**: Works regardless of case
 
-**Example Usage**:
-- Type "ESPN" to see all ESPN channels
-- Type "5" to see channels numbered with 5 (5, 50, 105, etc.)
+#### 6. Pagination
+- **Items per page**: Choose 10, 20, 50, or 100 channels per page
+- **Page navigation**: First, Previous, Page numbers, Next, Last
+- **Current page indicator**: Shows which page you're on
+- **Results counter**: Displays "Showing X-Y of Z channels"
 
-### 2. Separate Columns
-The channel information is now split into two separate columns for better readability:
-- **Channel Number**: Shows the channel number (e.g., #101)
-- **Channel Name**: Shows the channel name (e.g., ESPN)
+#### 7. Pattern Management Per Channel
+Click the Actions dropdown menu (⋮) on any channel row to:
+- **View/Edit Regex Rules**: Opens dialog to view, add, edit, or delete regex patterns
+- **Toggle Stream Matching**: Enable or disable stream matching for this channel
+- **Toggle Stream Checking**: Enable or disable stream checking for this channel
 
-**Before**: `#101 - ESPN` (single column)
-**After**: `#101` | `ESPN` (two columns)
+The dropdown menu provides:
+- Quick access to all channel-specific actions
+- Visual indicators (switches) showing current matching and checking states
+- Immediate feedback via toast notifications when settings are changed
 
-### 3. Sortable Columns
-All main columns can be sorted by clicking the column header:
+#### 8. Channel Logo Display
+Each row displays the channel's logo or icon:
+- **Logo Source**: Fetched from Dispatcharr and cached locally
+- **Fallback Display**: If no logo is available, shows the first letter of the channel name
+- **Performance**: Logos are cached in browser localStorage for fast loading
+- **Consistent Design**: Matches the logo display style from Channel Order tab
 
-#### Channel Number
-- **Default**: Ascending (1, 2, 3...)
-- **Click once**: Descending (999, 998, 997...)
-- **Click again**: Ascending (1, 2, 3...)
+### Example Workflows
 
-#### Channel Name
-- **Alphabetically**: A-Z or Z-A
-- **Case insensitive sorting**
+#### Workflow 1: Add Pattern to Multiple News Channels
+1. Set "Filter Group" to "News"
+2. Click "Select All" to select all news channels
+3. Click "Add Regex to Selected"
+4. Enter pattern: `.*CHANNEL_NAME.*|.*NEWS.*`
+5. Click "Add to X Channels"
+6. Pattern is now applied to all selected news channels
 
-#### Patterns
-- **Sorts by**: Number of regex patterns configured
-- **Useful for**: Finding channels with no patterns or most patterns
+#### Workflow 2: Find and Configure Channels Without Patterns
+1. Sort channels by regex pattern count (table shows pattern count in badge)
+2. Select channels showing "No patterns"
+3. Use bulk assignment to add a general pattern
+4. Refine individual patterns as needed
 
-#### Status
-- **Sorts by**: Enabled (1) vs Disabled (0)
-- **Useful for**: Grouping enabled/disabled channels
-
-### 4. Visual Indicators
-- **Sort arrows**: Up/down arrows appear on active sorted column
-- **Hover effect**: Column headers highlight on hover
-- **Active indicator**: Sorted column is visually distinguished
+#### Workflow 3: Organize by Group and Configure
+1. Enable "Sort by Group" checkbox
+2. Channels are now grouped and sorted
+3. Set "Filter Group" to focus on one group
+4. Configure patterns for that group
+5. Move to next group and repeat
 
 ## UI Components
 
 ### Table Layout
 ```
-+----------------+---------------+------------------+----------+---------+
-| Channel Number | Channel Name  | Patterns         | Status   | Actions |
-+----------------+---------------+------------------+----------+---------+
-| #5             | ABC News      | .*ABC.*         | Enabled  | ✏️ 🗑️   |
-| #101           | ESPN          | .*ESPN.*        | Enabled  | ✏️ 🗑️   |
-| #505           | CNN           | No patterns     | -        | ➕      |
-+----------------+---------------+------------------+----------+---------+
++--------+-----+------+--------------+---------------+------------------+---------+
+| Select | #   | Logo | Channel Name | Channel Group | Regex Patterns   | Actions |
++--------+-----+------+--------------+---------------+------------------+---------+
+| ☐      | 5   | [A]  | ABC News     | News          | 2 patterns       | ⋮       |
+| ☑      | 101 | [E]  | ESPN         | Sports        | 1 pattern        | ⋮       |
+| ☑      | 505 | [C]  | CNN          | News          | No patterns      | ⋮       |
++--------+-----+------+--------------+---------------+------------------+---------+
+```
+
+### Actions Dropdown Menu
+When clicking the Actions menu (⋮), you see:
+```
+┌─ Channel Actions ─────────────────────────┐
+│ 👁️ View/Edit Regex Rules                  │
+├───────────────────────────────────────────┤
+│ Settings                                  │
+│ Stream Matching              [Toggle ON]  │
+│ Stream Checking              [Toggle ON]  │
+└───────────────────────────────────────────┘
+```
+
+### Filter and Selection Bar
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Filter Group: [All Groups ▼]  ☐ Sort by Group                            │
+│                                                                            │
+│ 2 selected  [Select All]  [Deselect All]  [➕ Add Regex to Selected]    │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Bulk Pattern Dialog
+```
+┌─ Add Regex Pattern to Multiple Channels ───────────────────────────────────┐
+│ This pattern will be added to 2 selected channels.                         │
+│ Use CHANNEL_NAME to insert each channel's name into the pattern.        │
+│                                                                             │
+│ Regex Pattern                                                               │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │ .*CHANNEL_NAME.*                                                      │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│ Example:                                                                    │
+│ Pattern: .*CHANNEL_NAME.*                                                │
+│ For channel "ESPN", matches: .*ESPN.*                                      │
+│ For channel "CNN", matches: .*CNN.*                                        │
+│                                                                             │
+│                                      [Cancel]  [Add to 2 Channels]         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Search Field
 ```
-┌────────────────────────────────────────────────┐
-│ 🔍 Search by channel number or name...        │
-└────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────┐
+│ 🔍 Search channels by name, number, or ID...      │
+└────────────────────────────────────────────────────┘
 ```
 
 ## Technical Implementation
 
 ### State Management
 ```javascript
+// Multi-select state
+const [selectedChannels, setSelectedChannels] = useState(new Set());
+
+// Filtering and sorting
 const [searchQuery, setSearchQuery] = useState('');
-const [orderBy, setOrderBy] = useState('channel_number');
-const [order, setOrder] = useState('asc');
+const [filterByGroup, setFilterByGroup] = useState('all');
+const [sortByGroup, setSortByGroup] = useState(false);
+
+// Bulk assignment
+const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+const [bulkPattern, setBulkPattern] = useState('');
 ```
 
-### Sorting Logic
-- **Channel Number**: Numeric comparison
-- **Channel Name**: String comparison (case insensitive)
-- **Patterns**: Count of regex patterns
-- **Status**: Boolean (enabled = 1, disabled = 0)
+### Backend API
+
+#### Bulk Assignment Endpoint
+```
+POST /api/regex-patterns/bulk
+Content-Type: application/json
+
+{
+  "channel_ids": [1, 2, 3],
+  "regex_patterns": [".*CHANNEL_NAME.*"]
+}
+
+Response:
+{
+  "message": "Successfully added patterns to 3 channel(s)",
+  "success_count": 3,
+  "total_channels": 3
+}
+```
+
+#### Pattern Variable Substitution
+The backend substitutes `CHANNEL_NAME` at match time:
+```python
+def _substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
+    """Substitute channel name variables in a regex pattern."""
+    escaped_channel_name = re.escape(channel_name)
+    return pattern.replace('CHANNEL_NAME', escaped_channel_name)
+```
 
 ### Filtering Logic
-- Searches both channel number and name fields
-- Case insensitive matching
-- Partial match support (searches for substring)
+```javascript
+const displayChannels = orderedChannels.filter(channel => {
+  // Apply group filter
+  if (filterByGroup !== 'all' && channel.channel_group_id !== parseInt(filterByGroup)) {
+    return false;
+  }
+  
+  // Apply search filter
+  if (searchQuery) {
+    const query = searchQuery.toLowerCase();
+    const matchesName = channel.name.toLowerCase().includes(query);
+    const matchesNumber = String(channel.channel_number).includes(query);
+    const matchesGroup = groupName.toLowerCase().includes(query);
+    return matchesName || matchesNumber || matchesGroup;
+  }
+  
+  return true;
+});
+
+// Sort by group if enabled
+if (sortByGroup) {
+  displayChannels.sort((a, b) => {
+    const groupA = getGroupName(a.channel_group_id);
+    const groupB = getGroupName(b.channel_group_id);
+    return groupA.localeCompare(groupB) || (a.channel_number - b.channel_number);
+  });
+}
+```
 
 ## User Workflow Examples
 
@@ -123,11 +283,16 @@ const [order, setOrder] = useState('asc');
 
 ## Benefits
 
-1. **Faster Navigation**: Quickly find channels without scrolling
-2. **Better Organization**: Sort by any column to group related items
-3. **Clear Separation**: Channel number and name are distinct
-4. **Improved UX**: Intuitive sorting with visual feedback
-5. **Scalability**: Works well with hundreds of channels
+1. **Efficient Mass Configuration**: Add patterns to hundreds of channels in seconds
+2. **Reusable Patterns**: One pattern with `CHANNEL_NAME` works for many channels
+3. **Better Organization**: Group filtering and sorting for focused management
+4. **Faster Navigation**: Multi-select and bulk operations save time
+5. **Clear Visual Feedback**: Table layout makes it easy to see pattern status
+6. **Scalability**: Works efficiently with hundreds of channels
+7. **Reduced Duplication**: Pattern variables eliminate redundant configurations
+8. **Visual Channel Recognition**: Logo display helps quickly identify channels
+9. **Quick Settings Access**: Dropdown menu provides one-click access to all channel actions
+10. **Immediate Feedback**: Toggle switches show current state and update instantly
 
 ## Group Management Tab Features
 
@@ -188,6 +353,87 @@ Each group shows:
 - **No Channel Modification**: Group settings don't modify individual channel configurations
 - **Inheritance**: Individual channel settings take precedence over group settings
 
+## Regex Pattern Matching Rules
+
+### Pattern Variables
+
+The system supports special variables in regex patterns for dynamic matching:
+
+**CHANNEL_NAME Variable:**
+- Use `CHANNEL_NAME` in your pattern to reference the current channel's name
+- The system automatically substitutes this with the actual channel name during matching
+- Makes patterns reusable across multiple channels
+
+**Example:**
+```regex
+Pattern: .*CHANNEL_NAME.*
+
+For channel "ESPN": Matches "HD ESPN", "ESPN Sports", "ESPN HD"
+For channel "CNN": Matches "CNN News", "CNN HD", "HD CNN"
+```
+
+**Special Character Handling:**
+- Channel names with regex special characters (`+`, `.`, `*`, `[`, `]`, etc.) are automatically escaped
+- Example: Channel "TV+" → Pattern uses `TV\+` internally
+- Prevents regex errors and unexpected matches
+- Transparent to users - just write patterns normally
+
+### Whitespace Flexibility
+
+The system automatically handles whitespace variations in patterns for user-friendly matching.
+
+**How It Works:**
+- Literal spaces in patterns are converted to `\s+` (one or more whitespace characters)
+- Matches spaces, tabs, multiple spaces, and other whitespace
+- Transparent conversion - users write patterns with normal spaces
+
+**Example:**
+```regex
+User writes:  TVP 1
+System converts: TVP\s+1
+
+Matches:
+✓ "TVP 1"      (single space)
+✓ "TVP  1"     (double space)
+✓ "TVP   1"    (triple space)  
+✓ "TVP	1"     (tab)
+✗ "TVP1"       (no space)
+```
+
+**Benefits:**
+- Don't need to worry about exact whitespace in stream names
+- Patterns work across providers with different spacing conventions
+- User-friendly - write patterns as you'd naturally type them
+- Reduces pattern errors and failed matches
+
+**When Exact Matching Needed:**
+If you need to match exact whitespace, use regex escapes explicitly:
+- `TVP\ 1` - matches exactly one space
+- `TVP\s1` - matches exactly one whitespace character
+- `TVP\s{2}1` - matches exactly two whitespace characters
+
+### Live Preview with Variables
+
+The live regex preview automatically substitutes variables and handles special characters:
+
+**What You See:**
+- `CHANNEL_NAME` is replaced with actual channel name
+- Special characters are escaped
+- Matched streams are highlighted
+- Provider names shown for disambiguation
+
+**Example Preview:**
+```
+Pattern: CHANNEL_NAME HD
+Channel: ESPN+
+
+Preview shows matches for pattern: ESPN\+ HD
+Results:
+✓ ESPN+ HD (Provider: Sports Plus)
+✓ ESPN+ HD Sports (Provider: Premium)
+✗ ESPN HD (missing the +)
+```
+
 ## Channel Order Tab Features
 
 ### Overview
@@ -213,6 +459,41 @@ Organize your channels using an intuitive drag-and-drop interface with multiple 
 4. Click "Save Order" to persist your changes
 5. Or click "Reset" to discard changes
 
+## Troubleshooting
+
+### Pattern Not Matching Expected Streams
+
+**Check:**
+1. **Variable Substitution**: If using `CHANNEL_NAME`, verify the channel name is correct
+2. **Special Characters**: Ensure channel name special characters are being escaped properly
+3. **Whitespace**: Pattern should work with any whitespace variation
+4. **Case Sensitivity**: Patterns are case-sensitive by default (use `(?i)` flag for case-insensitive)
+
+**Use Live Preview:**
+- Open the regex editor for the channel
+- Add your pattern
+- View matched streams in real-time
+- Check provider names if streams look identical
+
+### CHANNEL_NAME Not Working
+
+**Symptoms:**
+- Pattern with `CHANNEL_NAME` not matching expected streams
+- Live preview not showing substitution
+
+**Solutions:**
+- Ensure you're using `CHANNEL_NAME` (not `{CHANNEL_NAME}` or other formats)
+- Check channel actually has a name set
+- Verify pattern syntax is correct
+- Use live preview to see actual substitution
+
+### Whitespace Matching Issues
+
+**If pattern fails with multiple spaces:**
+- System automatically handles this - check other pattern issues
+- Verify the stream name doesn't have zero spaces (pattern requires at least one)
+- For exact space matching, use explicit regex: `\ ` or `\s{1}`
+
 ## Backwards Compatibility
 
 All existing functionality is preserved:
@@ -227,9 +508,11 @@ All existing functionality is preserved:
 ## Future Enhancements
 
 Potential improvements:
-- Multi-column sorting in Regex Configuration
-- Advanced filters (status, pattern count ranges)
-- Bulk pattern operations across multiple channels
+- Advanced filters (pattern count ranges, last modified date)
+- Bulk pattern deletion across multiple channels
+- Pattern templates library for common use cases
 - Export/import group settings
 - Per-group regex templates
 - Channel group creation and editing from UI
+- Pattern validation and suggestions
+- Regex pattern testing against historical stream data

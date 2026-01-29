@@ -1,141 +1,146 @@
-# Pipeline System Documentation
+# Automation System Documentation
 
 ## Overview
 
-The StreamFlow application now supports 5 different pipeline modes, each with different behaviors for updating M3U playlists, matching streams to channels, and checking stream quality. This provides flexibility for users with different needs and connection constraints.
+The StreamFlow application provides flexible automation controls that allow you to customize which automation features are enabled. You can independently control M3U playlist updates, stream matching, quality checking, and scheduled global actions. Additionally, you can configure the system to automatically remove streams from channels if they no longer match configured regex patterns.
 
-## Pipeline Modes
+## Automation Controls
 
-### Pipeline 1: Update → Match → Check (with 2-hour immunity)
+StreamFlow uses individual automation controls instead of predefined pipeline modes. This gives you fine-grained control over each automation feature:
 
-**Configuration:**
+### Available Controls
+
+1. **Automatic M3U Updates** (`auto_m3u_updates`)
+   - Automatically refresh M3U playlists from configured sources
+   - Frequency configured via `playlist_update_interval_minutes` or `playlist_update_cron`
+
+2. **Automatic Stream Matching** (`auto_stream_matching`)
+   - Automatically match streams to channels using regex patterns
+   - Runs after M3U playlist updates
+
+3. **Automatic Quality Checking** (`auto_quality_checking`)
+   - Automatically analyze stream quality (bitrate, resolution, FPS)
+   - Reorder streams based on quality scores
+   - Includes 2-hour immunity to prevent excessive checking
+
+4. **Scheduled Global Action** (`scheduled_global_action`)
+   - Run complete automation cycle on a schedule
+   - Updates all M3U playlists, matches all streams, checks ALL channels
+   - Bypasses 2-hour immunity
+   - Schedule configured via `global_check_schedule.cron_expression`
+
+5. **Remove Non-Matching Streams** (`remove_non_matching_streams`)
+   - Automatically remove streams from channels if they no longer match regex patterns
+   - Useful when providers change stream names but keep same URLs
+   - Runs during automation cycles, global actions, and single channel checks
+
+### Configuration Example
+
 ```json
 {
-  "pipeline_mode": "pipeline_1",
-  "queue": {
-    "check_on_update": true
-  }
-}
-```
-
-**Behavior:**
-1. Every X minutes (configurable): Update M3U playlists
-2. Match new streams to channels via regex patterns
-3. Check channels that received new streams (respects 2-hour immunity)
-   - Only checks streams that haven't been checked in the last 2 hours
-   - Uses cached scores for recently checked streams
-
-**Use Case:** Users with moderate connection limits who want automatic updates, matching, and quality checking with immunity to prevent excessive checking.
-
----
-
-### Pipeline 1.5: Pipeline 1 + Scheduled Global Action
-
-**Configuration:**
-```json
-{
-  "pipeline_mode": "pipeline_1_5",
-  "queue": {
-    "check_on_update": true
+  "automation_controls": {
+    "auto_m3u_updates": true,
+    "auto_stream_matching": true,
+    "auto_quality_checking": true,
+    "scheduled_global_action": true,
+    "remove_non_matching_streams": false
   },
   "global_check_schedule": {
     "enabled": true,
-    "frequency": "daily",  // or "monthly"
-    "hour": 3,
-    "minute": 0,
-    "day_of_month": 1  // for monthly
+    "cron_expression": "0 3 * * *"
+  }
+}
+```
+
+## Common Configuration Patterns
+
+### Pattern 1: Full Automation with Quality Checking
+
+**Use Case:** Users without connection limits who want continuous updates and quality checking
+
+```json
+{
+  "automation_controls": {
+    "auto_m3u_updates": true,
+    "auto_stream_matching": true,
+    "auto_quality_checking": true,
+    "scheduled_global_action": true,
+    "remove_non_matching_streams": false
   }
 }
 ```
 
 **Behavior:**
-- All features of Pipeline 1
-- **PLUS:** Scheduled Global Action (daily or monthly)
-  - Updates all M3U playlists
-  - Matches all streams
-  - Checks ALL channels, bypassing 2-hour immunity
-  - Typically scheduled during off-peak hours (e.g., 3 AM)
-
-**Use Case:** Users who want automatic updates with immunity during the day, but want a complete check of all channels during off-peak hours.
+- Updates M3U playlists at configured interval
+- Matches new streams to channels via regex patterns
+- Checks channels that received new streams (respects 2-hour immunity)
+- Runs scheduled global action to check ALL channels (bypasses immunity)
 
 ---
 
-### Pipeline 2: Update → Match only (no automatic checking)
+### Pattern 2: Updates and Matching Only
 
-**Configuration:**
+**Use Case:** Users with strict connection limits who only want stream discovery
+
 ```json
 {
-  "pipeline_mode": "pipeline_2",
-  "queue": {
-    "check_on_update": false
+  "automation_controls": {
+    "auto_m3u_updates": true,
+    "auto_stream_matching": true,
+    "auto_quality_checking": false,
+    "scheduled_global_action": false,
+    "remove_non_matching_streams": false
   }
 }
 ```
 
 **Behavior:**
-1. Every X minutes: Update M3U playlists
-2. Match new streams to channels via regex patterns
-3. **NO automatic stream checking**
-
-**Use Case:** Users with strict connection limits who only want to keep their channels populated with streams, but don't want automatic quality checking.
+- Updates M3U playlists at configured interval
+- Matches new streams to channels via regex patterns
+- NO automatic stream checking
 
 ---
 
-### Pipeline 2.5: Pipeline 2 + Scheduled Global Action
+### Pattern 3: Scheduled Actions Only
 
-**Configuration:**
+**Use Case:** Users who want complete control with scheduled maintenance
+
 ```json
 {
-  "pipeline_mode": "pipeline_2_5",
-  "queue": {
-    "check_on_update": false
+  "automation_controls": {
+    "auto_m3u_updates": false,
+    "auto_stream_matching": false,
+    "auto_quality_checking": false,
+    "scheduled_global_action": true,
+    "remove_non_matching_streams": false
   },
   "global_check_schedule": {
     "enabled": true,
-    "frequency": "daily",
-    "hour": 3,
-    "minute": 0
+    "cron_expression": "0 3 * * *"
   }
 }
 ```
 
 **Behavior:**
-- All features of Pipeline 2
-- **PLUS:** Scheduled Global Action (daily or monthly)
-  - Updates all M3U playlists
-  - Matches all streams
-  - Checks ALL channels, bypassing immunity
-
-**Use Case:** Users with connection limits who want to avoid checking during the day, but want a complete check during off-peak hours.
+- NO automatic updates or matching between scheduled actions
+- ONLY scheduled global action runs at specified time
+- Updates all M3U playlists, matches all streams, checks ALL channels
 
 ---
 
-### Pipeline 3: Only Scheduled Global Action
+## Migration from Legacy Pipeline Modes
 
-**Configuration:**
-```json
-{
-  "pipeline_mode": "pipeline_3",
-  "queue": {
-    "check_on_update": false
-  },
-  "global_check_schedule": {
-    "enabled": true,
-    "frequency": "daily",
-    "hour": 3,
-    "minute": 0
-  }
-}
-```
+If you were using the old `pipeline_mode` configuration, it will be automatically migrated to `automation_controls` when the system starts:
 
-**Behavior:**
-- **NO automatic updates or matching**
-- **ONLY:** Scheduled Global Action (daily or monthly)
-  - Updates all M3U playlists
-  - Matches all streams
-  - Checks ALL channels
+| Old Pipeline Mode | New Automation Controls |
+|------------------|-------------------------|
+| `pipeline_1` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: true`, `scheduled_global_action: false` |
+| `pipeline_1_5` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: true`, `scheduled_global_action: true` |
+| `pipeline_2` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: false`, `scheduled_global_action: false` |
+| `pipeline_2_5` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: false`, `scheduled_global_action: true` |
+| `pipeline_3` | `auto_m3u_updates: false`, `auto_stream_matching: false`, `auto_quality_checking: false`, `scheduled_global_action: true` |
 
-**Use Case:** Users who want complete control and only want the system to run once per day/month at a specific time.
+The migration happens automatically and the old `pipeline_mode` key is removed from the configuration file.
 
 ---
 
@@ -151,7 +156,7 @@ A Global Action is a comprehensive operation that:
 ### When Does it Run?
 
 Global Actions run:
-- **Automatically:** Based on the scheduled time (for Pipeline 1.5, 2.5, and 3)
+- **Automatically:** When `scheduled_global_action` is enabled and the cron schedule triggers
 - **Manually:** Via the "Global Action" button in the UI or API call
 
 ### Exclusive Execution
@@ -203,12 +208,16 @@ GET /api/stream-checker/status
   "running": true,
   "global_action_in_progress": false,
   "config": {
-    "pipeline_mode": "pipeline_1_5",
+    "automation_controls": {
+      "auto_m3u_updates": true,
+      "auto_stream_matching": true,
+      "auto_quality_checking": true,
+      "scheduled_global_action": true,
+      "remove_non_matching_streams": false
+    },
     "global_check_schedule": {
       "enabled": true,
-      "frequency": "daily",
-      "hour": 3,
-      "minute": 0
+      "cron_expression": "0 3 * * *"
     }
   },
   "last_global_check": "2025-10-13T03:00:15.123Z"
@@ -229,8 +238,12 @@ GET /api/stream-checker/status
 - `_queue_updated_channels()`: Now respects pipeline mode
 
 **Updated Methods:**
-- `_check_global_schedule()`: Checks pipeline mode before running
+- `_check_global_schedule()`: Checks automation_controls before running
 - `_queue_all_channels(force_check=False)`: Supports force checking
+- `is_auto_m3u_updates_enabled()`: Checks if M3U updates are enabled
+- `is_auto_stream_matching_enabled()`: Checks if stream matching is enabled
+- `is_auto_quality_checking_enabled()`: Checks if quality checking is enabled
+- `is_scheduled_global_action_enabled()`: Checks if scheduled actions are enabled
 
 #### ChannelUpdateTracker
 
@@ -257,12 +270,95 @@ Streams are tracked per channel:
 
 ---
 
-## Configuration Examples
+## UI Configuration
+
+### Setup Wizard
+
+The **Setup Wizard** allows you to configure automation during initial setup:
+- Step 1: Dispatcharr Connection
+- Step 2: Channel Patterns Configuration
+- Step 3: **Automation Settings**
+  - Enable/disable individual automation features
+  - Configure update intervals and schedules
+  - Set concurrent stream limits
+  - Configure stream removal options
+- Step 4: Setup Complete
+
+### Automation Settings Page
+
+The web interface provides an **Automation Settings** page where you can:
+
+1. **Configure Automation Features**: Enable or disable each automation feature independently
+   - Automatic M3U Updates
+   - Automatic Stream Matching
+   - Automatic Quality Checking
+   - Scheduled Global Action
+   - Remove Non-Matching Streams
+
+2. **Configure Schedules**: Set update intervals and global action schedules
+   - Playlist update interval (minutes) or cron expression
+   - Global action cron expression
+   - Concurrent stream limits
+
+3. **Queue Settings**: Configure channel checking queue
+   - Maximum queue size
+   - Max channels per run
+   - Check on update behavior
+
+---
+
+## Stream Validation and Removal
+
+### Remove Non-Matching Streams Feature
+
+The `remove_non_matching_streams` automation control enables automatic cleanup of streams that no longer match their channel's regex patterns. This is useful when:
+
+- Providers change stream names but keep the same URLs
+- You update regex patterns and want to remove streams that no longer match
+- You want to keep channels clean and up-to-date
+
+**Important:** This feature **only affects channels that meet ALL of the following criteria**:
+1. Have automatic stream matching **enabled** (channel-level or group-level setting)
+2. Have regex patterns **configured and enabled**
+
+Channels that don't meet these criteria will not be validated or have their streams removed, ensuring that manually managed channels and channels with matching disabled are not affected.
+
+**When it runs:**
+- During automation cycles (after M3U updates and before matching new streams)
+- During global actions
+- During single channel checks
+
+**How it works:**
+1. For each channel, checks if matching is enabled AND regex patterns are configured
+2. Validates existing streams against those regex patterns
+3. Removes streams that don't match any pattern for that channel
+4. Skips channels with matching disabled or without regex patterns entirely
+5. Logs the removals in the changelog
+6. Updates the channel via Dispatcharr API
+
+**Configuration:**
+```json
+{
+  "automation_controls": {
+    "remove_non_matching_streams": true
+  }
+}
+```
+
+---
+
+## Configuration Examples (Updated)
 
 ### For Users Without Connection Limits
 ```json
 {
-  "pipeline_mode": "pipeline_1",
+  "automation_controls": {
+    "auto_m3u_updates": true,
+    "auto_stream_matching": true,
+    "auto_quality_checking": true,
+    "scheduled_global_action": true,
+    "remove_non_matching_streams": false
+  },
   "queue": {
     "check_on_update": true,
     "max_channels_per_run": 50
@@ -273,16 +369,20 @@ Streams are tracked per channel:
 ### For Users With Moderate Limits
 ```json
 {
-  "pipeline_mode": "pipeline_1_5",
+  "automation_controls": {
+    "auto_m3u_updates": true,
+    "auto_stream_matching": true,
+    "auto_quality_checking": true,
+    "scheduled_global_action": true,
+    "remove_non_matching_streams": false
+  },
   "queue": {
     "check_on_update": true,
     "max_channels_per_run": 20
   },
   "global_check_schedule": {
     "enabled": true,
-    "frequency": "daily",
-    "hour": 3,
-    "minute": 0
+    "cron_expression": "0 3 * * *"
   }
 }
 ```
@@ -290,104 +390,64 @@ Streams are tracked per channel:
 ### For Users With Strict Limits
 ```json
 {
-  "pipeline_mode": "pipeline_3",
+  "automation_controls": {
+    "auto_m3u_updates": false,
+    "auto_stream_matching": false,
+    "auto_quality_checking": false,
+    "scheduled_global_action": true,
+    "remove_non_matching_streams": false
+  },
   "global_check_schedule": {
     "enabled": true,
-    "frequency": "daily",
-    "hour": 3,
-    "minute": 0
+    "cron_expression": "0 3 * * *"
   }
 }
 ```
 
 ---
 
-## Migration Guide
+## Configuration Guide
 
-Existing installations will automatically use Pipeline 1.5 (the default). To change:
+To configure automation:
 
 1. **Via Web UI** (Recommended):
-   - Navigate to **Configuration** page
-   - Select your desired pipeline from the pipeline selection cards
-   - Configure schedule if using pipelines 1.5, 2.5, or 3
+   - Navigate to **Automation Settings** page
+   - Toggle individual automation features
+   - Configure schedules and intervals
    - Click **Save Settings**
 
 2. Via API:
 ```bash
-curl -X PUT http://localhost:3000/api/stream-checker/config \
+curl -X PUT http://localhost:5000/api/stream-checker/config \
   -H "Content-Type: application/json" \
-  -d '{"pipeline_mode": "pipeline_2_5"}'
+  -d '{
+    "automation_controls": {
+      "auto_m3u_updates": true,
+      "auto_stream_matching": true,
+      "auto_quality_checking": true,
+      "scheduled_global_action": true,
+      "remove_non_matching_streams": false
+    }
+  }'
 ```
 
 3. Via Configuration File:
 Edit `/app/data/stream_checker_config.json`:
 ```json
 {
-  "pipeline_mode": "pipeline_2_5"
+  "automation_controls": {
+    "auto_m3u_updates": true,
+    "auto_stream_matching": true,
+    "auto_quality_checking": true,
+    "scheduled_global_action": true,
+    "remove_non_matching_streams": false
+  }
 }
 ```
 
 Note: Changes via web UI or API take effect immediately without restart.
 
 ---
-
-## Testing
-
-All pipeline modes are thoroughly tested:
-- 146 total tests pass
-- 11 tests specifically for pipeline modes
-- Tests cover:
-  - Pipeline mode selection
-  - Force check behavior
-  - Global action functionality
-  - Queue management
-  - Scheduled checks
-
----
-
-## UI Configuration
-
-### Setup Wizard
-
-The **Setup Wizard** now includes pipeline selection during initial configuration:
-- Step 1: Dispatcharr Connection
-- Step 2: Channel Patterns Configuration
-- Step 3: **Pipeline Selection & Automation Settings**
-  - Choose your pipeline mode (1, 1.5, 2, 2.5, or 3)
-  - Configure schedule for pipelines with scheduled actions
-  - Set update intervals and feature toggles
-- Step 4: Setup Complete
-
-This ensures new installations start with an appropriate pipeline mode for their needs.
-
-### Configuration Page
-
-The web interface provides a unified **Configuration** page where you can:
-
-1. **Select Pipeline Mode**: Choose from 5 pipeline modes with clear descriptions
-   - Pipeline 1: Update → Match → Check (with 2hr immunity)
-   - Pipeline 1.5: Pipeline 1 + Scheduled Global Action
-   - Pipeline 2: Update → Match only (no automatic checking)
-   - Pipeline 2.5: Pipeline 2 + Scheduled Global Action
-   - Pipeline 3: Only Scheduled Global Action
-
-2. **Configure Schedule**: For pipelines with scheduled actions (1.5, 2.5, 3)
-   - Set frequency (daily or monthly)
-   - Choose exact time (hour and minute)
-   - For monthly: select day of month
-
-3. **Adjust Settings**: Only relevant settings are shown based on selected pipeline
-   - Update intervals (for pipelines 1, 1.5, 2, 2.5)
-   - Stream analysis parameters
-   - Queue settings
-
-### Stream Checker Page
-
-Monitor real-time statistics and progress:
-- View current pipeline and schedule
-- See if a global action is currently in progress
-- Manually trigger Global Action
-- Monitor queue status and check progress
 
 ## Dead Stream Detection and Management
 
@@ -405,20 +465,17 @@ When a dead stream is detected, it is automatically tagged with a `[DEAD]` prefi
 - Original: `"CNN HD"`
 - Tagged: `"[DEAD] CNN HD"`
 
-### Pipeline-Specific Behavior
+### Automation-Specific Behavior
 
-#### Pipelines 1 and 1.5 (Regular Checks)
+#### With Auto Quality Checking Enabled
 - Dead streams detected during regular channel checks
 - Immediately tagged with `[DEAD]` prefix
 - **Removed from channels** to maintain quality
 - Will not be re-added during subsequent stream matching
 
-#### Pipelines 2 and 2.5 (No Regular Checking)
-- Pipeline 2: No stream checking, so no dead stream detection
-- Pipeline 2.5: Dead streams only detected during scheduled global actions
-
-#### Pipeline 3 (Scheduled Only)
-- Dead streams only detected during scheduled global actions
+#### Without Auto Quality Checking
+- No regular stream checking, so no dead stream detection during normal operations
+- Dead streams only detected during scheduled global actions (if enabled)
 
 ### Revival During Global Actions
 
@@ -454,7 +511,7 @@ Dead streams are automatically excluded from stream discovery:
 ### Configuration
 
 No special configuration required. Dead stream detection is:
-- **Enabled by default** in all pipelines with stream checking
+- **Enabled by default** when auto quality checking or scheduled global actions are enabled
 - **Automatic** - no manual intervention needed
 - **Transparent** - all actions logged in changelog
 
@@ -475,8 +532,9 @@ You can monitor dead streams via:
 ## Future Enhancements
 
 Potential future improvements:
-- Per-channel pipeline overrides
-- Custom pipeline schedules per channel
-- Analytics dashboard showing check frequency and patterns
-- Dynamic pipeline adjustment based on connection speed
+- Per-channel automation control overrides
+- Custom schedules per channel group
+- Analytics dashboard showing automation statistics and patterns
+- Dynamic automation adjustment based on connection speed
 - Dead stream statistics and reporting dashboard
+- Enhanced stream removal rules and filters

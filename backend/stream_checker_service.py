@@ -83,7 +83,14 @@ class StreamCheckConfig:
     DEFAULT_CONFIG = {
         'enabled': True,
         'check_interval': 300,  # DEPRECATED - checks now only triggered by M3U refresh
-        'pipeline_mode': 'pipeline_1_5',  # Pipeline mode: 'disabled', 'pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5', 'pipeline_3'
+        # Individual automation controls
+        'automation_controls': {
+            'auto_m3u_updates': True,  # Automatically refresh M3U playlists
+            'auto_stream_matching': True,  # Automatically match streams to channels via regex
+            'auto_quality_checking': True,  # Automatically check stream quality
+            'scheduled_global_action': False,  # Run scheduled global actions (update + match + check all)
+            'remove_non_matching_streams': False  # Remove streams from channels if they no longer match regex
+        },
         'global_check_schedule': {
             'enabled': True,
             'cron_expression': '0 3 * * *',  # Cron expression: default is daily at 3:00 AM
@@ -164,7 +171,57 @@ class StreamCheckConfig:
                     # Deep copy defaults to avoid mutating DEFAULT_CONFIG
                     config = copy.deepcopy(self.DEFAULT_CONFIG)
                     config.update(loaded)
-                    logger.debug(f"Merged config: pipeline_mode={config.get('pipeline_mode')}, enabled={config.get('enabled')}")
+                    
+                    # Auto-migrate legacy pipeline mode to automation_controls
+                    pipeline_mode = config.get('pipeline_mode', '')
+                    if pipeline_mode and pipeline_mode != 'disabled':
+                        logger.info(f"Migrating legacy pipeline mode '{pipeline_mode}' to automation_controls")
+                        
+                        # Map pipeline modes to automation controls
+                        if pipeline_mode == 'pipeline_1':
+                            config['automation_controls'] = {
+                                'auto_m3u_updates': True,
+                                'auto_stream_matching': True,
+                                'auto_quality_checking': True,
+                                'scheduled_global_action': False
+                            }
+                        elif pipeline_mode == 'pipeline_1_5':
+                            config['automation_controls'] = {
+                                'auto_m3u_updates': True,
+                                'auto_stream_matching': True,
+                                'auto_quality_checking': True,
+                                'scheduled_global_action': True
+                            }
+                        elif pipeline_mode == 'pipeline_2':
+                            config['automation_controls'] = {
+                                'auto_m3u_updates': True,
+                                'auto_stream_matching': True,
+                                'auto_quality_checking': False,
+                                'scheduled_global_action': False
+                            }
+                        elif pipeline_mode == 'pipeline_2_5':
+                            config['automation_controls'] = {
+                                'auto_m3u_updates': True,
+                                'auto_stream_matching': True,
+                                'auto_quality_checking': False,
+                                'scheduled_global_action': True
+                            }
+                        elif pipeline_mode == 'pipeline_3':
+                            config['automation_controls'] = {
+                                'auto_m3u_updates': False,
+                                'auto_stream_matching': False,
+                                'auto_quality_checking': False,
+                                'scheduled_global_action': True
+                            }
+                        
+                        # Remove pipeline_mode key
+                        config.pop('pipeline_mode', None)
+                        
+                        # Save migrated config
+                        self._save_config(config)
+                        logger.info(f"Successfully migrated to automation_controls: {config['automation_controls']}")
+                    
+                    logger.debug(f"Merged config: automation_controls={config.get('automation_controls')}, enabled={config.get('enabled')}")
                     log_function_return(logger, "_load_config", f"<config with {len(config)} keys>")
                     return config
             except (json.JSONDecodeError, FileNotFoundError) as e:
@@ -244,6 +301,22 @@ class StreamCheckConfig:
             else:
                 return default
         return value if value is not None else default
+    
+    def is_auto_m3u_updates_enabled(self) -> bool:
+        """Check if automatic M3U updates are enabled."""
+        return self.config.get('automation_controls', {}).get('auto_m3u_updates', True)
+    
+    def is_auto_stream_matching_enabled(self) -> bool:
+        """Check if automatic stream matching is enabled."""
+        return self.config.get('automation_controls', {}).get('auto_stream_matching', True)
+    
+    def is_auto_quality_checking_enabled(self) -> bool:
+        """Check if automatic quality checking is enabled."""
+        return self.config.get('automation_controls', {}).get('auto_quality_checking', True)
+    
+    def is_scheduled_global_action_enabled(self) -> bool:
+        """Check if scheduled global action is enabled."""
+        return self.config.get('automation_controls', {}).get('scheduled_global_action', False)
 
 
 class ChannelUpdateTracker:
@@ -945,11 +1018,9 @@ class StreamCheckerService:
         - Pipeline 2/2.5: Skip checking (only update and match)
         - Pipeline 3: Skip checking (only scheduled global actions)
         """
-        pipeline_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
-        
-        # Disabled and Pipelines 2, 2.5, and 3 don't check on update
-        if pipeline_mode in ['disabled', 'pipeline_2', 'pipeline_2_5', 'pipeline_3']:
-            logger.info(f"Skipping channel queueing - {pipeline_mode} mode does not check on update")
+        # Check if auto quality checking is enabled (considers both pipeline mode and individual controls)
+        if not self.config.is_auto_quality_checking_enabled():
+            logger.info("Skipping channel queueing - automatic quality checking is disabled")
             return
         
         max_channels = self.config.get('queue.max_channels_per_run', 50)
@@ -965,9 +1036,9 @@ class StreamCheckerService:
                 self.check_queue.remove_from_completed(channel_id)
             
             added = self.check_queue.add_channels(channels_to_queue, priority=10)
-            logger.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking (mode: {pipeline_mode})")
+            logger.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking")
         else:
-            logger.debug(f"No channels need checking (mode: {pipeline_mode})")
+            logger.debug("No channels need checking")
     
     def _check_global_schedule(self):
         """Check if it's time for a scheduled global action.
@@ -986,13 +1057,9 @@ class StreamCheckerService:
             logger.debug("Global check schedule is disabled")
             return
         
-        # Get pipeline mode
-        pipeline_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
-        
-        # Only pipelines with .5 suffix and pipeline_3 have scheduled global actions
-        # Disabled mode skips all automation
-        if pipeline_mode not in ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3']:
-            logger.debug(f"Skipping global schedule check - {pipeline_mode} mode does not have scheduled global actions")
+        # Check if scheduled global action is enabled (considers both pipeline mode and individual controls)
+        if not self.config.is_scheduled_global_action_enabled():
+            logger.debug("Skipping global schedule check - scheduled global actions are disabled")
             return
         
         now = datetime.now()
@@ -1030,7 +1097,8 @@ class StreamCheckerService:
             time_diff_minutes = abs((now - prev_scheduled_time).total_seconds() / 60)
             if time_diff_minutes <= 10:
                 # We're within the scheduled window on fresh start, run the check
-                logger.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
+                automation_controls = self.config.get('automation_controls', {})
+                logger.info(f"Starting scheduled global action (automation_controls: {automation_controls}, cron: {cron_expression})")
                 self._perform_global_action()
                 self.update_tracker.mark_global_check()
             else:
@@ -1046,7 +1114,8 @@ class StreamCheckerService:
         # This prevents running multiple times between scheduled intervals
         if prev_scheduled_time > last_check_time:
             # We've passed a scheduled time since the last check, so we should run
-            logger.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
+            automation_controls = self.config.get('automation_controls', {})
+            logger.info(f"Starting scheduled global action (automation_controls: {automation_controls}, cron: {cron_expression})")
             self._perform_global_action()
             # Mark that global check has been initiated to prevent duplicate queueing
             self.update_tracker.mark_global_check()
@@ -1110,12 +1179,20 @@ class StreamCheckerService:
             try:
                 dead_count = len(self.dead_streams_tracker.get_dead_streams())
                 if dead_count > 0:
+                    logger.info(f"Found {dead_count} dead stream(s) before clearing")
                     self.dead_streams_tracker.clear_all_dead_streams()
                     logger.info(f"✓ Cleared {dead_count} dead stream(s) from tracker - they will be given a second chance")
+                    
+                    # Verify the streams were actually cleared
+                    remaining_dead = len(self.dead_streams_tracker.get_dead_streams())
+                    if remaining_dead > 0:
+                        logger.warning(f"⚠ {remaining_dead} dead stream(s) still remain after clearing - this may indicate an issue")
+                    else:
+                        logger.info("✓ Verified: All dead streams successfully removed from tracker")
                 else:
                     logger.info("✓ No dead streams to clear from tracker")
             except Exception as e:
-                logger.error(f"✗ Failed to clear dead streams: {e}")
+                logger.error(f"✗ Failed to clear dead streams: {e}", exc_info=True)
             
             automation_manager = None
             
@@ -1132,10 +1209,23 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
-            # Step 4: Match and assign streams (including previously dead ones since tracker was cleared)
-            # Note: Stream validation against regex is now done during matching periods (automation cycle)
-            # instead of during global checks, as per requirements
-            logger.info("Step 4/5: Matching and assigning streams...")
+            # Step 4: Validate and remove non-matching streams
+            logger.info("Step 4/6: Validating existing streams against regex patterns...")
+            try:
+                if automation_manager is not None:
+                    # Respect automation_controls.remove_non_matching_streams setting
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    if validation_results.get("streams_removed", 0) > 0:
+                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
+                    else:
+                        logger.info("✓ No non-matching streams found to remove")
+                else:
+                    logger.warning("⚠ Skipping stream validation - automation manager not available")
+            except Exception as e:
+                logger.error(f"✗ Failed to validate streams: {e}")
+            
+            # Step 5: Match and assign streams (including previously dead ones since tracker was cleared)
+            logger.info("Step 5/6: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1148,8 +1238,8 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to match streams: {e}")
             
-            # Step 5: Check all channels (force check to bypass immunity)
-            logger.info("Step 5/5: Queueing all channels for checking...")
+            # Step 6: Check all channels (force check to bypass immunity)
+            logger.info("Step 6/6: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
             # Note: Empty channel disabling will be triggered after batch finalization
@@ -1336,7 +1426,17 @@ class StreamCheckerService:
     
     
     def _update_stream_stats(self, stream_data: Dict) -> bool:
-        """Update stream stats for a single stream on the server."""
+        """Update stream stats for a single stream on the server and sync with UDI cache.
+        
+        This method:
+        1. Constructs the stats payload from analyzed stream data
+        2. Merges with existing stats on Dispatcharr
+        3. PATCHes the updated stats to Dispatcharr
+        4. Updates the UDI cache to keep it in sync
+        
+        This ensures that the UDI cache always reflects the latest stats written to Dispatcharr,
+        preventing inconsistencies between changelog data and actual Dispatcharr data.
+        """
         base_url = _get_base_url()
         if not base_url:
             logger.error("DISPATCHARR_BASE_URL not set.")
@@ -1389,6 +1489,14 @@ class StreamCheckerService:
             patch_payload = {"stream_stats": updated_stats}
             logger.info(f"Updating stream {stream_id} stats with: {stream_stats_payload}")
             patch_request(stream_url, patch_payload)
+            
+            # Update UDI cache with the new stats to keep it in sync with Dispatcharr
+            # This ensures changelog and verification read the correct, up-to-date data
+            updated_stream_data = existing_stream_data.copy()
+            updated_stream_data['stream_stats'] = updated_stats
+            udi.update_stream(int(stream_id), updated_stream_data)
+            logger.debug(f"Updated UDI cache for stream {stream_id} with new stats")
+            
             return True
         
         except Exception as e:
@@ -1496,7 +1604,10 @@ class StreamCheckerService:
                 
                 logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed in {duration_str}")
                 
-                # After batch finalization, trigger empty channel disabling if configured
+                # After batch finalization, trigger channel re-enabling first to give channels a second chance
+                self._trigger_channel_re_enabling()
+                
+                # Then trigger empty channel disabling if configured
                 self._trigger_empty_channel_disabling()
                 
             except Exception as e:
@@ -1524,6 +1635,89 @@ class StreamCheckerService:
                     logger.debug(f"Empty channel management: No empty channels found (checked {total_checked} channels)")
         except Exception as e:
             logger.error(f"Error triggering empty channel disabling: {e}", exc_info=True)
+    
+    def _trigger_channel_re_enabling(self):
+        """Trigger channel re-enabling if configured.
+        
+        This method checks if empty channel management with snapshot mode is enabled,
+        and triggers the re-enabling operation to give previously disabled channels
+        a second chance when their streams come back online.
+        """
+        try:
+            from empty_channel_manager import trigger_channel_re_enabling
+            
+            result = trigger_channel_re_enabling()
+            if result:
+                enabled_count, total_checked = result
+                if enabled_count > 0:
+                    logger.info(f"Channel re-enabling: Re-enabled {enabled_count} channels with working streams (checked {total_checked} channels)")
+                else:
+                    logger.debug(f"Channel re-enabling: No disabled channels with working streams (checked {total_checked} channels)")
+        except Exception as e:
+            logger.error(f"Error triggering channel re-enabling: {e}", exc_info=True)
+    
+    def _check_channel_limits(self, channel_id: int, channel_name: str, streams: List[Dict]) -> Optional[Dict]:
+        """Check if a channel can be checked based on viewer and playlist limits.
+        
+        This method now uses profile-aware checking. Instead of just checking account-level
+        max_streams, it verifies that at least one stream has an available profile slot.
+        
+        Args:
+            channel_id: ID of the channel
+            channel_name: Name of the channel
+            streams: List of streams for the channel
+            
+        Returns:
+            None if check can proceed, or a result dict if check should be skipped
+        """
+        udi = get_udi_manager()
+        
+        # Check if channel has active viewers using real-time proxy status
+        has_active_viewers = udi.is_channel_active(channel_id)
+        if has_active_viewers:
+            logger.warning(f"Channel {channel_name} has active viewers, skipping check to avoid disruption")
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0,
+                'skipped': True,
+                'skip_reason': 'active_viewers'
+            }
+        
+        # Check if at least one stream can run (has an available profile)
+        # This replaces the old account-level checking with profile-aware logic
+        has_available_slot = False
+        blocked_reasons = []
+        
+        for stream in streams:
+            m3u_account = stream.get('m3u_account')
+            if not m3u_account:
+                # Custom stream without M3U account - can always check
+                has_available_slot = True
+                break
+            
+            # Check if this stream can run using profile-aware checking
+            can_run, reason = udi.check_stream_can_run(stream)
+            if can_run:
+                has_available_slot = True
+                break
+            else:
+                if reason and reason not in blocked_reasons:
+                    blocked_reasons.append(reason)
+        
+        # If no stream has an available slot, skip the check
+        if not has_available_slot:
+            reason_str = "; ".join(blocked_reasons) if blocked_reasons else "All M3U account profiles are at capacity"
+            logger.warning(f"Cannot check channel {channel_name}: {reason_str}")
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0,
+                'skipped': True,
+                'skip_reason': 'max_streams_reached',
+                'reason_detail': reason_str
+            }
+        
+        # At least one stream has an available slot, check can proceed
+        return None
     
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
@@ -1609,6 +1803,13 @@ class StreamCheckerService:
                 }
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
+            
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
+            limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
+            if limit_check_result is not None:
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return limit_check_result
             
             # Check if this is a force check (bypasses 2-hour immunity)
             force_check = self.update_tracker.should_force_check(channel_id)
@@ -1854,8 +2055,9 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
-            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
-            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
+            # Dead streams have already been filtered from analyzed_streams if removal is enabled
+            # If removal is disabled, allow them to remain in the channel
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=(not dead_stream_removal_enabled))
             
             # Verify the update
             self.progress.update(
@@ -2068,6 +2270,13 @@ class StreamCheckerService:
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
             
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
+            limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
+            if limit_check_result is not None:
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return limit_check_result
+            
             # Check if this is a force check (bypasses 2-hour immunity)
             force_check = self.update_tracker.should_force_check(channel_id)
             
@@ -2136,8 +2345,14 @@ class StreamCheckerService:
                 
                 # Analyze stream
                 analysis_params = self.config.get('stream_analysis', {})
+                
+                # Apply URL transformation if using M3U profile with search/replace patterns
+                stream_url = stream.get('url', '')
+                if udi:
+                    stream_url = udi.apply_profile_url_transformation(stream)
+                
                 analyzed = analyze_stream(
-                    stream_url=stream.get('url', ''),
+                    stream_url=stream_url,
                     stream_id=stream['id'],
                     stream_name=stream.get('name', 'Unknown'),
                     ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
@@ -2250,8 +2465,14 @@ class StreamCheckerService:
                     # If we can't fetch cached data, analyze this stream
                     logger.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
                     analysis_params = self.config.get('stream_analysis', {})
+                    
+                    # Apply URL transformation if using M3U profile with search/replace patterns
+                    stream_url = stream.get('url', '')
+                    if udi:
+                        stream_url = udi.apply_profile_url_transformation(stream)
+                    
                     analyzed = analyze_stream(
-                        stream_url=stream.get('url', ''),
+                        stream_url=stream_url,
                         stream_id=stream['id'],
                         stream_name=stream.get('name', 'Unknown'),
                         ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
@@ -2307,8 +2528,9 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
-            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
-            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
+            # Dead streams have already been filtered from analyzed_streams if removal is enabled
+            # If removal is disabled, allow them to remain in the channel
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=(not dead_stream_removal_enabled))
             
             # Verify the update was applied correctly
             self.progress.update(
@@ -2536,6 +2758,10 @@ class StreamCheckerService:
         if stream_id:
             priority_boost = self._get_priority_boost(stream_id, stream_data)
             score += priority_boost
+            
+            # Apply regex pattern priority boost
+            regex_priority_boost = self._get_regex_priority_boost(stream_id, stream_data)
+            score += regex_priority_boost
         
         return round(score, 2)
     
@@ -2596,6 +2822,60 @@ class StreamCheckerService:
             logger.error(f"Error calculating priority boost for stream {stream_id}: {e}")
             return 0.0
     
+    def _get_regex_priority_boost(self, stream_id: int, stream_data: Dict) -> float:
+        """Calculate priority boost for a stream based on which regex pattern matched it.
+        
+        When multiple streams from the same playlist match a channel, those matched by
+        higher-priority regex patterns should score higher.
+        
+        Args:
+            stream_id: The stream ID
+            stream_data: Stream data dictionary containing stream name and other info
+            
+        Returns:
+            Regex priority boost value (0.0 to 5.0+)
+        """
+        try:
+            # Get stream from UDI to find its name and M3U account
+            udi = get_udi_manager()
+            stream = udi.get_stream_by_id(stream_id)
+            if not stream:
+                return 0.0
+            
+            stream_name = stream.get('name', '')
+            stream_m3u_account = stream.get('m3u_account')
+            
+            if not stream_name:
+                return 0.0
+            
+            # Get the channel ID this stream belongs to
+            channel_id = stream_data.get('channel_id')
+            if not channel_id:
+                return 0.0
+            
+            # Import regex matcher to check which pattern matched this stream
+            from automated_stream_manager import get_regex_matcher
+            regex_matcher = get_regex_matcher()
+            
+            # Get match results with priority
+            matches = regex_matcher.match_stream_to_channels_with_priority(stream_name, stream_m3u_account)
+            
+            # Find the match for this channel
+            for match in matches:
+                if str(match.get('channel_id')) == str(channel_id):
+                    priority = match.get('priority', 0)
+                    if priority > 0:
+                        # Each priority point adds 0.1 to the score
+                        # This is smaller than M3U priority boost (0.5) but still significant
+                        boost = priority * 0.1
+                        logger.debug(f"Applying regex priority boost of {boost} to stream {stream_id} in channel {channel_id} (priority: {priority})")
+                        return boost
+            
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating regex priority boost for stream {stream_id}: {e}")
+            return 0.0
+    
     def get_status(self) -> Dict:
         """Get current service status."""
         queue_status = self.check_queue.get_status()
@@ -2622,19 +2902,44 @@ class StreamCheckerService:
             'progress': progress,
             'last_global_check': self.update_tracker.get_last_global_check(),
             'config': {
-                'pipeline_mode': self.config.get('pipeline_mode'),
+                'automation_controls': self.config.get('automation_controls', {}),
                 'check_interval': self.config.get('check_interval'),
                 'global_check_schedule': self.config.get('global_check_schedule'),
                 'queue_settings': self.config.get('queue')
             }
         }
     
-    def queue_channel(self, channel_id: int, priority: int = 10) -> bool:
-        """Manually queue a channel for checking."""
+    def queue_channel(self, channel_id: int, priority: int = 10, force_check: bool = False) -> bool:
+        """Manually queue a channel for checking.
+        
+        Args:
+            channel_id: ID of the channel to queue
+            priority: Priority for queue ordering (higher = earlier)
+            force_check: If True, marks channel for force checking (bypasses 2-hour immunity)
+            
+        Returns:
+            True if channel was successfully queued, False otherwise
+        """
+        if force_check:
+            self.update_tracker.mark_channel_for_force_check(channel_id)
+            logger.info(f"Marked channel {channel_id} for force check (bypasses 2-hour immunity)")
         return self.check_queue.add_channel(channel_id, priority)
     
-    def queue_channels(self, channel_ids: List[int], priority: int = 10) -> int:
-        """Manually queue multiple channels for checking."""
+    def queue_channels(self, channel_ids: List[int], priority: int = 10, force_check: bool = False) -> int:
+        """Manually queue multiple channels for checking.
+        
+        Args:
+            channel_ids: List of channel IDs to queue
+            priority: Priority for queue ordering (higher = earlier)
+            force_check: If True, marks all channels for force checking (bypasses 2-hour immunity)
+            
+        Returns:
+            Number of channels successfully queued
+        """
+        if force_check:
+            for channel_id in channel_ids:
+                self.update_tracker.mark_channel_for_force_check(channel_id)
+            logger.info(f"Marked {len(channel_ids)} channels for force check (bypasses 2-hour immunity)")
         return self.check_queue.add_channels(channel_ids, priority)
     
     def check_single_channel(self, channel_id: int, program_name: Optional[str] = None) -> Dict:
@@ -2688,9 +2993,23 @@ class StreamCheckerService:
             
             logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
             
-            # Step 1: Get current streams to identify M3U accounts
-            logger.info(f"Step 1/5: Identifying M3U accounts for channel {channel_name}...")
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
             current_streams = fetch_channel_streams(channel_id)
+            if current_streams:
+                limit_check_result = self._check_channel_limits(channel_id, channel_name, current_streams)
+                if limit_check_result is not None:
+                    # Convert the internal result format to the single channel check format
+                    return {
+                        'success': False,
+                        'error': f"Channel check skipped: {limit_check_result.get('skip_reason', 'limits reached')}",
+                        'reason': limit_check_result.get('skip_reason'),
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'details': limit_check_result
+                    }
+            
+            # Step 1: Identify M3U accounts for channel (reusing current_streams from limit check above)
+            logger.info(f"Step 1/6: Identifying M3U accounts for channel {channel_name}...")
             account_ids = set()
             if current_streams:
                 for stream in current_streams:
@@ -2714,7 +3033,7 @@ class StreamCheckerService:
             
             # Step 2: Refresh playlists for those accounts
             if account_ids:
-                logger.info(f"Step 2/5: Refreshing playlists for {len(account_ids)} M3U account(s)...")
+                logger.info(f"Step 2/6: Refreshing playlists for {len(account_ids)} M3U account(s)...")
                 # Import here to allow better test mocking
                 from api_utils import refresh_m3u_playlists
                 for account_id in account_ids:
@@ -2730,33 +3049,65 @@ class StreamCheckerService:
                 udi.refresh_channel_groups()  # Check for new/updated channel groups
                 logger.info("✓ Playlists refreshed and UDI cache updated")
             else:
-                logger.info("Step 2/5: No M3U accounts found for this channel, skipping playlist refresh")
+                logger.info("Step 2/6: No M3U accounts found for this channel, skipping playlist refresh")
             
             # Step 3: Clear dead streams for this channel to give them a second chance
-            logger.info(f"Step 3/5: Clearing dead streams for channel {channel_name} to give them a second chance...")
+            logger.info(f"Step 3/6: Clearing dead streams for channel {channel_name} to give them a second chance...")
             try:
+                # First, check how many dead streams exist for this channel
+                dead_streams_for_channel = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+                initial_dead_count = len(dead_streams_for_channel)
+                
+                if initial_dead_count > 0:
+                    logger.info(f"Found {initial_dead_count} dead stream(s) for channel {channel_id} before clearing")
+                
                 # Clear all dead streams that belong to this channel by channel_id
                 # This handles cases where playlist refresh creates new streams with different URLs
                 cleared_count = self.dead_streams_tracker.remove_dead_streams_by_channel_id(channel_id)
                 
                 if cleared_count > 0:
                     logger.info(f"✓ Cleared {cleared_count} dead stream(s) from tracker - they will be given a second chance")
+                    
+                    # Verify the streams were actually cleared
+                    remaining_dead = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+                    if len(remaining_dead) > 0:
+                        logger.warning(f"⚠ {len(remaining_dead)} dead stream(s) still remain after clearing - this may indicate an issue")
+                    else:
+                        logger.info("✓ Verified: All dead streams successfully removed from tracker")
                 else:
                     logger.info("✓ No dead streams to clear for this channel")
             except Exception as e:
-                logger.error(f"✗ Failed to clear dead streams: {e}")
+                logger.error(f"✗ Failed to clear dead streams: {e}", exc_info=True)
             
-            # Step 4: Re-match and assign streams for this specific channel (if matching is enabled)
+            # Step 4: Validate existing streams against regex patterns (if matching is enabled)
+            if matching_enabled:
+                logger.info(f"Step 4/6: Validating existing streams for channel {channel_name}...")
+                try:
+                    from automated_stream_manager import AutomatedStreamManager
+                    automation_manager = AutomatedStreamManager()
+                    
+                    # Run validation - respects automation_controls.remove_non_matching_streams setting
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    if validation_results.get("streams_removed", 0) > 0:
+                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams")
+                    else:
+                        logger.info("✓ No non-matching streams found to remove")
+                except Exception as e:
+                    logger.error(f"✗ Failed to validate streams: {e}")
+            else:
+                logger.info(f"Step 4/6: Skipping stream validation (matching is disabled for this channel)")
+            
+            # Step 5: Re-match and assign streams for this specific channel (if matching is enabled)
             # With dead streams cleared, previously dead streams can now be re-added
             if matching_enabled:
-                logger.info(f"Step 4/5: Re-matching streams for channel {channel_name}...")
+                logger.info(f"Step 5/6: Re-matching streams for channel {channel_name}...")
                 try:
                     # Import here to allow better test mocking
                     from automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
                     # Run full discovery (this will add new matching streams but skip dead ones)
-                    # Skip automatic check trigger since we'll perform the check explicitly in Step 5
+                    # Skip automatic check trigger since we'll perform the check explicitly in Step 6
                     assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
                     if assignments:
                         logger.info(f"✓ Stream matching completed")
@@ -2765,12 +3116,12 @@ class StreamCheckerService:
                 except Exception as e:
                     logger.error(f"✗ Failed to match streams: {e}")
             else:
-                logger.info(f"Step 4/5: Skipping stream matching (matching is disabled for this channel)")
+                logger.info(f"Step 5/6: Skipping stream matching (matching is disabled for this channel)")
             
-            # Step 5: Mark channel for force check and perform the check (if checking is enabled)
+            # Step 6: Mark channel for force check and perform the check (if checking is enabled)
             dead_count = 0
             if checking_enabled:
-                logger.info(f"Step 5/5: Force checking all streams for channel {channel_name}...")
+                logger.info(f"Step 6/6: Force checking all streams for channel {channel_name}...")
                 self.update_tracker.mark_channel_for_force_check(channel_id)
                 
                 # Perform the check (this will now bypass immunity and check all streams)
@@ -2785,7 +3136,7 @@ class StreamCheckerService:
                 # Get the count of dead streams that were removed during the check
                 dead_count = check_result.get('dead_streams_count', 0)
             else:
-                logger.info(f"Step 5/5: Skipping stream checking (checking is disabled for this channel)")
+                logger.info(f"Step 6/6: Skipping stream checking (checking is disabled for this channel)")
             
             # Gather statistics after check using centralized utility
             streams = fetch_channel_streams(channel_id)
@@ -2899,6 +3250,9 @@ class StreamCheckerService:
             
             logger.info(f"✓ Single channel check completed for {channel_name} in {duration_str}")
             
+            # Trigger channel re-enabling first to give channels a second chance
+            self._trigger_channel_re_enabling()
+            
             # Trigger empty channel disabling if configured
             # This ensures that if this channel became empty after checking, it gets disabled
             self._trigger_empty_channel_disabling()
@@ -2950,11 +3304,13 @@ class StreamCheckerService:
         
         # Log what's being updated
         config_changes = []
-        if 'pipeline_mode' in updates:
-            old_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
-            new_mode = updates['pipeline_mode']
-            if old_mode != new_mode:
-                config_changes.append(f"Pipeline mode: {old_mode} → {new_mode}")
+        if 'automation_controls' in updates:
+            old_controls = self.config.get('automation_controls', {})
+            new_controls = updates['automation_controls']
+            for key, value in new_controls.items():
+                old_value = old_controls.get(key, False)
+                if old_value != value:
+                    config_changes.append(f"Automation control '{key}': {old_value} → {value}")
         
         if 'global_check_schedule' in updates:
             schedule_changes = []

@@ -470,6 +470,11 @@ function ChannelConfiguration() {
                       <Typography variant="caption" color="text.secondary">
                         Matched by: {stream.matched_pattern}
                       </Typography>
+                      {stream.m3u_account_name && (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontStyle: 'italic' }}>
+                          Provider: {stream.m3u_account_name}
+                        </Typography>
+                      )}
                     </Box>
                   ))}
                   {testResults.results[0].matched_streams.length > 10 && (

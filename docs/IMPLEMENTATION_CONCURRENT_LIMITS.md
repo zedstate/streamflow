@@ -9,10 +9,12 @@ The concurrent stream limits feature has been successfully implemented and teste
 ### 1. Core Components
 
 #### AccountStreamLimiter (`concurrent_stream_limiter.py`)
-- Manages semaphores for each M3U account
+- Manages concurrent stream limits for each M3U account
 - Enforces per-account concurrent stream limits
-- Thread-safe acquire/release operations
+- **Considers active viewers when determining available slots**
+- Thread-safe acquire/release operations with atomic checking
 - Supports unlimited accounts (max_streams=0)
+- Uses polling with exponential backoff to wait for available slots
 
 #### SmartStreamScheduler (`concurrent_stream_limiter.py`)
 - Intelligently schedules stream checks across accounts
@@ -34,6 +36,7 @@ The concurrent stream limits feature has been successfully implemented and teste
 - `test_concurrent_stream_limiter.py`
 - Tests all aspects of the limiter and scheduler
 - Validates the exact scenario from requirements
+- **Tests active viewer limiting of concurrent checks**
 - All tests passing ✅
 
 #### Integration Tests (2 tests)
@@ -100,6 +103,32 @@ Phase 3: B1 completes
 Concurrent: A2, B2, B3 (3 total) ✓
 
 All streams checked ✓
+```
+
+### Handling Active Viewers
+
+The limiter also respects active viewers (streams currently being watched):
+
+```
+Scenario: Account A has max_streams=2, 1 stream is being watched
+
+Phase 1: Start checking
+├─ Query active streams: 1 active viewer
+├─ Available slots: 2 - 1 = 1
+├─ Acquire slot for Account A (1 active + 1 checking = 2/2 used)
+├─ Check A1 [RUNNING]
+└─ Attempt A2 [WAITING - Account A limit reached]
+    └─ (1 active + 1 checking = 2/2, must wait)
+
+Phase 2: A1 completes
+├─ Release slot for Account A (1 active + 0 checking = 1/2 used)
+├─ Query active streams: still 1 active viewer
+├─ Available slots: 2 - 1 = 1
+├─ Acquire slot for Account A (1 active + 1 checking = 2/2 used)
+└─ Check A2 [RUNNING]
+
+Key point: Only 1 stream checked at a time ✓
+(Respects the limit even with active viewers)
 ```
 
 ## Configuration

@@ -235,6 +235,36 @@ class TestRegexValidation(unittest.TestCase):
         self.assertFalse(is_valid)
         self.assertIsNotNone(error)
     
+    def test_channel_name_variable_in_patterns(self):
+        """Test that patterns with CHANNEL_NAME variable are accepted."""
+        # These patterns should be valid because CHANNEL_NAME is a placeholder
+        # that gets substituted before actual regex matching
+        channel_name_patterns = [
+            ".*CHANNEL_NAME.*",
+            "CHANNEL_NAME",
+            "^CHANNEL_NAME$",
+            r"^(?:PL|\s|PL-VIP|\s|PL(?: VIP)?:\s)((?:TVP )?(CHANNEL_NAME)(?: POLSKA)?(?: TV)?(?:.PL)?)(?:.TV)?(?:\s+(HD|4K|FHD|RAW|ᴴᴰ ◉|ᵁᴴᴰ))?$",
+            "CHANNEL_NAME.*CHANNEL_NAME",  # Multiple occurrences
+            r"^CHANNEL_NAME\s+(?:HD|4K)$",
+        ]
+        
+        for pattern in channel_name_patterns:
+            with self.subTest(pattern=pattern):
+                is_valid, error = self.matcher.validate_regex_patterns([pattern])
+                self.assertTrue(is_valid, f"Pattern '{pattern}' should be valid but got error: {error}")
+                self.assertIsNone(error, f"Pattern '{pattern}' should have no error but got: {error}")
+        
+        # Test that we can actually add these patterns to a channel
+        try:
+            self.matcher.add_channel_pattern(
+                channel_id="test_channel_var",
+                name="Test Channel",
+                regex_patterns=[".*CHANNEL_NAME.*"],
+                enabled=True
+            )
+        except ValueError as e:
+            self.fail(f"Should be able to add pattern with CHANNEL_NAME variable: {e}")
+    
     def test_complex_valid_patterns(self):
         """Test that complex but valid regex patterns are accepted."""
         complex_patterns = [
