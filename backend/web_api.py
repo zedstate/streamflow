@@ -885,16 +885,37 @@ def import_regex_patterns():
             if not isinstance(pattern_data, dict):
                 return jsonify({"error": f"Invalid pattern format for channel {channel_id}"}), 400
             
-            if 'regex' not in pattern_data:
-                return jsonify({"error": f"Missing 'regex' field for channel {channel_id}"}), 400
+            # Support both old format (regex) and new format (regex_patterns)
+            regex_patterns_to_validate = []
             
-            if not isinstance(pattern_data['regex'], list):
-                return jsonify({"error": f"'regex' must be a list for channel {channel_id}"}), 400
+            if 'regex_patterns' in pattern_data:
+                # New format: regex_patterns is array of objects with pattern, m3u_accounts, priority
+                if not isinstance(pattern_data['regex_patterns'], list):
+                    return jsonify({"error": f"'regex_patterns' must be a list for channel {channel_id}"}), 400
+                
+                # Extract pattern strings for validation
+                for pattern_obj in pattern_data['regex_patterns']:
+                    if isinstance(pattern_obj, dict):
+                        pattern = pattern_obj.get('pattern', '')
+                        if not pattern:
+                            return jsonify({"error": f"Pattern object missing 'pattern' field for channel {channel_id}"}), 400
+                        regex_patterns_to_validate.append(pattern)
+                    else:
+                        # Legacy format within regex_patterns
+                        regex_patterns_to_validate.append(pattern_obj)
+            elif 'regex' in pattern_data:
+                # Old format: regex is array of strings
+                if not isinstance(pattern_data['regex'], list):
+                    return jsonify({"error": f"'regex' must be a list for channel {channel_id}"}), 400
+                regex_patterns_to_validate = pattern_data['regex']
+            else:
+                return jsonify({"error": f"Missing 'regex' or 'regex_patterns' field for channel {channel_id}"}), 400
             
             # Validate regex patterns
-            is_valid, error_msg = matcher.validate_regex_patterns(pattern_data['regex'])
-            if not is_valid:
-                return jsonify({"error": f"Invalid regex pattern for channel {channel_id}: {error_msg}"}), 400
+            if regex_patterns_to_validate:
+                is_valid, error_msg = matcher.validate_regex_patterns(regex_patterns_to_validate)
+                if not is_valid:
+                    return jsonify({"error": f"Invalid regex pattern for channel {channel_id}: {error_msg}"}), 400
         
         # If validation passes, save the patterns
         matcher._save_patterns(data)
