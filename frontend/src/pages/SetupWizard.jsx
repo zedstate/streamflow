@@ -56,6 +56,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   const [testingConnection, setTestingConnection] = useState(false)
   const [udiInitialized, setUdiInitialized] = useState(false)
   const [initializingUdi, setInitializingUdi] = useState(false)
+  const [loadingProgress, setLoadingProgress] = useState(0)
 
   // Channel configuration state
   const [channels, setChannels] = useState([])
@@ -208,6 +209,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       setLoading(true)
       setInitializingUdi(true)
       setUdiInitialized(false)
+      setLoadingProgress(0)
       
       // Save configuration (backend will initialize UDI automatically)
       await dispatcharrAPI.updateConfig(dispatcharrConfig)
@@ -224,12 +226,18 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       
       while (attempts < maxAttempts && !dataLoaded) {
         await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        // Update progress based on attempts
+        const progress = Math.min(((attempts + 1) / maxAttempts) * 100, 95)
+        setLoadingProgress(progress)
+        
         const response = await setupAPI.getStatus()
         setSetupStatus(response.data)
         determineActiveStep(response.data)
         
         if (response.data.has_channels && response.data.dispatcharr_connection) {
           dataLoaded = true
+          setLoadingProgress(100)
           setUdiInitialized(true)
           toast({
             title: "Data Loaded",
@@ -257,6 +265,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     } finally {
       setInitializingUdi(false)
       setLoading(false)
+      setLoadingProgress(0)
     }
   }
 
@@ -533,10 +542,14 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
 
             {initializingUdi && (
               <Alert>
-                <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                  <AlertDescription>Loading channel data from Dispatcharr...</AlertDescription>
-                </div>
+                <AlertDescription className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                    <span>Loading channel data from Dispatcharr...</span>
+                  </div>
+                  <Progress value={loadingProgress} className="w-full" />
+                  <p className="text-xs text-muted-foreground">{Math.round(loadingProgress)}% complete</p>
+                </AlertDescription>
               </Alert>
             )}
 
