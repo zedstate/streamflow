@@ -337,6 +337,48 @@ DELETE /api/regex-patterns/{pattern_id}
 ```
 Deletes a regex pattern.
 
+### Import Patterns
+```
+POST /api/regex-patterns/import
+Content-Type: application/json
+
+{
+  "patterns": {
+    "1": {
+      "name": "CNN",
+      "regex": [".*CNN.*"],
+      "enabled": true
+    },
+    "2": {
+      "name": "ESPN",
+      "regex_patterns": [
+        {
+          "pattern": ".*ESPN.*",
+          "m3u_accounts": [11, 13],
+          "priority": 0
+        }
+      ],
+      "enabled": true
+    }
+  },
+  "global_settings": {
+    "case_sensitive": false
+  }
+}
+```
+Imports regex patterns from a JSON file.
+
+**Supported Formats:**
+- **Old format**: Uses `"regex": ["pattern1", "pattern2"]` field (backward compatible)
+- **New format**: Uses `"regex_patterns": [{"pattern": "p1", "m3u_accounts": [...], "priority": 0}]` field
+- **Mixed format**: Both old and new formats can coexist in the same import file
+
+**Notes:**
+- The import overwrites existing patterns
+- Patterns are validated before import
+- Empty pattern lists are rejected
+- Old format files without `m3u_accounts` and `priority` fields are automatically migrated to the new format
+
 ### Test Pattern
 ```
 POST /api/regex-patterns/test
