@@ -106,19 +106,19 @@ docs/
 
 ## Performance Notes
 
-### Stream Matching (Step 5) Performance
+### Stream Matching Performance
 
-If you experience slow performance during **Step 5: Matching and assigning streams** (e.g., during manual health checks or global actions):
+If you experience slow performance during **stream matching and assignment** (e.g., during manual health checks or global actions):
 
 - **This is normal for large M3U playlists** (thousands of streams) with many regex patterns
-- **GPU acceleration will NOT help** - Step 5 performs regex pattern matching which is a CPU-bound text processing task, not video processing
-- **Progress is logged** - Check the logs to see processing status (shows % complete every 10%)
+- **GPU acceleration will NOT help** - Stream matching performs regex pattern matching which is a CPU-bound text processing task, not video processing
+- **Progress is logged** - Check the logs to see processing status (progress updates shown periodically during processing)
 - **To improve performance:**
   - Reduce the number of enabled M3U accounts in your configuration
   - Simplify or reduce the number of regex patterns
   - Disable matching for channels that don't need it (channel-level or group-level settings)
   
-### Stream Checking (Step 6) Performance
+### Stream Quality Checking Performance
 
 Stream quality checking uses ffmpeg to analyze video streams. Hardware acceleration is NOT currently implemented but could be added in future versions.
 
