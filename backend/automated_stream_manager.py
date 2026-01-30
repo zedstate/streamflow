@@ -1243,8 +1243,15 @@ class AutomatedStreamManager:
             assignment_details = defaultdict(list)  # Track stream details for changelog
             assignment_count = {}
             
+            # Log progress info
+            total_streams = len(all_streams)
+            logger.info(f"Processing {total_streams} streams for pattern matching...")
+            
+            # Progress tracking for long-running operations
+            progress_interval = max(100, total_streams // 10)  # Log every 10% or every 100 streams, whichever is larger
+            
             # Process each stream
-            for stream in all_streams:
+            for idx, stream in enumerate(all_streams, 1):
                 # Validate that stream is a dictionary before accessing attributes
                 if not isinstance(stream, dict):
                     logger.warning(f"Invalid stream format encountered: {type(stream).__name__} - {stream}")
@@ -1271,6 +1278,11 @@ class AutomatedStreamManager:
                 # Get stream's m3u_account for M3U account filtering
                 stream_m3u_account = stream.get('m3u_account')
                 
+                # Log progress periodically
+                if idx % progress_interval == 0:
+                    progress_pct = (idx / total_streams) * 100
+                    logger.info(f"  Progress: {idx}/{total_streams} streams processed ({progress_pct:.1f}%)")
+                
                 # Find matching channels (with M3U account filtering if applicable)
                 matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
                 
@@ -1282,6 +1294,8 @@ class AutomatedStreamManager:
                             "stream_id": stream_id,
                             "stream_name": stream_name
                         })
+            
+            logger.info(f"✓ Completed processing {total_streams} streams. Found {sum(len(s) for s in assignments.values())} new stream assignments across {len(assignments)} channels")
             
             # Prepare detailed changelog data
             detailed_assignments = []
