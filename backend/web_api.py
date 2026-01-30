@@ -28,7 +28,6 @@ from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
-from profile_config import ProfileConfig
 
 # Pre-compiled regex pattern for whitespace conversion (performance optimization)
 # This pattern matches one or more spaces that are NOT preceded by a backslash
@@ -1891,7 +1890,8 @@ def get_profile_channels(profile_id):
             
             # If include_snapshot is requested, merge with snapshot channels
             if include_snapshot:
-                profile_config = ProfileConfig()
+                from profile_config import get_profile_config
+                profile_config = get_profile_config()
                 snapshot = profile_config.get_snapshot(profile_id)
                 
                 if snapshot:
