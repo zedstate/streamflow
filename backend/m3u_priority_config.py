@@ -15,6 +15,10 @@ Priority Modes:
 
 The priority value (0-100) from Dispatcharr determines the strength of the bonus.
 Higher values give stronger preference to streams from that M3U account.
+For example:
+- Set priority=100 for your preferred/premium M3U source (e.g., english.m3u)
+- Set priority=50 for secondary sources
+- Set priority=1 for fallback sources
 """
 
 import json

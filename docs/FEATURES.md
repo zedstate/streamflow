@@ -58,6 +58,9 @@ See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation
     - Same Resolution Only: Priority applied within same resolution groups
     - All Streams: Always prefer higher priority accounts regardless of quality
   - Per-account priority values (0-100) set in Dispatcharr
+    - **Higher numbers = Higher priority** (e.g., 100 = highest priority, 1 = lowest priority)
+    - Use higher values (e.g., 100) for preferred M3U sources
+    - Use lower values (e.g., 1) for fallback sources
   - Per-account priority mode override (optional): Can override global setting for specific accounts
   - Priority fields disabled when global mode is "disabled"
   - Only enabled/active playlists shown in priority UI

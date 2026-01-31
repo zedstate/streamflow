@@ -104,6 +104,30 @@ docs/
 - Dispatcharr instance with API access
 - Sufficient resources for parallel stream checking (recommended: 2 CPU cores, 2GB RAM minimum)
 
+## Performance Notes
+
+### Stream Matching Performance
+
+If you experience slow performance during **stream matching and assignment** (e.g., during manual health checks or global actions):
+
+- **This is normal for large M3U playlists** (thousands of streams) with many regex patterns
+- **GPU acceleration will NOT help** - Stream matching performs regex pattern matching which is a CPU-bound text processing task, not video processing
+- **Progress is logged** - Check the logs to see processing status (progress updates shown periodically during processing)
+- **To improve performance:**
+  - Reduce the number of enabled M3U accounts in your configuration
+  - Simplify or reduce the number of regex patterns
+  - Disable matching for channels that don't need it (channel-level or group-level settings)
+  
+### Stream Quality Checking Performance
+
+Stream quality checking uses ffmpeg to analyze video streams. Hardware acceleration is NOT currently implemented but could be added in future versions.
+
+### M3U Priority
+
+The priority system uses values from 0-100:
+- **Higher numbers = Higher priority** (e.g., priority=100 for your preferred source, priority=1 for fallbacks)
+- See [FEATURES.md](docs/FEATURES.md) for detailed priority mode documentation
+
 ## License
 
 See [LICENSE](LICENSE) file for details.
