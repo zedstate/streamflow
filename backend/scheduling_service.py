@@ -484,6 +484,73 @@ class SchedulingService:
             logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
             return False
     
+    def create_session_from_event(self, event_id: str) -> Optional[str]:
+        """Create a monitoring session from a scheduled event.
+        
+        Args:
+            event_id: Event ID to create session from
+            
+        Returns:
+            Session ID if created successfully, None otherwise
+        """
+        # Find the event
+        with self._lock:
+            event = None
+            for e in self._scheduled_events:
+                if e.get('id') == event_id:
+                    event = e
+                    break
+            
+            if not event:
+                logger.warning(f"Event {event_id} not found for session creation")
+                return None
+        
+        # Create session without holding lock
+        try:
+            from stream_session_manager import get_session_manager
+            
+            session_manager = get_session_manager()
+            
+            # Build EPG event data
+            epg_event = {
+                'id': event.get('id'),
+                'title': event.get('program_title'),
+                'start_time': event.get('program_start_time'),
+                'end_time': event.get('program_end_time'),
+                'description': event.get('program_description', '')
+            }
+            
+            # Get channel's configured regex from channel settings if available
+            channel_id = event.get('channel_id')
+            regex_filter = ".*"  # Default
+            
+            # Try to get channel-specific regex from channel settings
+            try:
+                from channel_settings_manager import get_channel_settings_manager
+                settings_manager = get_channel_settings_manager()
+                channel_settings = settings_manager.get_channel_effective_settings(channel_id)
+                if channel_settings and channel_settings.get('regex_pattern'):
+                    regex_filter = channel_settings['regex_pattern']
+            except Exception as e:
+                logger.debug(f"Could not get channel regex settings: {e}")
+            
+            # Create session
+            session_id = session_manager.create_session(
+                channel_id=channel_id,
+                regex_filter=regex_filter,
+                pre_event_minutes=event.get('minutes_before', 30),
+                epg_event=epg_event,
+                auto_created=True,
+                auto_create_rule_id=event_id
+            )
+            
+            logger.info(f"Created monitoring session {session_id} from event {event_id}")
+            return session_id
+            
+        except Exception as e:
+            logger.error(f"Error creating session from event {event_id}: {e}", exc_info=True)
+            return None
+    
     def _load_auto_create_rules(self) -> List[Dict[str, Any]]:
         """Load auto-create rules from file.
         

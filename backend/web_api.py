@@ -4358,6 +4358,63 @@ def serve_screenshot(filename):
         return jsonify({"error": "Screenshot not found"}), 404
 
 
+@app.route('/api/stream-sessions/<session_id>/alive-screenshots', methods=['GET'])
+def get_alive_screenshots(session_id):
+    """Get screenshots and info for all alive (non-quarantined) streams in a session."""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        
+        # Get all alive streams with screenshots
+        screenshots_data = []
+        if session.streams:
+            for stream_id, stream_info in session.streams.items():
+                if not stream_info.is_quarantined and stream_info.screenshot_path:
+                    screenshots_data.append({
+                        'stream_id': stream_info.stream_id,
+                        'stream_name': stream_info.name,
+                        'screenshot_url': f"/data/screenshots/{Path(stream_info.screenshot_path).name}",
+                        'reliability_score': stream_info.reliability_score,
+                        'm3u_account': stream_info.m3u_account
+                    })
+        
+        # Sort by reliability score descending
+        screenshots_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+        
+        return jsonify({
+            'session_id': session_id,
+            'screenshots': screenshots_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting alive screenshots for session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
+def create_session_from_event(event_id):
+    """Create a monitoring session from a scheduled event."""
+    try:
+        scheduling_service = get_scheduling_service()
+        session_id = scheduling_service.create_session_from_event(event_id)
+        
+        if not session_id:
+            return jsonify({"error": "Failed to create session from event"}), 400
+        
+        return jsonify({
+            "session_id": session_id,
+            "message": "Session created successfully from event"
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating session from event {event_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
