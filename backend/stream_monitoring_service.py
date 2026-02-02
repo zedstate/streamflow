@@ -1,0 +1,345 @@
+"""
+Stream Monitoring Service
+
+Orchestrates continuous stream monitoring, reliability scoring, and screenshot capture
+for active monitoring sessions.
+"""
+
+import logging
+import threading
+import time
+from typing import Dict, Optional
+
+from logging_config import setup_logging
+from stream_session_manager import get_session_manager, StreamMetrics
+from ffmpeg_stream_monitor import FFmpegStreamMonitor
+from stream_screenshot_service import get_screenshot_service
+
+logger = setup_logging(__name__)
+
+# Monitoring intervals
+MONITOR_INTERVAL = 1.0  # seconds - how often to evaluate streams
+REFRESH_INTERVAL = 60.0  # seconds - how often to refresh stream list
+SCREENSHOT_CHECK_INTERVAL = 5.0  # seconds - how often to check for screenshot needs
+
+
+class StreamMonitoringService:
+    """
+    Service that manages continuous monitoring of streams.
+    
+    For each active session:
+    - Monitors all non-quarantined streams with FFmpeg
+    - Updates reliability scores using Capped Sliding Window
+    - Captures periodic screenshots
+    - Persists metrics to database
+    """
+    
+    _instance = None
+    _lock = threading.Lock()
+    
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        
+        self._initialized = True
+        self.session_manager = get_session_manager()
+        self.screenshot_service = get_screenshot_service()
+        
+        # Active monitors: session_id -> stream_id -> FFmpegStreamMonitor
+        self.monitors: Dict[str, Dict[int, FFmpegStreamMonitor]] = {}
+        
+        # Worker threads
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._refresh_thread: Optional[threading.Thread] = None
+        self._screenshot_thread: Optional[threading.Thread] = None
+        self._running = False
+        
+        logger.info("StreamMonitoringService initialized")
+    
+    def start(self):
+        """Start the monitoring service"""
+        if self._running:
+            logger.warning("Monitoring service already running")
+            return
+        
+        self._running = True
+        
+        # Start worker threads
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_worker,
+            daemon=True,
+            name="StreamMonitor-Worker"
+        )
+        self._monitor_thread.start()
+        
+        self._refresh_thread = threading.Thread(
+            target=self._refresh_worker,
+            daemon=True,
+            name="StreamMonitor-Refresh"
+        )
+        self._refresh_thread.start()
+        
+        self._screenshot_thread = threading.Thread(
+            target=self._screenshot_worker,
+            daemon=True,
+            name="StreamMonitor-Screenshot"
+        )
+        self._screenshot_thread.start()
+        
+        logger.info("StreamMonitoringService started")
+    
+    def stop(self):
+        """Stop the monitoring service"""
+        if not self._running:
+            return
+        
+        self._running = False
+        
+        # Stop all monitors
+        for session_monitors in self.monitors.values():
+            for monitor in session_monitors.values():
+                monitor.stop()
+        
+        self.monitors.clear()
+        
+        logger.info("StreamMonitoringService stopped")
+    
+    def _monitor_worker(self):
+        """Worker thread for monitoring streams"""
+        logger.info("Monitor worker started")
+        
+        while self._running:
+            try:
+                # Process each active session
+                active_sessions = self.session_manager.get_active_sessions()
+                
+                for session in active_sessions:
+                    self._monitor_session(session.session_id)
+                
+                time.sleep(MONITOR_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"Error in monitor worker: {e}", exc_info=True)
+                time.sleep(1)
+        
+        logger.info("Monitor worker stopped")
+    
+    def _refresh_worker(self):
+        """Worker thread for refreshing stream lists"""
+        logger.info("Refresh worker started")
+        
+        while self._running:
+            try:
+                # Refresh streams for each active session
+                active_sessions = self.session_manager.get_active_sessions()
+                
+                for session in active_sessions:
+                    self._refresh_session_streams(session.session_id)
+                
+                time.sleep(REFRESH_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"Error in refresh worker: {e}", exc_info=True)
+                time.sleep(5)
+        
+        logger.info("Refresh worker stopped")
+    
+    def _screenshot_worker(self):
+        """Worker thread for capturing screenshots"""
+        logger.info("Screenshot worker started")
+        
+        while self._running:
+            try:
+                # Check each active session for screenshot needs
+                active_sessions = self.session_manager.get_active_sessions()
+                
+                for session in active_sessions:
+                    self._check_screenshots(session.session_id)
+                
+                time.sleep(SCREENSHOT_CHECK_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"Error in screenshot worker: {e}", exc_info=True)
+                time.sleep(5)
+        
+        logger.info("Screenshot worker stopped")
+    
+    def _monitor_session(self, session_id: str):
+        """Monitor all streams in a session"""
+        session = self.session_manager.get_session(session_id)
+        if not session or not session.is_active:
+            # Clean up monitors for inactive session
+            if session_id in self.monitors:
+                for monitor in self.monitors[session_id].values():
+                    monitor.stop()
+                del self.monitors[session_id]
+            return
+        
+        # Ensure monitors dict exists for this session
+        if session_id not in self.monitors:
+            self.monitors[session_id] = {}
+        
+        # Start monitors for streams that don't have one
+        for stream_id, stream_info in session.streams.items():
+            if stream_info.is_quarantined:
+                continue
+            
+            if stream_id not in self.monitors[session_id]:
+                # Create monitor
+                monitor = FFmpegStreamMonitor(
+                    url=stream_info.url,
+                    on_stats_update=lambda stats, sid=session_id, stid=stream_id: 
+                        self._on_stats_update(sid, stid, stats)
+                )
+                
+                if monitor.start():
+                    self.monitors[session_id][stream_id] = monitor
+                    logger.info(f"Started monitor for stream {stream_id} in session {session_id}")
+                    
+                    # Stagger stream starts to avoid overwhelming the system
+                    time.sleep(session.stagger_ms / 1000.0)
+        
+        # Update metrics and scores
+        self._evaluate_session_streams(session_id)
+    
+    def _on_stats_update(self, session_id: str, stream_id: int, stats):
+        """Callback for when FFmpeg stats are updated"""
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            return
+        
+        stream_info = session.streams.get(stream_id)
+        if not stream_info:
+            return
+        
+        # Update stream metadata if we got better info
+        if stats.width > 0:
+            stream_info.width = stats.width
+            stream_info.height = stats.height
+        if stats.fps > 0:
+            stream_info.fps = stats.fps
+        if stats.bitrate > 0:
+            stream_info.bitrate = int(stats.bitrate)
+    
+    def _evaluate_session_streams(self, session_id: str):
+        """Evaluate and score all streams in a session"""
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            return
+        
+        current_time = time.time()
+        
+        # Check each monitor
+        for stream_id, monitor in self.monitors.get(session_id, {}).items():
+            stream_info = session.streams.get(stream_id)
+            if not stream_info:
+                continue
+            
+            stats = monitor.get_stats()
+            
+            # Create metrics entry
+            metrics = StreamMetrics(
+                timestamp=current_time,
+                speed=stats.speed,
+                bitrate=stats.bitrate,
+                fps=stats.fps,
+                is_alive=stats.is_alive,
+                buffering=monitor.is_buffering()
+            )
+            
+            # Add to history (limit size)
+            stream_info.metrics_history.append(metrics)
+            if len(stream_info.metrics_history) > 1000:
+                stream_info.metrics_history = stream_info.metrics_history[-1000:]
+            
+            # Update reliability score
+            scoring_window = self.session_manager.scoring_windows.get(session_id, {}).get(stream_id)
+            if scoring_window:
+                is_healthy = stats.is_alive and not monitor.is_buffering()
+                scoring_window.add_measurement(is_healthy, stats.speed)
+                stream_info.reliability_score = scoring_window.get_score()
+            
+            # Check for timeout/stall
+            if stats.is_alive:
+                time_since_update = current_time - stats.last_updated
+                if time_since_update > (session.timeout_ms / 1000.0):
+                    logger.warning(f"Stream {stream_id} timed out in session {session_id}")
+                    monitor.stop()
+                    del self.monitors[session_id][stream_id]
+                    stream_info.is_quarantined = True
+    
+    def _refresh_session_streams(self, session_id: str):
+        """Refresh the list of streams for a session"""
+        # Re-discover streams (will add new ones if they appear)
+        self.session_manager._discover_streams(session_id)
+        
+        session = self.session_manager.get_session(session_id)
+        if session:
+            logger.info(f"Refreshed streams for session {session_id}, now tracking {len(session.streams)} streams")
+    
+    def _check_screenshots(self, session_id: str):
+        """Check if any streams need screenshots"""
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            return
+        
+        current_time = time.time()
+        interval = session.screenshot_interval_seconds
+        
+        for stream_id, stream_info in session.streams.items():
+            if stream_info.is_quarantined:
+                continue
+            
+            # Check if we need a screenshot
+            time_since_screenshot = current_time - stream_info.last_screenshot_time
+            if time_since_screenshot >= interval:
+                # Capture screenshot in background
+                threading.Thread(
+                    target=self._capture_screenshot,
+                    args=(session_id, stream_id),
+                    daemon=True,
+                    name=f"Screenshot-{stream_id}"
+                ).start()
+                
+                # Update timestamp to avoid duplicate attempts
+                stream_info.last_screenshot_time = current_time
+    
+    def _capture_screenshot(self, session_id: str, stream_id: int):
+        """Capture a screenshot for a stream"""
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            return
+        
+        stream_info = session.streams.get(stream_id)
+        if not stream_info:
+            return
+        
+        try:
+            path = self.screenshot_service.capture(stream_info.url, stream_id)
+            if path:
+                stream_info.screenshot_path = path
+                logger.debug(f"Captured screenshot for stream {stream_id}: {path}")
+        except Exception as e:
+            logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
+
+
+# Global instance accessor
+_monitoring_instance = None
+_monitoring_lock = threading.Lock()
+
+
+def get_monitoring_service() -> StreamMonitoringService:
+    """Get the global StreamMonitoringService instance"""
+    global _monitoring_instance
+    if _monitoring_instance is None:
+        with _monitoring_lock:
+            if _monitoring_instance is None:
+                _monitoring_instance = StreamMonitoringService()
+    return _monitoring_instance
