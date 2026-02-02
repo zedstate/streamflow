@@ -83,7 +83,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
           <div className="space-y-2">
             <Label htmlFor="channel">Channel *</Label>
             <Select
-              value={formData.channel_id.toString()}
+              value={formData.channel_id ? formData.channel_id.toString() : ''}
               onValueChange={(value) => handleChange('channel_id', parseInt(value))}
             >
               <SelectTrigger id="channel">

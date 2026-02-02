@@ -71,6 +71,12 @@ class FFmpegStreamMonitor:
                 return False
             
             try:
+                # Validate URL to prevent command injection
+                if not self._validate_url(self.url):
+                    logger.error(f"Invalid or unsafe URL: {self.url}")
+                    self.stats.error_message = "Invalid URL"
+                    return False
+                
                 # Start FFmpeg process
                 self._process = subprocess.Popen(
                     [
@@ -107,6 +113,40 @@ class FFmpegStreamMonitor:
                 self.stats.is_alive = False
                 self.stats.error_message = str(e)
                 return False
+    
+    def _validate_url(self, url: str) -> bool:
+        """
+        Validate URL to prevent command injection and ensure it's a supported protocol.
+        
+        Args:
+            url: URL to validate
+            
+        Returns:
+            True if URL is valid and safe
+        """
+        if not url or not isinstance(url, str):
+            return False
+        
+        # Check for command injection attempts
+        dangerous_chars = ['`', '$', ';', '|', '&', '\n', '\r']
+        if any(char in url for char in dangerous_chars):
+            logger.warning(f"Rejected URL with dangerous characters: {url[:50]}")
+            return False
+        
+        # Check for supported protocols
+        import re
+        # Allow http(s), acestream, rtmp(s), etc.
+        protocol_pattern = r'^(https?|acestream|rtmp|rtmps|rtp|rtsp|udp|tcp)://'
+        if not re.match(protocol_pattern, url, re.IGNORECASE):
+            logger.warning(f"Rejected URL with unsupported protocol: {url[:50]}")
+            return False
+        
+        # Basic length check
+        if len(url) > 2000:
+            logger.warning(f"Rejected URL that is too long: {len(url)} chars")
+            return False
+        
+        return True
     
     def stop(self):
         """Stop monitoring the stream"""

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { streamSessionsAPI } from '@/services/streamSessions';
 import CreateSessionDialog from '@/components/stream-monitoring/CreateSessionDialog';
@@ -16,6 +17,8 @@ function StreamMonitoring() {
   const [activeSessions, setActiveSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState(null);
   const [selectedSessionId, setSelectedSessionId] = useState(null);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -94,18 +97,21 @@ function StreamMonitoring() {
   };
 
   const handleDeleteSession = async (sessionId) => {
-    if (!confirm('Are you sure you want to delete this session? This will remove all associated data.')) {
-      return;
-    }
+    setSessionToDelete(sessionId);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteSession = async () => {
+    if (!sessionToDelete) return;
     
     try {
-      await streamSessionsAPI.deleteSession(sessionId);
+      await streamSessionsAPI.deleteSession(sessionToDelete);
       toast({
         title: 'Success',
         description: 'Session deleted successfully'
       });
       
-      if (selectedSessionId === sessionId) {
+      if (selectedSessionId === sessionToDelete) {
         setSelectedSessionId(null);
       }
       
@@ -117,6 +123,9 @@ function StreamMonitoring() {
         description: 'Failed to delete session',
         variant: 'destructive'
       });
+    } finally {
+      setDeleteDialogOpen(false);
+      setSessionToDelete(null);
     }
   };
 
@@ -286,6 +295,22 @@ function StreamMonitoring() {
         onOpenChange={setCreateDialogOpen}
         onCreateSession={handleCreateSession}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Session</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this session? This will remove all associated data including metrics and screenshots. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteSession}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

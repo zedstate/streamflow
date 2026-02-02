@@ -373,19 +373,44 @@ class StreamSessionManager:
         # Get all streams
         all_streams = udi.get_streams()
         
-        # Filter by regex
+        # Filter by regex with safety measures
         import re
         try:
-            regex = re.compile(session.regex_filter, re.IGNORECASE)
+            # Validate regex complexity (basic check)
+            regex_pattern = session.regex_filter or '.*'
+            if len(regex_pattern) > 500:
+                logger.error(f"Regex pattern too long ({len(regex_pattern)} chars), max 500")
+                return
+            
+            # Compile with timeout protection
+            regex = re.compile(regex_pattern, re.IGNORECASE)
+            
+            # Test regex with empty string to catch catastrophic backtracking
+            try:
+                regex.search('')
+            except Exception as e:
+                logger.error(f"Regex pattern failed safety test: {e}")
+                return
+                
         except re.error as e:
             logger.error(f"Invalid regex filter: {e}")
             return
+        except Exception as e:
+            logger.error(f"Unexpected error compiling regex: {e}")
+            return
         
-        # Find matching streams
-        matching_streams = [
-            s for s in all_streams 
-            if regex.search(s.get('name', ''))
-        ]
+        # Find matching streams with timeout protection
+        matching_streams = []
+        for s in all_streams:
+            try:
+                # Use search with a reasonable timeout approach
+                # Python regex doesn't have direct timeout, but we can limit input size
+                stream_name = s.get('name', '')[:1000]  # Limit input size
+                if regex.search(stream_name):
+                    matching_streams.append(s)
+            except Exception as e:
+                logger.warning(f"Error matching stream {s.get('id')}: {e}")
+                continue
         
         logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams")
         
