@@ -4424,4 +4424,12 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Failed to auto-start EPG refresh processor: {e}")
     
+    # Auto-start stream monitoring service (always starts, independent of wizard)
+    try:
+        monitoring_service = get_monitoring_service()
+        monitoring_service.start()
+        logger.info("Stream monitoring service auto-started")
+    except Exception as e:
+        logger.error(f"Failed to auto-start stream monitoring service: {e}")
+    
     app.run(host=args.host, port=args.port, debug=args.debug)
