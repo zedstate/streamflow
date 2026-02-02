@@ -8,6 +8,7 @@ import { api } from '@/services/api.js'
 // Page imports
 import Dashboard from '@/pages/Dashboard'
 import StreamChecker from '@/pages/StreamChecker'
+import StreamMonitoring from '@/pages/StreamMonitoring'
 import ChannelConfiguration from '@/pages/ChannelConfiguration'
 import AutomationSettings from '@/pages/AutomationSettings'
 import Changelog from '@/pages/Changelog'
@@ -91,6 +92,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/stream-checker" element={<StreamChecker />} />
+            <Route path="/stream-monitoring" element={<StreamMonitoring />} />
             <Route path="/channels" element={<ChannelConfiguration />} />
             <Route path="/settings" element={<AutomationSettings />} />
             <Route path="/scheduling" element={<Scheduling />} />
