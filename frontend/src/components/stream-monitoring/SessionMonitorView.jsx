@@ -40,7 +40,15 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const loadSession = async () => {
     try {
       const response = await streamSessionsAPI.getSession(sessionId);
-      setSession(response.data);
+      // Use functional update to prevent flickering - only update if data actually changed
+      setSession(prevSession => {
+        const newSession = response.data;
+        // Deep comparison to prevent unnecessary re-renders
+        if (JSON.stringify(prevSession) === JSON.stringify(newSession)) {
+          return prevSession;
+        }
+        return newSession;
+      });
       setLoading(false);
     } catch (err) {
       console.error('Failed to load session:', err);
@@ -55,7 +63,14 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const loadAliveScreenshots = async () => {
     try {
       const response = await streamSessionsAPI.getAliveScreenshots(sessionId);
-      setAliveScreenshots(response.data.screenshots || []);
+      // Only update if screenshots actually changed
+      setAliveScreenshots(prevScreenshots => {
+        const newScreenshots = response.data.screenshots || [];
+        if (JSON.stringify(prevScreenshots) === JSON.stringify(newScreenshots)) {
+          return prevScreenshots;
+        }
+        return newScreenshots;
+      });
     } catch (err) {
       console.error('Failed to load screenshots:', err);
     }

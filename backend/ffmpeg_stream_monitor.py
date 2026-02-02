@@ -31,6 +31,9 @@ class FFmpegStats:
     last_updated: float = 0.0
     is_alive: bool = False
     error_message: Optional[str] = None
+    # Additional fields for bitrate calculation
+    total_size: int = 0  # bytes
+    start_time: float = 0.0
 
 
 class FFmpegStreamMonitor:
@@ -95,6 +98,7 @@ class FFmpegStreamMonitor:
                 self._running = True
                 self.stats.is_alive = True
                 self.stats.last_updated = time.time()
+                self.stats.start_time = time.time()
                 
                 # Start monitoring thread
                 self._monitor_thread = threading.Thread(
@@ -245,6 +249,27 @@ class FFmpegStreamMonitor:
             # 'k' or empty defaults to kbps
             
             self.stats.bitrate = value
+        
+        # Size (e.g., "size= 12345kB") - for calculating bitrate if not provided
+        size_match = re.search(r'size=\s*([0-9.]+)\s*([kmg]?)B', output, re.IGNORECASE)
+        if size_match:
+            value = float(size_match.group(1))
+            unit = size_match.group(2).lower()
+            
+            # Convert to bytes
+            if unit == 'k':
+                value *= 1024
+            elif unit == 'm':
+                value *= 1024 * 1024
+            elif unit == 'g':
+                value *= 1024 * 1024 * 1024
+            
+            self.stats.total_size = int(value)
+            
+            # Calculate bitrate from size and time if bitrate not directly available
+            if self.stats.bitrate == 0 and self.stats.time > 0:
+                # bitrate = (total_size * 8) / time / 1000 (to get kbps)
+                self.stats.bitrate = (self.stats.total_size * 8) / self.stats.time / 1000
         
         # FPS (e.g., "fps= 30")
         fps_match = re.search(r'fps=\s*(\d+(?:\.\d+)?)', output)

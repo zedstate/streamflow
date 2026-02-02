@@ -121,6 +121,10 @@ class StreamMonitoringService:
                 active_sessions = self.session_manager.get_active_sessions()
                 
                 for session in active_sessions:
+                    # Check if session should auto-stop based on EPG event end time
+                    self._check_session_auto_stop(session)
+                    
+                    # Monitor the session
                     self._monitor_session(session.session_id)
                 
                 time.sleep(MONITOR_INTERVAL)
@@ -130,6 +134,28 @@ class StreamMonitoringService:
                 time.sleep(1)
         
         logger.info("Monitor worker stopped")
+    
+    def _check_session_auto_stop(self, session):
+        """Check if session should automatically stop based on EPG event end time"""
+        if not session.epg_event_end:
+            # No EPG event attached, don't auto-stop
+            return
+        
+        try:
+            from datetime import datetime, timezone
+            
+            # Parse EPG event end time
+            end_time = datetime.fromisoformat(session.epg_event_end.replace('Z', '+00:00'))
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=timezone.utc)
+            
+            # Check if event has ended
+            now = datetime.now(timezone.utc)
+            if now >= end_time:
+                logger.info(f"EPG event ended for session {session.session_id}, auto-stopping session")
+                self.session_manager.stop_session(session.session_id)
+        except Exception as e:
+            logger.error(f"Error checking auto-stop for session {session.session_id}: {e}")
     
     def _refresh_worker(self):
         """Worker thread for refreshing stream lists"""
