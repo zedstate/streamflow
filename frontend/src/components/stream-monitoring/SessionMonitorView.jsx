@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import * as React from 'react';
 import { ArrowLeft, Square, Trash2, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -360,8 +361,8 @@ function StreamsTable({ streams, sessionId, onViewScreenshot, showQuarantined = 
         </TableHeader>
         <TableBody>
           {streams.map((stream, index) => (
-            <>
-              <TableRow key={stream.stream_id}>
+            <React.Fragment key={stream.stream_id}>
+              <TableRow>
                 <TableCell className="font-medium">{index + 1}</TableCell>
                 <TableCell className="max-w-xs truncate" title={stream.name}>
                   {stream.name}
@@ -400,13 +401,13 @@ function StreamsTable({ streams, sessionId, onViewScreenshot, showQuarantined = 
                 )}
               </TableRow>
               {!showQuarantined && (
-                <TableRow key={`${stream.stream_id}-metrics`}>
+                <TableRow>
                   <TableCell colSpan={7} className="bg-muted/30 p-2">
                     <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} />
                   </TableCell>
                 </TableRow>
               )}
-            </>
+            </React.Fragment>
           ))}
         </TableBody>
       </Table>
