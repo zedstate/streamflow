@@ -4081,6 +4081,249 @@ def trigger_epg_refresh():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== Stream Monitoring Session API ====================
+# Advanced stream monitoring with live quality tracking, reliability scoring,
+# and screenshot capture for event-based stream management
+
+from stream_session_manager import get_session_manager
+from stream_monitoring_service import get_monitoring_service
+
+
+@app.route('/api/stream-sessions', methods=['GET'])
+def get_stream_sessions():
+    """Get all stream monitoring sessions or filter by status."""
+    try:
+        session_manager = get_session_manager()
+        
+        # Check for status filter
+        status = request.args.get('status', '').lower()
+        
+        if status == 'active':
+            sessions = session_manager.get_active_sessions()
+        else:
+            sessions = session_manager.get_all_sessions()
+        
+        # Convert to JSON-serializable format
+        sessions_data = []
+        for session in sessions:
+            session_dict = {
+                'session_id': session.session_id,
+                'channel_id': session.channel_id,
+                'channel_name': session.channel_name,
+                'regex_filter': session.regex_filter,
+                'created_at': session.created_at,
+                'is_active': session.is_active,
+                'pre_event_minutes': session.pre_event_minutes,
+                'stagger_ms': session.stagger_ms,
+                'timeout_ms': session.timeout_ms,
+                'probe_interval_ms': session.probe_interval_ms,
+                'screenshot_interval_seconds': session.screenshot_interval_seconds,
+                'window_size': session.window_size,
+                'stream_count': len(session.streams) if session.streams else 0,
+                'active_streams': sum(1 for s in session.streams.values() if not s.is_quarantined) if session.streams else 0
+            }
+            sessions_data.append(session_dict)
+        
+        return jsonify(sessions_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting stream sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions', methods=['POST'])
+def create_stream_session():
+    """Create a new stream monitoring session."""
+    try:
+        data = request.json
+        
+        channel_id = data.get('channel_id')
+        if not channel_id:
+            return jsonify({"error": "channel_id is required"}), 400
+        
+        regex_filter = data.get('regex_filter', '.*')
+        pre_event_minutes = data.get('pre_event_minutes', 30)
+        stagger_ms = data.get('stagger_ms', 200)
+        timeout_ms = data.get('timeout_ms', 30000)
+        
+        session_manager = get_session_manager()
+        session_id = session_manager.create_session(
+            channel_id=channel_id,
+            regex_filter=regex_filter,
+            pre_event_minutes=pre_event_minutes,
+            stagger_ms=stagger_ms,
+            timeout_ms=timeout_ms
+        )
+        
+        return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating stream session: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>', methods=['GET'])
+def get_stream_session(session_id):
+    """Get detailed information about a specific session including all streams."""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        
+        # Build detailed session data
+        streams_data = []
+        if session.streams:
+            for stream_id, stream_info in session.streams.items():
+                stream_dict = {
+                    'stream_id': stream_info.stream_id,
+                    'url': stream_info.url,
+                    'name': stream_info.name,
+                    'channel_id': stream_info.channel_id,
+                    'width': stream_info.width,
+                    'height': stream_info.height,
+                    'fps': stream_info.fps,
+                    'bitrate': stream_info.bitrate,
+                    'm3u_account': stream_info.m3u_account,
+                    'is_quarantined': stream_info.is_quarantined,
+                    'reliability_score': stream_info.reliability_score,
+                    'screenshot_path': stream_info.screenshot_path,
+                    'last_screenshot_time': stream_info.last_screenshot_time,
+                    'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0
+                }
+                streams_data.append(stream_dict)
+        
+        # Sort by reliability score descending
+        streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+        
+        session_dict = {
+            'session_id': session.session_id,
+            'channel_id': session.channel_id,
+            'channel_name': session.channel_name,
+            'regex_filter': session.regex_filter,
+            'created_at': session.created_at,
+            'is_active': session.is_active,
+            'pre_event_minutes': session.pre_event_minutes,
+            'stagger_ms': session.stagger_ms,
+            'timeout_ms': session.timeout_ms,
+            'probe_interval_ms': session.probe_interval_ms,
+            'screenshot_interval_seconds': session.screenshot_interval_seconds,
+            'window_size': session.window_size,
+            'streams': streams_data
+        }
+        
+        return jsonify(session_dict), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting stream session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>/start', methods=['POST'])
+def start_stream_session(session_id):
+    """Start monitoring for a session."""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.start_session(session_id):
+            return jsonify({"error": "Failed to start session"}), 400
+        
+        # Ensure monitoring service is running
+        monitoring_service = get_monitoring_service()
+        if not monitoring_service._running:
+            monitoring_service.start()
+        
+        return jsonify({"message": "Session started successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error starting stream session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>/stop', methods=['POST'])
+def stop_stream_session(session_id):
+    """Stop monitoring for a session."""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.stop_session(session_id):
+            return jsonify({"error": "Failed to stop session"}), 400
+        
+        return jsonify({"message": "Session stopped successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error stopping stream session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>', methods=['DELETE'])
+def delete_stream_session(session_id):
+    """Delete a session."""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.delete_session(session_id):
+            return jsonify({"error": "Session not found"}), 404
+        
+        return jsonify({"message": "Session deleted successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting stream session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/metrics', methods=['GET'])
+def get_stream_metrics(session_id, stream_id):
+    """Get historical metrics for a stream in a session."""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        
+        stream_info = session.streams.get(stream_id)
+        if not stream_info:
+            return jsonify({"error": "Stream not found in session"}), 404
+        
+        # Get metrics history
+        metrics_data = []
+        if stream_info.metrics_history:
+            for metric in stream_info.metrics_history:
+                metrics_data.append({
+                    'timestamp': metric.timestamp,
+                    'speed': metric.speed,
+                    'bitrate': metric.bitrate,
+                    'fps': metric.fps,
+                    'is_alive': metric.is_alive,
+                    'buffering': metric.buffering
+                })
+        
+        return jsonify({
+            'stream_id': stream_id,
+            'metrics': metrics_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting stream metrics: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# Serve screenshots
+@app.route('/data/screenshots/<filename>')
+def serve_screenshot(filename):
+    """Serve screenshot files."""
+    try:
+        screenshots_dir = CONFIG_DIR / 'screenshots'
+        return send_from_directory(screenshots_dir, filename)
+    except Exception as e:
+        logger.error(f"Error serving screenshot {filename}: {e}")
+        return jsonify({"error": "Screenshot not found"}), 404
+
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
@@ -4180,5 +4423,13 @@ if __name__ == '__main__':
             logger.info("EPG refresh processor auto-started")
     except Exception as e:
         logger.error(f"Failed to auto-start EPG refresh processor: {e}")
+    
+    # Auto-start stream monitoring service (always starts, independent of wizard)
+    try:
+        monitoring_service = get_monitoring_service()
+        monitoring_service.start()
+        logger.info("Stream monitoring service auto-started")
+    except Exception as e:
+        logger.error(f"Failed to auto-start stream monitoring service: {e}")
     
     app.run(host=args.host, port=args.port, debug=args.debug)
