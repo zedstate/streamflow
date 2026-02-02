@@ -4120,7 +4120,19 @@ def get_stream_sessions():
                 'screenshot_interval_seconds': session.screenshot_interval_seconds,
                 'window_size': session.window_size,
                 'stream_count': len(session.streams) if session.streams else 0,
-                'active_streams': sum(1 for s in session.streams.values() if not s.is_quarantined) if session.streams else 0
+                'active_streams': sum(1 for s in session.streams.values() if not s.is_quarantined) if session.streams else 0,
+                # EPG event info
+                'epg_event_id': session.epg_event_id,
+                'epg_event_title': session.epg_event_title,
+                'epg_event_start': session.epg_event_start,
+                'epg_event_end': session.epg_event_end,
+                'epg_event_description': session.epg_event_description,
+                # Channel info
+                'channel_logo_url': session.channel_logo_url,
+                'channel_tvg_id': session.channel_tvg_id,
+                # Auto-creation info
+                'auto_created': session.auto_created,
+                'auto_create_rule_id': session.auto_create_rule_id
             }
             sessions_data.append(session_dict)
         
@@ -4146,13 +4158,23 @@ def create_stream_session():
         stagger_ms = data.get('stagger_ms', 200)
         timeout_ms = data.get('timeout_ms', 30000)
         
+        # Extract EPG event if provided
+        epg_event = data.get('epg_event')
+        
+        # Extract auto-creation flags if provided
+        auto_created = data.get('auto_created', False)
+        auto_create_rule_id = data.get('auto_create_rule_id')
+        
         session_manager = get_session_manager()
         session_id = session_manager.create_session(
             channel_id=channel_id,
             regex_filter=regex_filter,
             pre_event_minutes=pre_event_minutes,
             stagger_ms=stagger_ms,
-            timeout_ms=timeout_ms
+            timeout_ms=timeout_ms,
+            epg_event=epg_event,
+            auto_created=auto_created,
+            auto_create_rule_id=auto_create_rule_id
         )
         
         return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
@@ -4212,7 +4234,19 @@ def get_stream_session(session_id):
             'probe_interval_ms': session.probe_interval_ms,
             'screenshot_interval_seconds': session.screenshot_interval_seconds,
             'window_size': session.window_size,
-            'streams': streams_data
+            'streams': streams_data,
+            # EPG event info
+            'epg_event_id': session.epg_event_id,
+            'epg_event_title': session.epg_event_title,
+            'epg_event_start': session.epg_event_start,
+            'epg_event_end': session.epg_event_end,
+            'epg_event_description': session.epg_event_description,
+            # Channel info
+            'channel_logo_url': session.channel_logo_url,
+            'channel_tvg_id': session.channel_tvg_id,
+            # Auto-creation info
+            'auto_created': session.auto_created,
+            'auto_create_rule_id': session.auto_create_rule_id
         }
         
         return jsonify(session_dict), 200

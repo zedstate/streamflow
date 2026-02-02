@@ -87,6 +87,18 @@ class SessionInfo:
     screenshot_interval_seconds: int = DEFAULT_SCREENSHOT_INTERVAL_SECONDS
     window_size: int = DEFAULT_WINDOW_SIZE
     streams: Dict[int, StreamInfo] = None
+    # EPG event attachment
+    epg_event_id: Optional[int] = None
+    epg_event_title: Optional[str] = None
+    epg_event_start: Optional[str] = None
+    epg_event_end: Optional[str] = None
+    epg_event_description: Optional[str] = None
+    # Channel logo
+    channel_logo_url: Optional[str] = None
+    channel_tvg_id: Optional[str] = None
+    # Auto-creation source (for tracking if created by rules)
+    auto_created: bool = False
+    auto_create_rule_id: Optional[str] = None
     
     def __post_init__(self):
         if self.streams is None:
@@ -258,6 +270,7 @@ class StreamSessionManager:
     
     def create_session(self, channel_id: int, regex_filter: str = ".*",
                       pre_event_minutes: int = DEFAULT_PRE_EVENT_MINUTES,
+                      epg_event: Optional[Dict[str, Any]] = None,
                       **kwargs) -> str:
         """
         Create a new monitoring session.
@@ -266,7 +279,8 @@ class StreamSessionManager:
             channel_id: Dispatcharr channel ID to monitor
             regex_filter: Regex pattern to filter streams
             pre_event_minutes: Minutes before event to start monitoring
-            **kwargs: Additional session parameters
+            epg_event: Optional EPG event to attach to this session
+            **kwargs: Additional session parameters (auto_created, auto_create_rule_id, etc.)
             
         Returns:
             Session ID
@@ -280,6 +294,31 @@ class StreamSessionManager:
         # Generate session ID
         session_id = f"session_{channel_id}_{int(time.time())}"
         
+        # Extract EPG event info if provided
+        epg_event_id = None
+        epg_event_title = None
+        epg_event_start = None
+        epg_event_end = None
+        epg_event_description = None
+        if epg_event:
+            epg_event_id = epg_event.get('id')
+            epg_event_title = epg_event.get('title')
+            epg_event_start = epg_event.get('start_time')
+            epg_event_end = epg_event.get('end_time')
+            epg_event_description = epg_event.get('description')
+        
+        # Get channel logo info
+        channel_logo_url = None
+        channel_tvg_id = channel.get('tvg_id')
+        logo_id = channel.get('logo_id')
+        if logo_id:
+            # Build logo URL from Dispatcharr
+            from dispatcharr_config import get_dispatcharr_config
+            dispatcharr_config = get_dispatcharr_config()
+            base_url = dispatcharr_config.get_base_url()
+            if base_url:
+                channel_logo_url = f"{base_url}/api/channels/logos/{logo_id}/"
+        
         # Create session
         session = SessionInfo(
             session_id=session_id,
@@ -289,6 +328,13 @@ class StreamSessionManager:
             created_at=time.time(),
             is_active=False,
             pre_event_minutes=pre_event_minutes,
+            epg_event_id=epg_event_id,
+            epg_event_title=epg_event_title,
+            epg_event_start=epg_event_start,
+            epg_event_end=epg_event_end,
+            epg_event_description=epg_event_description,
+            channel_logo_url=channel_logo_url,
+            channel_tvg_id=channel_tvg_id,
             **kwargs
         )
         
