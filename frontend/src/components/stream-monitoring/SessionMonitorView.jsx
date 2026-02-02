@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Square, Trash2, Activity, AlertCircle, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Square, Trash2, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,22 +7,27 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 import { useToast } from '@/hooks/use-toast';
 import { streamSessionsAPI } from '@/services/streamSessions';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 
 function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedStream, setSelectedStream] = useState(null);
   const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
+  const [aliveScreenshots, setAliveScreenshots] = useState([]);
   const { toast } = useToast();
 
   useEffect(() => {
     loadSession();
+    loadAliveScreenshots();
     
     // Poll for updates every 2 seconds
     const interval = setInterval(() => {
       loadSession();
+      loadAliveScreenshots();
     }, 2000);
     
     return () => clearInterval(interval);
@@ -40,6 +45,15 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
         description: 'Failed to load session details',
         variant: 'destructive'
       });
+    }
+  };
+
+  const loadAliveScreenshots = async () => {
+    try {
+      const response = await streamSessionsAPI.getAliveScreenshots(sessionId);
+      setAliveScreenshots(response.data || []);
+    } catch (err) {
+      console.error('Failed to load screenshots:', err);
     }
   };
 
@@ -62,12 +76,22 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header with Channel Logo and EPG Info */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={onBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
+          {session.channel_logo_url && (
+            <div className="flex-shrink-0">
+              <img 
+                src={session.channel_logo_url} 
+                alt={session.channel_name}
+                className="h-16 w-16 object-contain rounded-md bg-white/5 p-1"
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            </div>
+          )}
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{session.channel_name}</h1>
             <p className="text-muted-foreground mt-1">
@@ -88,6 +112,90 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
           </Button>
         </div>
       </div>
+
+      {/* EPG Event Information */}
+      {(session.epg_title || session.epg_description) && (
+        <Card className="bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
+          <CardHeader>
+            <div className="flex items-start justify-between">
+              <div className="space-y-1 flex-1">
+                <CardTitle className="text-xl">{session.epg_title || 'Current Program'}</CardTitle>
+                {session.epg_description && (
+                  <CardDescription className="text-base mt-2">
+                    {session.epg_description}
+                  </CardDescription>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          {(session.epg_start_time || session.epg_end_time) && (
+            <CardContent>
+              <div className="flex gap-6 text-sm">
+                {session.epg_start_time && (
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Start:</span>
+                    <span className="font-medium">{new Date(session.epg_start_time).toLocaleString()}</span>
+                  </div>
+                )}
+                {session.epg_end_time && (
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">End:</span>
+                    <span className="font-medium">{new Date(session.epg_end_time).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {/* Screenshot Carousel */}
+      {aliveScreenshots.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Live Stream Screenshots</CardTitle>
+            <CardDescription>Real-time screenshots from active streams</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Carousel className="w-full">
+              <CarouselContent>
+                {aliveScreenshots.map((screenshot) => (
+                  <CarouselItem key={screenshot.stream_id} className="md:basis-1/2 lg:basis-1/3">
+                    <div className="p-1">
+                      <Card>
+                        <CardContent className="p-4">
+                          <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
+                            <img
+                              src={screenshot.screenshot_url}
+                              alt={screenshot.stream_name}
+                              className="w-full h-full object-contain"
+                              onError={(e) => {
+                                e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225"%3E%3Crect fill="%23111" width="400" height="225"/%3E%3Ctext fill="%23666" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif"%3ENo Image%3C/text%3E%3C/svg%3E';
+                              }}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
+                              {screenshot.stream_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Stream ID: {screenshot.stream_id}
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </CarouselItem>
+                ))}
+              </CarouselContent>
+              <CarouselPrevious />
+              <CarouselNext />
+            </Carousel>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-4">
@@ -144,6 +252,7 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
               ) : (
                 <StreamsTable
                   streams={activeStreams}
+                  sessionId={sessionId}
                   onViewScreenshot={handleViewScreenshot}
                 />
               )}
@@ -168,6 +277,7 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
               ) : (
                 <StreamsTable
                   streams={quarantinedStreams}
+                  sessionId={sessionId}
                   onViewScreenshot={handleViewScreenshot}
                   showQuarantined
                 />
@@ -213,7 +323,7 @@ function StatsCard({ title, value, suffix = '', icon: Icon, variant = 'default' 
 }
 
 // Streams Table Component
-function StreamsTable({ streams, onViewScreenshot, showQuarantined = false }) {
+function StreamsTable({ streams, sessionId, onViewScreenshot, showQuarantined = false }) {
   const formatQuality = (stream) => {
     if (!stream.width || !stream.height) return 'Unknown';
     return `${stream.width}x${stream.height}`;
@@ -247,47 +357,143 @@ function StreamsTable({ streams, onViewScreenshot, showQuarantined = false }) {
         </TableHeader>
         <TableBody>
           {streams.map((stream, index) => (
-            <TableRow key={stream.stream_id}>
-              <TableCell className="font-medium">{index + 1}</TableCell>
-              <TableCell className="max-w-xs truncate" title={stream.name}>
-                {stream.name}
-              </TableCell>
-              <TableCell>{formatQuality(stream)}</TableCell>
-              <TableCell>{stream.fps ? `${stream.fps.toFixed(1)} fps` : 'N/A'}</TableCell>
-              <TableCell>{formatBitrate(stream.bitrate)}</TableCell>
+            <>
+              <TableRow key={stream.stream_id}>
+                <TableCell className="font-medium">{index + 1}</TableCell>
+                <TableCell className="max-w-xs truncate" title={stream.name}>
+                  {stream.name}
+                </TableCell>
+                <TableCell>{formatQuality(stream)}</TableCell>
+                <TableCell>{stream.fps ? `${stream.fps.toFixed(1)} fps` : 'N/A'}</TableCell>
+                <TableCell>{formatBitrate(stream.bitrate)}</TableCell>
+                {!showQuarantined && (
+                  <>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Progress
+                          value={stream.reliability_score}
+                          className="w-20 h-2"
+                        />
+                        <span className="text-sm font-medium">
+                          {stream.reliability_score.toFixed(1)}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {stream.screenshot_path ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onViewScreenshot(stream)}
+                        >
+                          <ImageIcon className="h-3 w-3 mr-1" />
+                          View
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No screenshot</span>
+                      )}
+                    </TableCell>
+                  </>
+                )}
+              </TableRow>
               {!showQuarantined && (
-                <>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Progress
-                        value={stream.reliability_score}
-                        className="w-20 h-2"
-                      />
-                      <span className="text-sm font-medium">
-                        {stream.reliability_score.toFixed(1)}
-                      </span>
-                    </div>
+                <TableRow key={`${stream.stream_id}-metrics`}>
+                  <TableCell colSpan={7} className="bg-muted/30 p-2">
+                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} />
                   </TableCell>
-                  <TableCell>
-                    {stream.screenshot_path ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => onViewScreenshot(stream)}
-                      >
-                        <ImageIcon className="h-3 w-3 mr-1" />
-                        View
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No screenshot</span>
-                    )}
-                  </TableCell>
-                </>
+                </TableRow>
               )}
-            </TableRow>
+            </>
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+// Speed Metrics Chart Component
+function SpeedMetricsChart({ sessionId, streamId }) {
+  const [metrics, setMetrics] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadMetrics();
+    
+    // Refresh metrics every 5 seconds
+    const interval = setInterval(loadMetrics, 5000);
+    return () => clearInterval(interval);
+  }, [sessionId, streamId]);
+
+  const loadMetrics = async () => {
+    try {
+      const response = await streamSessionsAPI.getStreamMetrics(sessionId, streamId);
+      const metricsData = response.data || [];
+      
+      // Transform metrics data for the chart
+      const chartData = metricsData.map((metric) => ({
+        time: new Date(metric.timestamp).toLocaleTimeString(),
+        speed: metric.speed || 0,
+      })).slice(-20); // Keep last 20 data points
+      
+      setMetrics(chartData);
+      setLoading(false);
+    } catch (err) {
+      console.error('Failed to load metrics:', err);
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="h-24 flex items-center justify-center text-muted-foreground text-sm">
+        Loading metrics...
+      </div>
+    );
+  }
+
+  if (metrics.length === 0) {
+    return (
+      <div className="h-24 flex items-center justify-center text-muted-foreground text-sm">
+        No metrics data available
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground font-medium px-2">FFmpeg Speed</div>
+      <ResponsiveContainer width="100%" height={80}>
+        <LineChart data={metrics} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+          <XAxis 
+            dataKey="time" 
+            tick={{ fontSize: 10 }}
+            interval="preserveStartEnd"
+          />
+          <YAxis 
+            tick={{ fontSize: 10 }}
+            width={30}
+            domain={[0, 'auto']}
+          />
+          <RechartsTooltip 
+            contentStyle={{ 
+              backgroundColor: 'hsl(var(--background))', 
+              border: '1px solid hsl(var(--border))',
+              borderRadius: '6px',
+              fontSize: '12px'
+            }}
+            formatter={(value) => [`${value.toFixed(2)}x`, 'Speed']}
+          />
+          <Line 
+            type="monotone" 
+            dataKey="speed" 
+            stroke="hsl(var(--primary))" 
+            strokeWidth={2}
+            dot={false}
+            animationDuration={300}
+          />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }
