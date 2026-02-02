@@ -12,6 +12,9 @@ import { useToast } from '@/hooks/use-toast';
 import { streamSessionsAPI } from '@/services/streamSessions';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 
+// Constants
+const FALLBACK_IMAGE_SVG = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225"%3E%3Crect fill="%23111" width="400" height="225"/%3E%3Ctext fill="%23666" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif"%3ENo Image%3C/text%3E%3C/svg%3E';
+
 function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -51,7 +54,7 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const loadAliveScreenshots = async () => {
     try {
       const response = await streamSessionsAPI.getAliveScreenshots(sessionId);
-      setAliveScreenshots(response.data || []);
+      setAliveScreenshots(response.data.screenshots || []);
     } catch (err) {
       console.error('Failed to load screenshots:', err);
     }
@@ -114,35 +117,35 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
       </div>
 
       {/* EPG Event Information */}
-      {(session.epg_title || session.epg_description) && (
+      {(session.epg_event_title || session.epg_event_description) && (
         <Card className="bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
           <CardHeader>
             <div className="flex items-start justify-between">
               <div className="space-y-1 flex-1">
-                <CardTitle className="text-xl">{session.epg_title || 'Current Program'}</CardTitle>
-                {session.epg_description && (
+                <CardTitle className="text-xl">{session.epg_event_title || 'Current Program'}</CardTitle>
+                {session.epg_event_description && (
                   <CardDescription className="text-base mt-2">
-                    {session.epg_description}
+                    {session.epg_event_description}
                   </CardDescription>
                 )}
               </div>
             </div>
           </CardHeader>
-          {(session.epg_start_time || session.epg_end_time) && (
+          {(session.epg_event_start || session.epg_event_end) && (
             <CardContent>
               <div className="flex gap-6 text-sm">
-                {session.epg_start_time && (
+                {session.epg_event_start && (
                   <div className="flex items-center gap-2">
                     <Clock className="h-4 w-4 text-muted-foreground" />
                     <span className="text-muted-foreground">Start:</span>
-                    <span className="font-medium">{new Date(session.epg_start_time).toLocaleString()}</span>
+                    <span className="font-medium">{new Date(session.epg_event_start).toLocaleString()}</span>
                   </div>
                 )}
-                {session.epg_end_time && (
+                {session.epg_event_end && (
                   <div className="flex items-center gap-2">
                     <Clock className="h-4 w-4 text-muted-foreground" />
                     <span className="text-muted-foreground">End:</span>
-                    <span className="font-medium">{new Date(session.epg_end_time).toLocaleString()}</span>
+                    <span className="font-medium">{new Date(session.epg_event_end).toLocaleString()}</span>
                   </div>
                 )}
               </div>
@@ -172,7 +175,7 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
                               alt={screenshot.stream_name}
                               className="w-full h-full object-contain"
                               onError={(e) => {
-                                e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225"%3E%3Crect fill="%23111" width="400" height="225"/%3E%3Ctext fill="%23666" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif"%3ENo Image%3C/text%3E%3C/svg%3E';
+                                e.target.src = FALLBACK_IMAGE_SVG;
                               }}
                             />
                           </div>
