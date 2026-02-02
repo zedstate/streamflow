@@ -540,8 +540,8 @@ class SchedulingService:
                 regex_filter=regex_filter,
                 pre_event_minutes=event.get('minutes_before', 30),
                 epg_event=epg_event,
-                auto_created=True,
-                auto_create_rule_id=event_id
+                auto_created=event.get('auto_created', False),
+                auto_create_rule_id=event.get('auto_create_rule_id')
             )
             
             logger.info(f"Created monitoring session {session_id} from event {event_id}")

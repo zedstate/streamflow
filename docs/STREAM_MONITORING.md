@@ -191,11 +191,6 @@ Create a new monitoring session.
   "auto_create_rule_id": null
 }
 ```
-  "pre_event_minutes": 30,
-  "stagger_ms": 200,
-  "timeout_ms": 30000
-}
-```
 
 **Response:**
 ```json
