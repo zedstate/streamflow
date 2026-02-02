@@ -236,8 +236,11 @@ class StreamMonitoringService:
         
         current_time = time.time()
         
+        # Create a copy of the monitors dict items to avoid "dictionary changed size during iteration" error
+        monitors_snapshot = list(self.monitors.get(session_id, {}).items())
+        
         # Check each monitor
-        for stream_id, monitor in self.monitors.get(session_id, {}).items():
+        for stream_id, monitor in monitors_snapshot:
             stream_info = session.streams.get(stream_id)
             if not stream_info:
                 continue
@@ -272,6 +275,7 @@ class StreamMonitoringService:
                 if time_since_update > (session.timeout_ms / 1000.0):
                     logger.warning(f"Stream {stream_id} timed out in session {session_id}")
                     monitor.stop()
+                    # Safe to delete since we're iterating over a snapshot
                     del self.monitors[session_id][stream_id]
                     stream_info.is_quarantined = True
     
