@@ -31,16 +31,18 @@ function StreamMonitoring() {
       if (selectedSessionId) {
         // Refresh will happen in SessionMonitorView
       } else {
-        loadSessions();
+        loadSessions(false); // Don't show loading on interval refresh
       }
     }, 5000);
     
     return () => clearInterval(interval);
   }, [selectedSessionId]);
 
-  const loadSessions = async () => {
+  const loadSessions = async (showLoading = true) => {
     try {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      }
       const [allResponse, activeResponse] = await Promise.all([
         streamSessionsAPI.getSessions(),
         streamSessionsAPI.getSessions('active')
@@ -56,7 +58,9 @@ function StreamMonitoring() {
         variant: 'destructive'
       });
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   };
 
@@ -324,14 +328,30 @@ function SessionCard({ session, onView, onStart, onStop, onDelete }) {
   return (
     <Card className="hover:shadow-lg transition-shadow cursor-pointer" onClick={() => onView(session.session_id)}>
       <CardHeader>
-        <div className="flex justify-between items-start">
-          <div className="flex-1">
+        <div className="flex justify-between items-start gap-3">
+          {/* Channel Logo */}
+          {session.channel_logo_url && (
+            <div className="flex-shrink-0">
+              <img 
+                src={session.channel_logo_url} 
+                alt={session.channel_name}
+                className="h-12 w-12 object-contain rounded-md bg-white/5 p-1"
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
             <CardTitle className="text-lg">{session.channel_name}</CardTitle>
+            {session.epg_event_title && (
+              <p className="text-sm font-medium text-primary mt-1 truncate" title={session.epg_event_title}>
+                {session.epg_event_title}
+              </p>
+            )}
             <CardDescription className="mt-1">
               Created {formatDate(session.created_at)}
             </CardDescription>
           </div>
-          <Badge variant={session.is_active ? 'default' : 'secondary'}>
+          <Badge variant={session.is_active ? 'default' : 'secondary'} className="flex-shrink-0">
             {session.is_active ? 'Active' : 'Inactive'}
           </Badge>
         </div>

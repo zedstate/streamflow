@@ -187,6 +187,18 @@ class FFmpegStreamMonitor:
         if not self._process or not self._process.stderr:
             return
         
+        # Pre-lowercase fatal error patterns for performance
+        fatal_error_patterns = [
+            'error opening input:',
+            'error opening input file',
+            'error opening input files:',
+            'invalid data found when processing input',
+            'server returned 4',  # HTTP errors
+            'server returned 5',  # HTTP errors
+            'connection refused',
+            'no route to host',
+        ]
+        
         try:
             for line in self._process.stderr:
                 if not self._running:
@@ -196,11 +208,20 @@ class FFmpegStreamMonitor:
                 self._parse_stats(line)
                 self._parse_metadata(line)
                 
+                # Check for fatal errors that should stop the monitor
+                line_lower = line.lower()
+                is_fatal = any(pattern in line_lower for pattern in fatal_error_patterns)
+                
                 # Check for errors
-                if 'error' in line.lower() or 'failed' in line.lower():
+                if 'error' in line_lower or 'failed' in line_lower:
                     logger.warning(f"FFmpeg error for {self.url[:50]}: {line.strip()}")
-                    if 'fatal' in line.lower():
+                    if is_fatal or 'fatal' in line_lower:
                         self.stats.error_message = line.strip()
+                        self.stats.is_alive = False
+                        # Stop monitoring on fatal error
+                        logger.error(f"Fatal FFmpeg error detected, stopping monitor for {self.url[:50]}")
+                        self._running = False
+                        break
                 
                 # Callback if provided
                 if self.on_stats_update:

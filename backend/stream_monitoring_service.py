@@ -14,6 +14,7 @@ from logging_config import setup_logging
 from stream_session_manager import get_session_manager, StreamMetrics
 from ffmpeg_stream_monitor import FFmpegStreamMonitor
 from stream_screenshot_service import get_screenshot_service
+from dead_streams_tracker import DeadStreamsTracker
 
 logger = setup_logging(__name__)
 
@@ -51,6 +52,7 @@ class StreamMonitoringService:
         self._initialized = True
         self.session_manager = get_session_manager()
         self.screenshot_service = get_screenshot_service()
+        self.dead_streams_tracker = DeadStreamsTracker()
         
         # Active monitors: session_id -> stream_id -> FFmpegStreamMonitor
         self.monitors: Dict[str, Dict[int, FFmpegStreamMonitor]] = {}
@@ -243,6 +245,25 @@ class StreamMonitoringService:
         
         stream_info = session.streams.get(stream_id)
         if not stream_info:
+            return
+        
+        # Check if stream has died (fatal error)
+        if not stats.is_alive and stats.error_message:
+            logger.warning(f"Stream {stream_id} marked as dead in session {session_id}: {stats.error_message}")
+            # Mark stream as dead in the tracker
+            self.dead_streams_tracker.mark_as_dead(
+                stream_url=stream_info.url,
+                stream_id=stream_id,
+                stream_name=stream_info.name,
+                channel_id=session.channel_id
+            )
+            # Stop the monitor
+            if session_id in self.monitors and stream_id in self.monitors[session_id]:
+                monitor = self.monitors[session_id][stream_id]
+                monitor.stop()
+                del self.monitors[session_id][stream_id]
+            # Quarantine the stream
+            stream_info.is_quarantined = True
             return
         
         # Update stream metadata if we got better info
