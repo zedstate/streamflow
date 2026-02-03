@@ -16,6 +16,21 @@ import { schedulingAPI, channelsAPI, automationAPI } from '@/services/api.js'
 import { Plus, Trash2, Clock, Calendar, RefreshCw, Loader2, Settings, ChevronsUpDown, Check, Edit, Download, Upload, FileJson } from 'lucide-react'
 import { cn } from '@/lib/utils.js'
 
+// Schedule type descriptions
+const SCHEDULE_TYPE_INFO = {
+  check: {
+    title: 'Stream Check',
+    description: 'Quick stream validation',
+    details: 'Performs a quick validation of streams'
+  },
+  monitoring: {
+    title: 'Monitoring Session',
+    description: 'Continuous quality monitoring',
+    details: 'Creates a monitoring session for continuous quality tracking',
+    detailsPlural: 'Creates monitoring sessions for continuous quality tracking'
+  }
+}
+
 export default function Scheduling() {
   const [events, setEvents] = useState([])
   const [channels, setChannels] = useState([])
@@ -878,22 +893,20 @@ export default function Scheduling() {
                       <SelectContent>
                         <SelectItem value="check">
                           <div className="flex flex-col">
-                            <span className="font-medium">Stream Check</span>
-                            <span className="text-xs text-muted-foreground">Quick stream validation</span>
+                            <span className="font-medium">{SCHEDULE_TYPE_INFO.check.title}</span>
+                            <span className="text-xs text-muted-foreground">{SCHEDULE_TYPE_INFO.check.description}</span>
                           </div>
                         </SelectItem>
                         <SelectItem value="monitoring">
                           <div className="flex flex-col">
-                            <span className="font-medium">Monitoring Session</span>
-                            <span className="text-xs text-muted-foreground">Continuous quality monitoring</span>
+                            <span className="font-medium">{SCHEDULE_TYPE_INFO.monitoring.title}</span>
+                            <span className="text-xs text-muted-foreground">{SCHEDULE_TYPE_INFO.monitoring.description}</span>
                           </div>
                         </SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-sm text-muted-foreground">
-                      {scheduleType === 'check' 
-                        ? 'Performs a quick validation of streams' 
-                        : 'Creates a monitoring session for continuous quality tracking'}
+                      {SCHEDULE_TYPE_INFO[scheduleType].details}
                     </p>
                   </div>
                 )}
@@ -1554,22 +1567,22 @@ export default function Scheduling() {
                           <SelectContent>
                             <SelectItem value="check">
                               <div className="flex flex-col">
-                                <span className="font-medium">Stream Check</span>
-                                <span className="text-xs text-muted-foreground">Quick stream validation</span>
+                                <span className="font-medium">{SCHEDULE_TYPE_INFO.check.title}</span>
+                                <span className="text-xs text-muted-foreground">{SCHEDULE_TYPE_INFO.check.description}</span>
                               </div>
                             </SelectItem>
                             <SelectItem value="monitoring">
                               <div className="flex flex-col">
-                                <span className="font-medium">Monitoring Session</span>
-                                <span className="text-xs text-muted-foreground">Continuous quality monitoring</span>
+                                <span className="font-medium">{SCHEDULE_TYPE_INFO.monitoring.title}</span>
+                                <span className="text-xs text-muted-foreground">{SCHEDULE_TYPE_INFO.monitoring.description}</span>
                               </div>
                             </SelectItem>
                           </SelectContent>
                         </Select>
                         <p className="text-sm text-muted-foreground">
                           {ruleScheduleType === 'check' 
-                            ? 'Performs a quick validation of streams' 
-                            : 'Creates monitoring sessions for continuous quality tracking'}
+                            ? SCHEDULE_TYPE_INFO.check.details
+                            : SCHEDULE_TYPE_INFO.monitoring.detailsPlural}
                         </p>
                       </div>
                     </>
