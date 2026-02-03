@@ -356,7 +356,7 @@ class StreamMonitoringService:
                 # Safe to delete since we're iterating over a snapshot
                 del self.monitors[session_id][stream_id]
                 stream_info.is_quarantined = True
-            elif stats.is_alive:
+            else:
                 # Check for timeout/stall on alive streams
                 time_since_update = current_time - stats.last_updated
                 if time_since_update > (session.timeout_ms / 1000.0):

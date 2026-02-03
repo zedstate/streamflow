@@ -400,6 +400,7 @@ class StreamSessionManager:
             self._save_sessions()
         
         # Explicitly stop all FFmpeg monitors for this session
+        # Import here to avoid circular dependency between session_manager and monitoring_service
         try:
             from stream_monitoring_service import get_monitoring_service
             monitoring_service = get_monitoring_service()

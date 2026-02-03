@@ -523,7 +523,8 @@ function SpeedMetricsChart({ sessionId, streamId }) {
       
       // Transform metrics data for the chart
       const chartData = metricsData.map((metric) => {
-        const date = new Date(metric.timestamp * 1000); // Convert from seconds to milliseconds
+        // Timestamp is in Unix seconds, convert to milliseconds for JavaScript Date
+        const date = new Date(metric.timestamp * 1000);
         // Format as HH:MM:SS for better granularity
         const hours = date.getHours().toString().padStart(2, '0');
         const minutes = date.getMinutes().toString().padStart(2, '0');
