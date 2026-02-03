@@ -1450,6 +1450,39 @@ class UDIManager:
             
             logger.info("UDI Manager not initialized, auto-initializing...")
             self.initialize()
+    
+    def get_proxy_status(self) -> Dict[str, Any]:
+        """
+        Get the current proxy status showing which streams are actively playing.
+        
+        Returns:
+            Dictionary with proxy status information including:
+            - channels: List of active channels with stream info
+            - count: Number of active channels
+        """
+        self._ensure_initialized()
+        return self._get_proxy_status()
+    
+    def get_playing_stream_ids(self) -> Set[int]:
+        """
+        Get the set of stream IDs that are currently being played.
+        
+        Returns:
+            Set of stream IDs currently active in the proxy
+        """
+        self._ensure_initialized()
+        proxy_status = self._get_proxy_status()
+        
+        playing_stream_ids = set()
+        channels = proxy_status.get('channels', [])
+        
+        for channel_data in channels:
+            if channel_data.get('state') == 'active':
+                stream_id = channel_data.get('stream_id')
+                if stream_id:
+                    playing_stream_ids.add(stream_id)
+        
+        return playing_stream_ids
 
 
 # Global singleton instance

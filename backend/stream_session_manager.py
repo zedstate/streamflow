@@ -578,6 +578,35 @@ class StreamSessionManager:
             self._save_sessions()
             return True
     
+    def quarantine_stream(self, session_id: str, stream_id: int) -> bool:
+        """
+        Manually quarantine a stream.
+        
+        Args:
+            session_id: Session ID
+            stream_id: Stream ID to quarantine
+            
+        Returns:
+            True if quarantined successfully
+        """
+        if session_id not in self.sessions:
+            logger.error(f"Session {session_id} not found")
+            return False
+        
+        session = self.sessions[session_id]
+        stream_info = session.streams.get(stream_id)
+        
+        if not stream_info:
+            logger.error(f"Stream {stream_id} not found in session {session_id}")
+            return False
+        
+        with self.session_locks[session_id]:
+            stream_info.is_quarantined = True
+            self._save_sessions()
+        
+        logger.info(f"Manually quarantined stream {stream_id} in session {session_id}")
+        return True
+    
     def delete_session(self, session_id: str) -> bool:
         """Delete a session"""
         if session_id not in self.sessions:

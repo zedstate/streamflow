@@ -86,4 +86,30 @@ export const streamSessionsAPI = {
   getAliveScreenshots: (sessionId) => {
     return api.get(`/stream-sessions/${sessionId}/alive-screenshots`);
   },
+
+  /**
+   * Manually quarantine a stream in a session
+   * @param {string} sessionId - Session ID
+   * @param {number} streamId - Stream ID
+   * @returns {Promise}
+   */
+  quarantineStream: (sessionId, streamId) => {
+    return api.post(`/stream-sessions/${sessionId}/streams/${streamId}/quarantine`);
+  },
+
+  /**
+   * Get current proxy status (which streams are being played)
+   * @returns {Promise} Proxy status data
+   */
+  getProxyStatus: () => {
+    return api.get('/proxy/status');
+  },
+
+  /**
+   * Get list of stream IDs currently being played
+   * @returns {Promise} Array of playing stream IDs
+   */
+  getPlayingStreams: () => {
+    return api.get('/proxy/playing-streams');
+  },
 };

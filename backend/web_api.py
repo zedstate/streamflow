@@ -4405,6 +4405,57 @@ def get_alive_screenshots(session_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/quarantine', methods=['POST'])
+def quarantine_stream(session_id, stream_id):
+    """Manually quarantine a stream in a session."""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.quarantine_stream(session_id, stream_id):
+            return jsonify({"error": "Failed to quarantine stream"}), 400
+        
+        return jsonify({
+            "message": "Stream quarantined successfully",
+            "session_id": session_id,
+            "stream_id": stream_id
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error quarantining stream {stream_id} in session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/proxy/status', methods=['GET'])
+def get_proxy_status():
+    """Get current proxy status showing which streams are being played."""
+    try:
+        udi = get_udi_manager()
+        proxy_status = udi.get_proxy_status()
+        
+        return jsonify(proxy_status), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting proxy status: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/proxy/playing-streams', methods=['GET'])
+def get_playing_streams():
+    """Get list of stream IDs that are currently being played."""
+    try:
+        udi = get_udi_manager()
+        playing_stream_ids = udi.get_playing_stream_ids()
+        
+        return jsonify({
+            "playing_stream_ids": list(playing_stream_ids),
+            "count": len(playing_stream_ids)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting playing streams: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
 def create_session_from_event(event_id):
     """Create a monitoring session from a scheduled event."""
