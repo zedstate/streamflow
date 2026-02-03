@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as React from 'react';
-import { ArrowLeft, Square, Trash2, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play } from 'lucide-react';
+import { ArrowLeft, Square, Trash2, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -599,17 +599,52 @@ function SpeedMetricsChart({ sessionId, streamId }) {
   );
 }
 
-// Screenshot Dialog Component
+// Screenshot Dialog Component  
 function ScreenshotDialog({ open, onOpenChange, stream }) {
+  const { toast } = useToast();
   if (!stream) return null;
 
   const screenshotUrl = streamSessionsAPI.getScreenshotUrl(stream.stream_id);
+
+  const handleWatchLive = async () => {
+    try {
+      const response = await streamSessionsAPI.getStreamViewerUrl(stream.channel_id);
+      if (response.data.success) {
+        // Open stream in new tab
+        window.open(response.data.stream_url, '_blank', 'noopener,noreferrer');
+      } else {
+        toast({
+          title: 'Error',
+          description: 'Failed to get stream URL',
+          variant: 'destructive',
+        });
+      }
+    } catch (err) {
+      console.error('Failed to get stream URL:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to load live stream',
+        variant: 'destructive',
+      });
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
-          <DialogTitle>{stream.name}</DialogTitle>
+          <DialogTitle className="flex items-center justify-between">
+            <span>{stream.name}</span>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleWatchLive}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              <Monitor className="h-4 w-4 mr-2" />
+              Watch Live
+            </Button>
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4 text-sm">
@@ -642,6 +677,10 @@ function ScreenshotDialog({ open, onOpenChange, stream }) {
                 e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext fill="%23999" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle"%3ENo Image%3C/text%3E%3C/svg%3E';
               }}
             />
+          </div>
+          
+          <div className="flex justify-center gap-2 text-xs text-muted-foreground">
+            <span>💡 Tip: The "Watch Live" button opens the stream in a new tab.</span>
           </div>
         </div>
       </DialogContent>

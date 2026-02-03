@@ -4456,6 +4456,26 @@ def get_playing_streams():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/stream-viewer/<int:channel_id>', methods=['GET'])
+def get_stream_viewer_url(channel_id):
+    """Get the Dispatcharr stream URL for live viewing in browser."""
+    try:
+        dispatcharr_base_url = _get_base_url()
+        stream_url = f"{dispatcharr_base_url}/proxy/ts/stream/{channel_id}"
+        
+        return jsonify({
+            'success': True,
+            'stream_url': stream_url,
+            'channel_id': channel_id
+        })
+    except Exception as e:
+        logger.error(f"Error getting stream viewer URL for channel {channel_id}: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
 def create_session_from_event(event_id):
     """Create a monitoring session from a scheduled event."""
