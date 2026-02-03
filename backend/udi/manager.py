@@ -1475,10 +1475,10 @@ class UDIManager:
         proxy_status = self._get_proxy_status()
         
         playing_stream_ids = set()
-        channels = proxy_status.get('channels', [])
         
-        for channel_data in channels:
-            if channel_data.get('state') == 'active':
+        # proxy_status is a dict with channel_id -> status mapping
+        for channel_id_str, channel_data in proxy_status.items():
+            if self._is_channel_status_active(channel_data):
                 stream_id = channel_data.get('stream_id')
                 if stream_id:
                     playing_stream_ids.add(stream_id)

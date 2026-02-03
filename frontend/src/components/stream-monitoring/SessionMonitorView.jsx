@@ -19,8 +19,6 @@ const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_';
 function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [selectedStream, setSelectedStream] = useState(null);
-  const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
   const [aliveScreenshots, setAliveScreenshots] = useState([]);
   const [logoUrl, setLogoUrl] = useState(null);
   const [playingStreamIds, setPlayingStreamIds] = useState(new Set());
@@ -223,44 +221,64 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
         </Card>
       )}
 
-      {/* Screenshot Carousel */}
-      {aliveScreenshots.length > 0 && (
+      {/* Live Stream Preview */}
+      {activeStreams.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Live Stream Screenshots</CardTitle>
-            <CardDescription>Real-time screenshots from active streams</CardDescription>
+            <CardTitle>Live Stream Preview</CardTitle>
+            <CardDescription>View screenshots and live streams from active streams</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800">
-              <div className="flex gap-4 pb-4">
-                {aliveScreenshots.map((screenshot) => (
-                  <div key={screenshot.stream_id} className="flex-none w-80">
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
-                          <img
-                            src={screenshot.screenshot_url}
-                            alt={screenshot.stream_name}
-                            className="w-full h-full object-contain"
-                            onError={(e) => {
-                              e.target.src = FALLBACK_IMAGE_SVG;
-                            }}
-                          />
+            <Tabs defaultValue="screenshots" className="w-full">
+              <TabsList className="mb-4">
+                <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+                <TabsTrigger value="live">Live Streams</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="screenshots">
+                {aliveScreenshots.length > 0 ? (
+                  <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800">
+                    <div className="flex gap-4 pb-4">
+                      {aliveScreenshots.map((screenshot) => (
+                        <div key={screenshot.stream_id} className="flex-none w-80">
+                          <Card>
+                            <CardContent className="p-4">
+                              <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
+                                <img
+                                  src={screenshot.screenshot_url}
+                                  alt={screenshot.stream_name}
+                                  className="w-full h-full object-contain"
+                                  onError={(e) => {
+                                    e.target.src = FALLBACK_IMAGE_SVG;
+                                  }}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
+                                  {screenshot.stream_name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  Stream ID: {screenshot.stream_id}
+                                </p>
+                              </div>
+                            </CardContent>
+                          </Card>
                         </div>
-                        <div className="space-y-1">
-                          <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
-                            {screenshot.stream_name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Stream ID: {screenshot.stream_id}
-                          </p>
-                        </div>
-                      </CardContent>
-                    </Card>
+                      ))}
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground">No screenshots available yet</p>
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="live">
+                <LiveStreamsGrid streams={activeStreams} sessionId={sessionId} />
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
       )}
@@ -321,7 +339,6 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
                 <StreamsTable
                   streams={activeStreams}
                   sessionId={sessionId}
-                  onViewScreenshot={handleViewScreenshot}
                   onQuarantine={handleQuarantineStream}
                   playingStreamIds={playingStreamIds}
                 />
@@ -348,7 +365,6 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
                 <StreamsTable
                   streams={quarantinedStreams}
                   sessionId={sessionId}
-                  onViewScreenshot={handleViewScreenshot}
                   showQuarantined
                 />
               )}
@@ -356,15 +372,6 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
           </Card>
         </TabsContent>
       </Tabs>
-
-      {/* Screenshot Dialog */}
-      {selectedStream && (
-        <ScreenshotDialog
-          open={screenshotDialogOpen}
-          onOpenChange={setScreenshotDialogOpen}
-          stream={selectedStream}
-        />
-      )}
     </div>
   );
 }
@@ -393,7 +400,7 @@ function StatsCard({ title, value, suffix = '', icon: Icon, variant = 'default' 
 }
 
 // Streams Table Component
-function StreamsTable({ streams, sessionId, onViewScreenshot, onQuarantine, playingStreamIds = new Set(), showQuarantined = false }) {
+function StreamsTable({ streams, sessionId, onQuarantine, playingStreamIds = new Set(), showQuarantined = false }) {
   const formatQuality = (stream) => {
     if (!stream.width || !stream.height) return 'Unknown';
     return `${stream.width}x${stream.height}`;
@@ -420,7 +427,6 @@ function StreamsTable({ streams, sessionId, onViewScreenshot, onQuarantine, play
             {!showQuarantined && (
               <>
                 <TableHead>Reliability</TableHead>
-                <TableHead>Screenshot</TableHead>
                 <TableHead>Actions</TableHead>
               </>
             )}
@@ -459,20 +465,6 @@ function StreamsTable({ streams, sessionId, onViewScreenshot, onQuarantine, play
                           {stream.reliability_score.toFixed(1)}
                         </span>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      {stream.screenshot_path ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onViewScreenshot(stream)}
-                        >
-                          <ImageIcon className="h-3 w-3 mr-1" />
-                          View
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">No screenshot</span>
-                      )}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -600,148 +592,214 @@ function SpeedMetricsChart({ sessionId, streamId }) {
 }
 
 // Screenshot Dialog Component  
-function ScreenshotDialog({ open, onOpenChange, stream }) {
-  const { toast } = useToast();
-  const [showVideoPlayer, setShowVideoPlayer] = React.useState(false);
-  const [streamUrl, setStreamUrl] = React.useState(null);
-  
-  if (!stream) return null;
+// LiveStreamsGrid Component with mpegts.js support
+function LiveStreamsGrid({ streams, sessionId }) {
+  const [mpegtsLib, setMpegtsLib] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
 
-  const screenshotUrl = streamSessionsAPI.getScreenshotUrl(stream.stream_id);
-
-  const handleWatchLive = async () => {
-    try {
-      const response = await streamSessionsAPI.getStreamViewerUrl(stream.stream_id);
-      if (response.data.success) {
-        setStreamUrl(response.data.stream_url);
-        setShowVideoPlayer(true);
-      } else {
-        toast({
-          title: 'Error',
-          description: response.data.error || 'Failed to get stream URL',
-          variant: 'destructive',
-        });
+  useEffect(() => {
+    // Import mpegts.js once for all stream players
+    const loadMpegts = async () => {
+      try {
+        const mpegts = await import('mpegts.js');
+        if (!mpegts.default.isSupported()) {
+          console.error('Browser does not support MPEG-TS playback');
+        }
+        setMpegtsLib(mpegts.default);
+        setLoading(false);
+      } catch (err) {
+        console.error('Failed to load mpegts.js:', err);
+        setLoading(false);
       }
-    } catch (err) {
-      console.error('Failed to get stream URL:', err);
-      toast({
-        title: 'Error',
-        description: 'Failed to load live stream',
-        variant: 'destructive',
-      });
+    };
+
+    loadMpegts();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+        <p className="text-muted-foreground">Loading stream player...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {streams.map((stream) => (
+        <LiveStreamPlayer key={stream.stream_id} stream={stream} mpegtsLib={mpegtsLib} />
+      ))}
+    </div>
+  );
+}
+
+// Live Stream Player Component using mpegts.js
+function LiveStreamPlayer({ stream, mpegtsLib }) {
+  const videoRef = React.useRef(null);
+  const playerRef = React.useRef(null);
+  const [streamUrl, setStreamUrl] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+  const [isMuted, setIsMuted] = React.useState(true);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    // Load stream URL
+    const loadStreamUrl = async () => {
+      try {
+        const response = await streamSessionsAPI.getStreamViewerUrl(stream.stream_id);
+        if (response.data.success) {
+          setStreamUrl(response.data.stream_url);
+          setLoading(false);
+        } else {
+          setError(response.data.error || 'Failed to get stream URL');
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Failed to get stream URL:', err);
+        setError('Failed to load stream');
+        setLoading(false);
+      }
+    };
+
+    loadStreamUrl();
+  }, [stream.stream_id]);
+
+  useEffect(() => {
+    // Initialize mpegts.js player when stream URL is available
+    if (!streamUrl || !videoRef.current || !mpegtsLib) return;
+
+    const initPlayer = async () => {
+      try {
+        if (!mpegtsLib.isSupported()) {
+          setError('Your browser does not support MPEG-TS playback');
+          return;
+        }
+
+        // Create player
+        const player = mpegtsLib.createPlayer({
+          type: 'mpegts',
+          url: streamUrl,
+          isLive: true,
+        }, {
+          enableWorker: true,
+          lazyLoadMaxDuration: 3 * 60,
+          seekType: 'range',
+        });
+
+        player.attachMediaElement(videoRef.current);
+        player.load();
+        
+        // Handle errors
+        player.on(mpegtsLib.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+          console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
+          setError('Stream playback error');
+        });
+
+        playerRef.current = player;
+      } catch (err) {
+        console.error('Failed to initialize mpegts.js:', err);
+        setError('Failed to initialize player');
+      }
+    };
+
+    initPlayer();
+
+    // Cleanup
+    return () => {
+      if (playerRef.current) {
+        try {
+          playerRef.current.destroy();
+        } catch (err) {
+          console.error('Error destroying player:', err);
+        }
+        playerRef.current = null;
+      }
+    };
+  }, [streamUrl, mpegtsLib]);
+
+  const formatQuality = () => {
+    if (!stream.width || !stream.height) return 'Unknown';
+    return `${stream.width}x${stream.height}`;
+  };
+
+  const formatBitrate = () => {
+    if (!stream.bitrate) return 'N/A';
+    if (stream.bitrate >= 1000) {
+      return `${(stream.bitrate / 1000).toFixed(1)} Mbps`;
+    }
+    return `${stream.bitrate} kbps`;
+  };
+
+  const handleToggleMute = () => {
+    if (videoRef.current) {
+      videoRef.current.muted = !isMuted;
+      setIsMuted(!isMuted);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => {
-      if (!isOpen) {
-        setShowVideoPlayer(false);
-        setStreamUrl(null);
-      }
-      onOpenChange(isOpen);
-    }}>
-      <DialogContent className="max-w-4xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center justify-between">
-            <span>{stream.name}</span>
-            <div className="flex gap-2">
-              {!showVideoPlayer && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={handleWatchLive}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  <Monitor className="h-4 w-4 mr-2" />
-                  Watch Live
-                </Button>
-              )}
-              {showVideoPlayer && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowVideoPlayer(false)}
-                >
-                  <ImageIcon className="h-4 w-4 mr-2" />
-                  View Screenshot
-                </Button>
-              )}
+    <Card>
+      <CardContent className="p-4">
+        <div className="aspect-video bg-black rounded-md overflow-hidden mb-3 relative">
+          {loading ? (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
             </div>
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-muted-foreground">Quality:</span>{' '}
-              <span className="font-medium">{stream.width}x{stream.height}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">FPS:</span>{' '}
-              <span className="font-medium">{stream.fps?.toFixed(1) || 'N/A'}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Bitrate:</span>{' '}
-              <span className="font-medium">
-                {stream.bitrate ? `${(stream.bitrate / 1000).toFixed(1)} Mbps` : 'N/A'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Reliability:</span>{' '}
-              <span className="font-medium">{stream.reliability_score.toFixed(1)}%</span>
-            </div>
-          </div>
-          
-          {showVideoPlayer && streamUrl ? (
-            <div className="bg-black rounded-lg overflow-hidden">
-              <video
-                key={streamUrl}
-                controls
-                autoPlay
-                className="w-full h-auto"
-                style={{ maxHeight: '500px' }}
-                onError={(e) => {
-                  console.error('Video playback error:', e);
-                  toast({
-                    title: 'Playback Error',
-                    description: 'Unable to play this stream format. Your browser may not support MPEG-TS or HLS streams directly.',
-                    variant: 'destructive',
-                  });
-                }}
-              >
-                {/* Try MPEG-TS first (common for IPTV streams) */}
-                <source src={streamUrl} type="video/mp2t" />
-                {/* Fallback to HLS if available */}
-                <source src={streamUrl} type="application/x-mpegURL" />
-                Your browser does not support the video tag or this stream format.
-              </video>
-              <div className="p-2 text-xs text-muted-foreground text-center">
-                Stream URL: <code className="text-xs bg-muted px-1 py-0.5 rounded">{streamUrl}</code>
+          ) : error ? (
+            <div className="w-full h-full flex items-center justify-center text-destructive">
+              <div className="text-center p-4">
+                <AlertCircle className="h-12 w-12 mx-auto mb-2" />
+                <p className="text-sm">{error}</p>
               </div>
             </div>
           ) : (
-            <div className="bg-black rounded-lg overflow-hidden">
-              <img
-                src={screenshotUrl}
-                alt="Stream screenshot"
-                className="w-full h-auto"
-                onError={(e) => {
-                  e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext fill="%23999" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle"%3ENo Image%3C/text%3E%3C/svg%3E';
-                }}
+            <>
+              <video
+                ref={videoRef}
+                controls
+                className="w-full h-full object-contain"
+                muted={isMuted}
               />
-            </div>
-          )}
-          
-          {!showVideoPlayer && (
-            <div className="flex flex-col gap-1 items-center text-xs text-muted-foreground">
-              <span>💡 Tip: Click "Watch Live" to play the stream directly in your browser.</span>
-              <span className="text-[10px]">Note: Requires browser support for MPEG-TS or HLS streams.</span>
-            </div>
+              {isMuted && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="absolute top-2 right-2 opacity-80 hover:opacity-100"
+                  onClick={handleToggleMute}
+                >
+                  <Monitor className="h-4 w-4 mr-1" />
+                  Unmute
+                </Button>
+              )}
+            </>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+        <div className="space-y-2">
+          <p className="font-medium text-sm truncate" title={stream.name}>
+            {stream.name}
+          </p>
+          <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+            <div>
+              <span className="font-medium">Quality:</span> {formatQuality()}
+            </div>
+            <div>
+              <span className="font-medium">FPS:</span> {stream.fps ? `${stream.fps.toFixed(1)}` : 'N/A'}
+            </div>
+            <div>
+              <span className="font-medium">Bitrate:</span> {formatBitrate()}
+            </div>
+            <div>
+              <span className="font-medium">Score:</span> {stream.reliability_score.toFixed(1)}%
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
+
 // Helper function
 function calculateAverageScore(streams) {
   if (streams.length === 0) return 0;

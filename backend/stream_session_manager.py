@@ -605,7 +605,7 @@ class StreamSessionManager:
             # Also add stream to Dispatcharr channel for real-time sync
             try:
                 from api_utils import add_streams_to_channel
-                added_count = add_streams_to_channel(session.channel_id, [stream_id])
+                added_count = add_streams_to_channel(session.channel_id, [stream_id], allow_dead_streams=True)
                 if added_count > 0:
                     logger.info(
                         f"✓ Successfully added stream {stream_id} to Dispatcharr "
