@@ -115,10 +115,10 @@ export const streamSessionsAPI = {
 
   /**
    * Get stream viewer URL for live playback
-   * @param {number} channelId - Channel ID
+   * @param {number} streamId - Stream ID
    * @returns {Promise} Stream URL for viewing
    */
-  getStreamViewerUrl: (channelId) => {
-    return api.get(`/stream-viewer/${channelId}`);
+  getStreamViewerUrl: (streamId) => {
+    return api.get(`/stream-viewer/${streamId}`);
   },
 };

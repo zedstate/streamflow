@@ -602,20 +602,23 @@ function SpeedMetricsChart({ sessionId, streamId }) {
 // Screenshot Dialog Component  
 function ScreenshotDialog({ open, onOpenChange, stream }) {
   const { toast } = useToast();
+  const [showVideoPlayer, setShowVideoPlayer] = React.useState(false);
+  const [streamUrl, setStreamUrl] = React.useState(null);
+  
   if (!stream) return null;
 
   const screenshotUrl = streamSessionsAPI.getScreenshotUrl(stream.stream_id);
 
   const handleWatchLive = async () => {
     try {
-      const response = await streamSessionsAPI.getStreamViewerUrl(stream.channel_id);
+      const response = await streamSessionsAPI.getStreamViewerUrl(stream.stream_id);
       if (response.data.success) {
-        // Open stream in new tab
-        window.open(response.data.stream_url, '_blank', 'noopener,noreferrer');
+        setStreamUrl(response.data.stream_url);
+        setShowVideoPlayer(true);
       } else {
         toast({
           title: 'Error',
-          description: 'Failed to get stream URL',
+          description: response.data.error || 'Failed to get stream URL',
           variant: 'destructive',
         });
       }
@@ -630,20 +633,40 @@ function ScreenshotDialog({ open, onOpenChange, stream }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(isOpen) => {
+      if (!isOpen) {
+        setShowVideoPlayer(false);
+        setStreamUrl(null);
+      }
+      onOpenChange(isOpen);
+    }}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <span>{stream.name}</span>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleWatchLive}
-              className="bg-green-600 hover:bg-green-700"
-            >
-              <Monitor className="h-4 w-4 mr-2" />
-              Watch Live
-            </Button>
+            <div className="flex gap-2">
+              {!showVideoPlayer && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleWatchLive}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  <Monitor className="h-4 w-4 mr-2" />
+                  Watch Live
+                </Button>
+              )}
+              {showVideoPlayer && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowVideoPlayer(false)}
+                >
+                  <ImageIcon className="h-4 w-4 mr-2" />
+                  Show Screenshot
+                </Button>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -668,20 +691,49 @@ function ScreenshotDialog({ open, onOpenChange, stream }) {
             </div>
           </div>
           
-          <div className="bg-black rounded-lg overflow-hidden">
-            <img
-              src={screenshotUrl}
-              alt="Stream screenshot"
-              className="w-full h-auto"
-              onError={(e) => {
-                e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext fill="%23999" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle"%3ENo Image%3C/text%3E%3C/svg%3E';
-              }}
-            />
-          </div>
+          {showVideoPlayer && streamUrl ? (
+            <div className="bg-black rounded-lg overflow-hidden">
+              <video
+                key={streamUrl}
+                controls
+                autoPlay
+                className="w-full h-auto"
+                style={{ maxHeight: '500px' }}
+                onError={(e) => {
+                  console.error('Video playback error:', e);
+                  toast({
+                    title: 'Playback Error',
+                    description: 'Unable to play this stream format. Your browser may not support MPEG-TS streams directly.',
+                    variant: 'destructive',
+                  });
+                }}
+              >
+                <source src={streamUrl} type="video/mp2t" />
+                <source src={streamUrl} type="application/x-mpegURL" />
+                Your browser does not support the video tag or this stream format.
+              </video>
+              <div className="p-2 text-xs text-muted-foreground text-center">
+                Stream URL: <code className="text-xs bg-muted px-1 py-0.5 rounded">{streamUrl}</code>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-black rounded-lg overflow-hidden">
+              <img
+                src={screenshotUrl}
+                alt="Stream screenshot"
+                className="w-full h-auto"
+                onError={(e) => {
+                  e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext fill="%23999" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle"%3ENo Image%3C/text%3E%3C/svg%3E';
+                }}
+              />
+            </div>
+          )}
           
-          <div className="flex justify-center gap-2 text-xs text-muted-foreground">
-            <span>💡 Tip: The "Watch Live" button opens the stream in a new tab.</span>
-          </div>
+          {!showVideoPlayer && (
+            <div className="flex justify-center gap-2 text-xs text-muted-foreground">
+              <span>💡 Tip: Click "Watch Live" to play the stream directly in your browser.</span>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

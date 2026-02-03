@@ -4456,20 +4456,34 @@ def get_playing_streams():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/stream-viewer/<int:channel_id>', methods=['GET'])
-def get_stream_viewer_url(channel_id):
-    """Get the Dispatcharr stream URL for live viewing in browser."""
+@app.route('/api/stream-viewer/<int:stream_id>', methods=['GET'])
+def get_stream_viewer_url(stream_id):
+    """Get the stream's direct URL for live viewing in browser."""
     try:
-        dispatcharr_base_url = _get_base_url()
-        stream_url = f"{dispatcharr_base_url}/proxy/ts/stream/{channel_id}"
+        udi = get_udi_manager()
+        stream = udi.get_stream_by_id(stream_id)
+        
+        if not stream:
+            return jsonify({
+                'success': False,
+                'error': f'Stream {stream_id} not found'
+            }), 404
+        
+        stream_url = stream.get('url', '')
+        if not stream_url:
+            return jsonify({
+                'success': False,
+                'error': f'Stream {stream_id} has no URL'
+            }), 404
         
         return jsonify({
             'success': True,
             'stream_url': stream_url,
-            'channel_id': channel_id
+            'stream_id': stream_id,
+            'stream_name': stream.get('name', 'Unknown')
         })
     except Exception as e:
-        logger.error(f"Error getting stream viewer URL for channel {channel_id}: {e}", exc_info=True)
+        logger.error(f"Error getting stream viewer URL for stream {stream_id}: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)
