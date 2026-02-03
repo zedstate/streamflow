@@ -475,6 +475,16 @@ class StreamSessionManager:
                 # Extract stream stats (including bitrate from stream_stats)
                 stats = extract_stream_stats(stream_data)
                 
+                # Extract bitrate safely, handling various data types
+                bitrate = None
+                if stats.get('bitrate_kbps'):
+                    try:
+                        bitrate = int(stats.get('bitrate_kbps'))
+                    except (ValueError, TypeError):
+                        bitrate = stream_data.get('bitrate')
+                else:
+                    bitrate = stream_data.get('bitrate')
+                
                 stream_info = StreamInfo(
                     stream_id=stream_id,
                     url=stream_data.get('url', ''),
@@ -483,7 +493,7 @@ class StreamSessionManager:
                     width=stream_data.get('width'),
                     height=stream_data.get('height'),
                     fps=stats.get('fps') or stream_data.get('fps'),
-                    bitrate=int(stats.get('bitrate_kbps')) if stats.get('bitrate_kbps') else stream_data.get('bitrate'),
+                    bitrate=bitrate,
                     m3u_account=stream_data.get('m3u_account')
                 )
                 session.streams[stream_id] = stream_info

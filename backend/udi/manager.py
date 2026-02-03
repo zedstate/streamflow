@@ -25,11 +25,12 @@ Usage:
 
 import threading
 import time
+import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Set, Tuple
 
 from udi.storage import UDIStorage
-from udi.fetcher import UDIFetcher
+from udi.fetcher import UDIFetcher, _get_auth_headers
 from udi.cache import UDICache
 
 from logging_config import setup_logging
@@ -1499,10 +1500,6 @@ class UDIManager:
             return True
         
         try:
-            import requests
-            from dispatcharr_config import get_dispatcharr_config
-            from udi.fetcher import _get_auth_headers
-            
             config = get_dispatcharr_config()
             base_url = config.get_base_url()
             
@@ -1519,11 +1516,8 @@ class UDIManager:
             
             if response.status_code == 204:
                 logger.info(f"Successfully deleted {len(stream_ids)} streams from Dispatcharr")
-                # Force refresh streams cache after deletion
-                self._streams_cache = []
-                self._streams_by_id = {}
-                self._streams_by_url = {}
-                self._valid_stream_ids = set()
+                # Invalidate streams cache after deletion
+                self._invalidate_streams_cache()
                 return True
             else:
                 logger.error(f"Failed to delete streams: HTTP {response.status_code}")
@@ -1532,6 +1526,14 @@ class UDIManager:
         except Exception as e:
             logger.error(f"Error deleting streams from Dispatcharr: {e}", exc_info=True)
             return False
+    
+    def _invalidate_streams_cache(self) -> None:
+        """Invalidate streams cache after modification operations."""
+        with self._lock:
+            self._streams_cache = []
+            self._streams_by_id = {}
+            self._streams_by_url = {}
+            self._valid_stream_ids = set()
 
 
 # Global singleton instance
