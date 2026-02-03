@@ -400,6 +400,27 @@ class StreamSessionManager:
             # Discover streams
             self._discover_streams(session_id)
             
+            # If no streams found, try to recover deleted streams (e.g. from previous quarantine)
+            if not session.streams:
+                logger.info(f"No streams found for session {session_id}. Triggering playlist refresh to recover potentially deleted streams...")
+                try:
+                    from api_utils import refresh_m3u_playlists
+                    from udi import get_udi_manager
+                    
+                    # Refresh playlists (re-import streams to Dispatcharr)
+                    # This might take a moment, but is necessary if streams were deleted
+                    refresh_m3u_playlists()
+                    
+                    # Refresh UDI cache to see the new streams
+                    udi = get_udi_manager()
+                    udi.refresh_streams()
+                    
+                    # Try discovery again
+                    self._discover_streams(session_id)
+                    logger.info(f"Recovery attempt completed. Found {len(session.streams)} streams.")
+                except Exception as e:
+                    logger.error(f"Failed to recover deleted streams for session {session_id}: {e}")
+            
             self._save_sessions()
         
         logger.info(f"Started session {session_id}")
