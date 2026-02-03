@@ -294,6 +294,11 @@ class StreamMonitoringService:
                 success = udi.bulk_delete_streams([stream_id])
                 if success:
                     logger.info(f"Removed dead stream {stream_id} from Dispatcharr channel")
+                    # Refresh the channel in UDI to update cache after deletion
+                    session = self.session_manager.get_session(session_id)
+                    if session:
+                        udi.refresh_channel_by_id(session.channel_id)
+                        logger.debug(f"Refreshed channel {session.channel_id} in UDI after dead stream removal")
                 else:
                     logger.warning(f"Failed to remove dead stream {stream_id} from Dispatcharr")
             except Exception as e:

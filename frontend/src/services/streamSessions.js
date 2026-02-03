@@ -112,4 +112,13 @@ export const streamSessionsAPI = {
   getPlayingStreams: () => {
     return api.get('/proxy/playing-streams');
   },
+
+  /**
+   * Get stream viewer URL for live playback
+   * @param {number} streamId - Stream ID
+   * @returns {Promise} Stream URL for viewing
+   */
+  getStreamViewerUrl: (streamId) => {
+    return api.get(`/stream-viewer/${streamId}`);
+  },
 };

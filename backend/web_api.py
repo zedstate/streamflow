@@ -4456,6 +4456,40 @@ def get_playing_streams():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/stream-viewer/<int:stream_id>', methods=['GET'])
+def get_stream_viewer_url(stream_id):
+    """Get the stream's direct URL for live viewing in browser."""
+    try:
+        udi = get_udi_manager()
+        stream = udi.get_stream_by_id(stream_id)
+        
+        if not stream:
+            return jsonify({
+                'success': False,
+                'error': f'Stream {stream_id} not found'
+            }), 404
+        
+        stream_url = stream.get('url', '')
+        if not stream_url:
+            return jsonify({
+                'success': False,
+                'error': f'Stream {stream_id} has no URL'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'stream_url': stream_url,
+            'stream_id': stream_id,
+            'stream_name': stream.get('name', 'Unknown')
+        })
+    except Exception as e:
+        logger.error(f"Error getting stream viewer URL for stream {stream_id}: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
 def create_session_from_event(event_id):
     """Create a monitoring session from a scheduled event."""
