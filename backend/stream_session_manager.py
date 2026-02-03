@@ -65,6 +65,8 @@ class StreamInfo:
     metrics_history: List[StreamMetrics] = None
     last_screenshot_time: float = 0
     screenshot_path: Optional[str] = None
+    # Low speed tracking for auto-quarantine
+    low_speed_start_time: Optional[float] = None  # When speed first dropped below threshold
     
     def __post_init__(self):
         if self.metrics_history is None:
