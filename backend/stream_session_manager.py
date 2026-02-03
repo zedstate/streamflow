@@ -400,27 +400,6 @@ class StreamSessionManager:
             # Discover streams
             self._discover_streams(session_id)
             
-            # If no streams found, try to recover deleted streams (e.g. from previous quarantine)
-            if not session.streams:
-                logger.info(f"No streams found for session {session_id}. Triggering playlist refresh to recover potentially deleted streams...")
-                try:
-                    from api_utils import refresh_m3u_playlists
-                    from udi import get_udi_manager
-                    
-                    # Refresh playlists (re-import streams to Dispatcharr)
-                    # This might take a moment, but is necessary if streams were deleted
-                    refresh_m3u_playlists()
-                    
-                    # Refresh UDI cache to see the new streams
-                    udi = get_udi_manager()
-                    udi.refresh_streams()
-                    
-                    # Try discovery again
-                    self._discover_streams(session_id)
-                    logger.info(f"Recovery attempt completed. Found {len(session.streams)} streams.")
-                except Exception as e:
-                    logger.error(f"Failed to recover deleted streams for session {session_id}: {e}")
-            
             self._save_sessions()
         
         logger.info(f"Started session {session_id}")
@@ -730,17 +709,48 @@ class StreamSessionManager:
             try:
                 from udi import get_udi_manager
                 udi = get_udi_manager()
-                success = udi.bulk_delete_streams([stream_id])
-                if success:
-                    logger.info(f"Removed quarantined stream {stream_id} from Dispatcharr channel")
-                    # Refresh the channel in UDI to update cache after deletion
-                    udi.refresh_channel_by_id(session.channel_id)
-                    logger.debug(f"Refreshed channel {session.channel_id} in UDI after stream removal")
+                
+                # Mark as dead in tracker first
+                try:
+                    from dead_streams_tracker import DeadStreamsTracker
+                    tracker = DeadStreamsTracker()
+                    tracker.mark_as_dead(
+                        stream_url=stream_info.url,
+                        stream_id=stream_id,
+                        stream_name=stream_info.name,
+                        channel_id=session.channel_id
+                    )
+                    logger.info(f"Marked quarantined stream {stream_id} as dead in tracker")
+                except Exception as e:
+                    logger.warning(f"Failed to mark stream {stream_id} as dead: {e}")
+
+                # Remove from channel (but not delete from UDI)
+                channel = udi.get_channel_by_id(session.channel_id)
+                if channel:
+                    current_streams = channel.get('streams', [])
+                    if stream_id in current_streams:
+                        # Create new list without the quarantined stream
+                        new_streams = [sid for sid in current_streams if sid != stream_id]
+                        
+                        # Update channel with new stream list
+                        # use api_utils to ensure proper update
+                        from api_utils import update_channel_streams
+                        success = update_channel_streams(session.channel_id, new_streams)
+                        
+                        if success:
+                            logger.info(f"Removed quarantined stream {stream_id} from Dispatcharr channel {session.channel_id}")
+                            # Refresh channel in UDI
+                            udi.refresh_channel_by_id(session.channel_id)
+                        else:
+                            logger.warning(f"Failed to update channel {session.channel_id} to remove stream {stream_id}")
+                    else:
+                        logger.info(f"Stream {stream_id} was not in channel {session.channel_id} streams list")
                 else:
-                    logger.warning(f"Failed to remove quarantined stream {stream_id} from Dispatcharr")
+                    logger.warning(f"Channel {session.channel_id} not found, could not remove stream {stream_id}")
+
             except Exception as e:
-                logger.error(f"Error removing quarantined stream from Dispatcharr: {e}", exc_info=True)
-        
+                logger.error(f"Error handling Dispatcharr updates for quarantined stream {stream_id}: {e}", exc_info=True)
+         
         return True
     
     def delete_session(self, session_id: str) -> bool:
