@@ -1459,7 +1459,7 @@ class StreamCheckerService:
             "source_fps": stream_data.get("fps"),
             "video_codec": stream_data.get("video_codec"),
             "audio_codec": stream_data.get("audio_codec"),
-            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] and stream_data.get("bitrate_kbps") else None,
+            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
         }
         
         # Clean up the payload, removing any None values or N/A values
@@ -1534,7 +1534,7 @@ class StreamCheckerService:
             "source_fps": stream_data.get("fps"),
             "video_codec": stream_data.get("video_codec"),
             "audio_codec": stream_data.get("audio_codec"),
-            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] and stream_data.get("bitrate_kbps") else None,
+            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
         }
         
         # Clean up the payload, removing any None values or N/A values
@@ -2629,9 +2629,11 @@ class StreamCheckerService:
                         logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
                     else:
                         logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
-                    logger.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
+                        logger.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
+                else:
+                    logger.warning(f"⚠ Could not verify channel {channel_name}: channel data not found after refresh")
             else:
-                logger.warning(f"⚠ Could not verify stream update for channel {channel_name}")
+                logger.debug(f"Skipped verification for channel {channel_name} (disabled in config)")
             
             logger.info(f"✓ Channel {channel_name} checked and streams reordered")
             

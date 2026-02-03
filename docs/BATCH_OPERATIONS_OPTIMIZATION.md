@@ -43,11 +43,13 @@ When disabled, operations skip the UDI refresh and trust the PATCH response, eli
 ### 3. Import Error Fix
 Fixed critical import error where `stream_checker_service.py` was attempting to import `get_regex_matcher` from `automated_stream_manager.py` instead of `web_api.py`.
 
+**Before (broken):**
 ```python
-# Before (broken):
 from automated_stream_manager import get_regex_matcher
+```
 
-# After (fixed):
+**After (fixed):**
+```python
 from web_api import get_regex_matcher
 ```
 

@@ -830,7 +830,14 @@ def batch_update_stream_stats(stream_stats_list: List[Dict[str, Any]], batch_siz
     total = len(stream_stats_list)
     
     # Get UDI manager for cache updates
-    udi = get_udi_manager()
+    try:
+        udi = get_udi_manager()
+        if not udi:
+            logger.error("UDI manager not available, cannot perform batch update")
+            return 0, total
+    except Exception as e:
+        logger.error(f"Failed to get UDI manager: {e}")
+        return 0, total
     
     # Process in batches to limit concurrent API calls
     for i in range(0, total, batch_size):
