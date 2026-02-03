@@ -113,6 +113,29 @@ class StreamMonitoringService:
         
         logger.info("StreamMonitoringService stopped")
     
+    def stop_session_monitors(self, session_id: str):
+        """
+        Stop all FFmpeg monitors for a specific session.
+        
+        This is called when a session is stopped or deleted to ensure
+        all FFmpeg processes are terminated immediately.
+        
+        Args:
+            session_id: Session ID to stop monitors for
+        """
+        if session_id in self.monitors:
+            logger.info(f"Stopping all monitors for session {session_id}")
+            for stream_id, monitor in list(self.monitors[session_id].items()):
+                try:
+                    monitor.stop()
+                    logger.debug(f"Stopped monitor for stream {stream_id}")
+                except Exception as e:
+                    logger.error(f"Error stopping monitor for stream {stream_id}: {e}")
+            
+            # Remove session from monitors
+            del self.monitors[session_id]
+            logger.info(f"All monitors stopped for session {session_id}")
+    
     def _monitor_worker(self):
         """Worker thread for monitoring streams"""
         logger.info("Monitor worker started")
@@ -293,6 +316,15 @@ class StreamMonitoringService:
                 continue
             
             stats = monitor.get_stats()
+            
+            # Update stream info with latest stats
+            if stats.width > 0:
+                stream_info.width = stats.width
+                stream_info.height = stats.height
+            if stats.fps > 0:
+                stream_info.fps = stats.fps
+            if stats.bitrate > 0:
+                stream_info.bitrate = int(stats.bitrate)
             
             # Create metrics entry
             metrics = StreamMetrics(

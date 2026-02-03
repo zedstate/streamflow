@@ -69,35 +69,9 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const loadSession = async () => {
     try {
       const response = await streamSessionsAPI.getSession(sessionId);
-      // Use shallow comparison to prevent flickering - only update if data actually changed
-      setSession(prevSession => {
-        const newSession = response.data;
-        
-        // Quick check: if no previous session, always update
-        if (!prevSession) return newSession;
-        
-        // Compare key fields that matter for re-rendering
-        const keysToCompare = [
-          'is_active', 'stream_count', 'active_streams',
-          'epg_event_title', 'channel_logo_url'
-        ];
-        
-        // Check if any key fields changed
-        const hasChanged = keysToCompare.some(key => prevSession[key] !== newSession[key]);
-        
-        // Check if streams array length changed
-        const streamsChanged = 
-          !prevSession.streams || 
-          !newSession.streams ||
-          prevSession.streams.length !== newSession.streams.length;
-        
-        // If nothing changed, return previous to prevent re-render
-        if (!hasChanged && !streamsChanged) {
-          return prevSession;
-        }
-        
-        return newSession;
-      });
+      // Always update to ensure stream stats are refreshed
+      // The component uses React.memo and other optimizations to prevent unnecessary re-renders
+      setSession(response.data);
       setLoading(false);
     } catch (err) {
       console.error('Failed to load session:', err);

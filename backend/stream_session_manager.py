@@ -399,6 +399,14 @@ class StreamSessionManager:
             session.is_active = False
             self._save_sessions()
         
+        # Explicitly stop all FFmpeg monitors for this session
+        try:
+            from stream_monitoring_service import get_monitoring_service
+            monitoring_service = get_monitoring_service()
+            monitoring_service.stop_session_monitors(session_id)
+        except Exception as e:
+            logger.error(f"Error stopping monitors for session {session_id}: {e}")
+        
         logger.info(f"Stopped session {session_id}")
         return True
     
