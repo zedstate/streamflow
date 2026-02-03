@@ -34,7 +34,8 @@ from api_utils import (
     fetch_channel_streams,
     update_channel_streams,
     _get_base_url,
-    patch_request
+    patch_request,
+    batch_update_stream_stats
 )
 
 # Import UDI for direct data access
@@ -133,6 +134,10 @@ class StreamCheckConfig:
             'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
             'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
             'min_score': 0  # Minimum score (0-100, 0 = no minimum)
+        },
+        'batch_operations': {
+            'enabled': True,  # Enable batch stats updates to reduce API calls
+            'batch_size': 10  # Number of streams to update per batch
         }
     }
     
@@ -1503,6 +1508,46 @@ class StreamCheckerService:
             logger.error(f"Error updating stats for stream {stream_id}: {e}")
             return False
     
+    def _prepare_stream_stats_for_batch(self, stream_data: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Prepare stream stats for batch update.
+        
+        This method extracts and formats stream stats from analyzed stream data
+        for use in batch update operations.
+        
+        Parameters:
+            stream_data (Dict): Analyzed stream data with resolution, fps, codecs, bitrate
+            
+        Returns:
+            Optional[Dict[str, Any]]: Dict with 'stream_id' and 'stream_stats' keys,
+                                     or None if no valid stats to update
+        """
+        stream_id = stream_data.get("stream_id")
+        if not stream_id:
+            logger.warning("No stream_id in stream data. Skipping stats preparation.")
+            return None
+        
+        # Construct the stream stats payload from the analyzed stream data
+        stream_stats_payload = {
+            "resolution": stream_data.get("resolution"),
+            "source_fps": stream_data.get("fps"),
+            "video_codec": stream_data.get("video_codec"),
+            "audio_codec": stream_data.get("audio_codec"),
+            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] and stream_data.get("bitrate_kbps") else None,
+        }
+        
+        # Clean up the payload, removing any None values or N/A values
+        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+        
+        if not stream_stats_payload:
+            logger.debug(f"No data to update for stream {stream_id}. Skipping.")
+            return None
+        
+        return {
+            'stream_id': stream_id,
+            'stream_stats': stream_stats_payload
+        }
+    
     def _start_batch_changelog(self):
         """Start a new batch for changelog entries."""
         with self.batch_lock:
@@ -1923,11 +1968,21 @@ class StreamCheckerService:
                 )
                 
                 # Process results - ALL checks are complete at this point
-                # This is the correct place to update stats and track dead streams
+                # Collect stats for batch update to minimize API calls
+                batch_stats_list = []
+                batch_config = self.config.get('batch_operations', {})
+                batch_enabled = batch_config.get('enabled', True)
+                batch_size = batch_config.get('batch_size', 10)
+                
                 for analyzed in results:
-                    # Update stream stats on Dispatcharr with ffmpeg-extracted data
-                    # Now that all parallel checks are complete, we can safely push the info
-                    self._update_stream_stats(analyzed)
+                    # Prepare stats for batch update
+                    if batch_enabled:
+                        stats_item = self._prepare_stream_stats_for_batch(analyzed)
+                        if stats_item:
+                            batch_stats_list.append(stats_item)
+                    else:
+                        # Fall back to individual updates if batching is disabled
+                        self._update_stream_stats(analyzed)
                     
                     # Check if stream is dead
                     is_dead = self._is_stream_dead(analyzed)
@@ -1957,6 +2012,12 @@ class StreamCheckerService:
                     analyzed['channel_id'] = channel_id
                     analyzed['channel_name'] = channel_name
                     analyzed_streams.append(analyzed)
+                
+                # Perform batch stats update if enabled and we have stats to update
+                if batch_enabled and batch_stats_list:
+                    logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
+                    successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
+                    logger.info(f"Batch update complete: {successful} successful, {failed} failed")
                 
                 logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
             
@@ -2854,7 +2915,7 @@ class StreamCheckerService:
                 return 0.0
             
             # Import regex matcher to check which pattern matched this stream
-            from automated_stream_manager import get_regex_matcher
+            from web_api import get_regex_matcher
             regex_matcher = get_regex_matcher()
             
             # Get match results with priority
