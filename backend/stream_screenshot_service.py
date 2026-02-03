@@ -53,20 +53,20 @@ class StreamScreenshotService:
         
         logger.info(f"Screenshot service initialized, saving to {self.screenshot_dir}")
     
-    def capture(self, url: str, stream_id: int, timeout: int = SCREENSHOT_TIMEOUT, check_bitrate: bool = False) -> tuple[Optional[str], Optional[int]]:
+    def capture(self, url: str, stream_id: int, timeout: int = SCREENSHOT_TIMEOUT, extract_stats: bool = True) -> tuple[Optional[str], dict]:
         """
-        Capture a screenshot from a stream and optionally check bitrate.
+        Capture a screenshot from a stream and optionally extract stats (resolution, fps, bitrate).
         
         Args:
             url: Stream URL
             stream_id: Stream ID (used for filename)
             timeout: Maximum time to wait for capture
-            check_bitrate: If True, attempts to parse bitrate from FFmpeg output
+            extract_stats: If True, attempts to parse stats from FFmpeg output
             
         Returns:
-            Tuple of (screenshot_path, bitrate_kbps)
+            Tuple of (screenshot_path, stats_dict)
             screenshot_path is None if failed
-            bitrate_kbps is None if not found or not requested
+            stats_dict contains 'width', 'height', 'fps', 'bitrate' if found
         """
         try:
             # Filename: stream_id.jpg (overwrite to save space)
@@ -74,10 +74,13 @@ class StreamScreenshotService:
             output_path = self.screenshot_dir / filename
             
             # Use FFmpeg to capture a single frame
+            # Add -analyzeduration and -probesize to help with stream info detection
             process = subprocess.Popen(
                 [
                     'ffmpeg',
                     '-y',  # Overwrite output files
+                    '-analyzeduration', '10000000', # 10s of analysis for better probe
+                    '-probesize', '10000000',      # 10MB probe size
                     '-i', url,
                     '-ss', '00:00:01',  # Seek 1 second in (avoid black frames)
                     '-vframes', '1',  # Capture 1 frame
@@ -96,36 +99,58 @@ class StreamScreenshotService:
             except subprocess.TimeoutExpired:
                 process.kill()
                 logger.warning(f"Screenshot timeout for stream {stream_id}")
-                return None, None
+                return None, {}
             
             # Check if successful
-            bitrate = None
+            stats = {}
             if process.returncode == 0 and output_path.exists():
                 # Return relative path
                 relative_path = f"screenshots/{filename}"
                 logger.debug(f"Captured screenshot for stream {stream_id}: {relative_path}")
                 
-                # Parse bitrate if requested
-                if check_bitrate and stderr:
+                # Parse stats if requested
+                if extract_stats and stderr:
                     import re
+                    
+                    # 1. Bitrate
                     # Look for "bitrate: 1234 kb/s" in stderr
-                    # Pattern matches "bitrate: " followed by digits then " kb/s"
-                    match = re.search(r'bitrate:\s+(\d+)\s+kb/s', stderr)
-                    if match:
+                    bitrate_match = re.search(r'bitrate:\s+(\d+)\s+kb/s', stderr)
+                    if bitrate_match:
                         try:
-                            bitrate = int(match.group(1))
-                            logger.info(f"Extracted bitrate {bitrate} kbps from screenshot probe for stream {stream_id}")
+                            stats['bitrate'] = int(bitrate_match.group(1))
                         except ValueError:
                             pass
+                    
+                    # 2. Resolution (look for "Video: ... 1920x1080 ...")
+                    # Use a robust regex that requires at least 3 digits for width/height to avoid aspect ratios
+                    res_match = re.search(r'Video:.*? (\d{3,5})x(\d{3,5})', stderr)
+                    if res_match:
+                        try:
+                            stats['width'] = int(res_match.group(1))
+                            stats['height'] = int(res_match.group(2))
+                        except ValueError:
+                            pass
+                            
+                    # 3. FPS
+                    fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', stderr)
+                    if fps_match:
+                        try:
+                            stats['fps'] = float(fps_match.group(1))
+                        except ValueError:
+                            pass
+                            
+                    if stats:
+                        logger.info(f"Extracted stats from screenshot probe for stream {stream_id}: {stats}")
                 
-                return relative_path, bitrate
+                return relative_path, stats
             else:
                 logger.warning(f"Screenshot failed for stream {stream_id}, exit code: {process.returncode}")
-                return None, None
+                # Try to parse stats even on failure if we got stderr (might be useful for debugging)
+                return None, {}
                 
         except Exception as e:
             logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
-            return None, None
+            return None, {}
     
     def get_screenshot_path(self, stream_id: int) -> Optional[str]:
         """

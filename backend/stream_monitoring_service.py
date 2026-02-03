@@ -239,20 +239,80 @@ class StreamMonitoringService:
             logger.error(f"Error checking auto-stop for session {session.session_id}: {e}")
     
     def _refresh_worker(self):
-        """Worker thread for refreshing stream lists"""
+        """Worker thread for refreshing stream lists and updating stats"""
         logger.info("Refresh worker started")
         
         while self._running:
             try:
                 active_sessions = self.session_manager.get_active_sessions()
+                
+                # Refresh streams (discover new ones)
                 for session in active_sessions:
-                    self._refresh_session_streams(session.session_id)
+                    try:
+                        self._refresh_session_streams(session.session_id)
+                    except Exception as e:
+                        logger.error(f"Error refreshing streams for session {session.session_id}: {e}")
+                
+                # Sync stream stats to Dispatcharr
+                try:
+                    self._sync_stream_stats(active_sessions)
+                except Exception as e:
+                    logger.error(f"Error syncing stream stats: {e}")
+                    
                 time.sleep(REFRESH_INTERVAL)
             except Exception as e:
                 logger.error(f"Error in refresh worker: {e}", exc_info=True)
                 time.sleep(5)
         
         logger.info("Refresh worker stopped")
+    
+    def _sync_stream_stats(self, active_sessions):
+        """Sync stream metadata (res, fps, bitrate) to Dispatcharr"""
+        stats_to_update = []
+        
+        for session in active_sessions:
+            for stream_id, stream_info in session.streams.items():
+                if stream_info.is_quarantined:
+                    continue
+                
+                # Build stats payload for Dispatcharr
+                stats = {}
+                
+                # Resolution
+                if stream_info.width and stream_info.height:
+                    stats['resolution'] = f"{stream_info.width}x{stream_info.height}"
+                
+                # FPS
+                if stream_info.fps:
+                    try:
+                        stats['source_fps'] = float(stream_info.fps)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Bitrate
+                if stream_info.bitrate:
+                    try:
+                        stats['ffmpeg_output_bitrate'] = int(stream_info.bitrate)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Only update if we have meaningful stats
+                if stats:
+                    stats_to_update.append({
+                        'stream_id': stream_id,
+                        'stream_stats': stats
+                    })
+        
+        if stats_to_update:
+            try:
+                from api_utils import batch_update_stream_stats
+                success, failed = batch_update_stream_stats(stats_to_update)
+                if success > 0:
+                    logger.info(f"Synced stats for {success} streams to Dispatcharr")
+                if failed > 0:
+                    logger.warning(f"Failed to sync stats for {failed} streams")
+            except Exception as e:
+                logger.error(f"Failed to execute batch update: {e}")
     
     def _screenshot_worker(self):
         """Worker thread for capturing screenshots"""
@@ -547,24 +607,35 @@ class StreamMonitoringService:
             return
         
         try:
-            # Check if bitrate is missing
-            check_bitrate = not stream_info.bitrate
-            
-            # Capture screenshot and optionally probe bitrate
-            path, bitrate = self.screenshot_service.capture(
+        try:
+            # Capture screenshot and probe all stats (resolution, fps, bitrate)
+            # This merges screenshot capture and stats probing into one FFmpeg call
+            path, stats = self.screenshot_service.capture(
                 stream_info.url, 
                 stream_id, 
-                check_bitrate=check_bitrate
+                extract_stats=True
             )
             
             if path:
                 stream_info.screenshot_path = path
                 logger.debug(f"Captured screenshot for stream {stream_id}: {path}")
             
-            # Update bitrate if we found one
-            if check_bitrate and bitrate:
-                stream_info.bitrate = bitrate
-                logger.info(f"Updated missing bitrate for stream {stream_id} from screenshot probe: {bitrate} kbps")
+            # Update stream info with probed stats
+            if stats:
+                updated_fields = []
+                if 'bitrate' in stats:
+                    stream_info.bitrate = stats['bitrate']
+                    updated_fields.append('bitrate')
+                if 'width' in stats and 'height' in stats:
+                    stream_info.width = stats['width']
+                    stream_info.height = stats['height']
+                    updated_fields.append('resolution')
+                if 'fps' in stats:
+                    stream_info.fps = stats['fps']
+                    updated_fields.append('fps')
+                
+                if updated_fields:
+                    logger.info(f"Updated stream {stream_id} stats from screenshot probe: {', '.join(updated_fields)}")
                 
         except Exception as e:
             logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")

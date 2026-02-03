@@ -499,6 +499,18 @@ class StreamSessionManager:
         
         logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams")
         
+        # Add all discovered streams to Dispatcharr channel (additive only)
+        # This ensures streams matched by regex are actually available in the channel
+        stream_ids = [s.get('id') for s in matching_streams]
+        if stream_ids:
+            try:
+                from api_utils import add_streams_to_channel
+                added_count = add_streams_to_channel(session.channel_id, stream_ids, allow_dead_streams=True)
+                if added_count > 0:
+                    logger.info(f"Session {session_id}: Added {added_count} new streams to Dispatcharr channel")
+            except Exception as e:
+                logger.error(f"Session {session_id}: Failed to sync streams to Dispatcharr: {e}")
+        
         # Import stream stats utilities for extracting bitrate and other metadata
         from stream_stats_utils import extract_stream_stats
         
