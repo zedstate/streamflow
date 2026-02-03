@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
 from dataclasses import dataclass, asdict
 from collections import deque
+import re
 
 from logging_config import setup_logging
 from udi import get_udi_manager
@@ -35,6 +36,9 @@ DEFAULT_SCREENSHOT_INTERVAL_SECONDS = 60
 DEFAULT_WINDOW_SIZE = 100  # For Capped Sliding Window
 DEFAULT_MAX_SCORE = 100.0
 DEFAULT_MIN_SCORE = 0.0
+
+# Pre-compiled regex pattern for whitespace conversion (consistent with AutomatedStreamManager)
+_WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
 
 
 @dataclass
@@ -447,13 +451,21 @@ class StreamSessionManager:
         all_streams = udi.get_streams()
         
         # Filter by regex with safety measures
-        import re
         try:
             # Validate regex complexity (basic check)
             regex_pattern = session.regex_filter or '.*'
             if len(regex_pattern) > 500:
                 logger.error(f"Regex pattern too long ({len(regex_pattern)} chars), max 500")
                 return
+            
+            # Substitute CHANNEL_NAME variable if present (consistent with channel matcher)
+            channel_name = session.channel_name or f"Channel {session.channel_id}"
+            escaped_channel_name = re.escape(channel_name)
+            regex_pattern = regex_pattern.replace('CHANNEL_NAME', escaped_channel_name)
+            
+            # Convert literal spaces in pattern to flexible whitespace regex (\s+)
+            # This matches behavior in RegexChannelMatcher
+            regex_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', regex_pattern)
             
             # Compile with timeout protection
             regex = re.compile(regex_pattern, re.IGNORECASE)
@@ -602,8 +614,22 @@ class StreamSessionManager:
         # Check if stream matches session's regex filter
         import re
         try:
-            pattern = re.compile(session.regex_filter, re.IGNORECASE)
-            if not pattern.search(stream.get('name', '')):
+            # Prepare regex with variable substitution (same as _discover_streams)
+            regex_pattern = session.regex_filter or '.*'
+            
+            # Substitute CHANNEL_NAME variable
+            channel_name = session.channel_name or f"Channel {session.channel_id}"
+            escaped_channel_name = re.escape(channel_name)
+            regex_pattern = regex_pattern.replace('CHANNEL_NAME', escaped_channel_name)
+            
+            # Convert literal spaces
+            regex_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', regex_pattern)
+            
+            pattern = re.compile(regex_pattern, re.IGNORECASE)
+            
+            # Limit input size for safety
+            stream_name = stream.get('name', '')[:1000]
+            if not pattern.search(stream_name):
                 logger.debug(f"Stream {stream_id} does not match session regex filter")
                 return False
         except re.error:
