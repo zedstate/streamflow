@@ -142,6 +142,7 @@ class StreamMonitoringService:
             logger.info(f"All monitors stopped for session {session_id}")
     
     def _remove_stream_from_dispatcharr(self, session_id: str, stream_id: int, reason: str):
+        """
         Remove a stream from Dispatcharr channel (without deleting it from UDI).
         
         Args:
