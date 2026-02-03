@@ -638,6 +638,7 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
   const [isMuted, setIsMuted] = React.useState(true);
+  const [retryKey, setRetryKey] = React.useState(0);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -668,6 +669,16 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
 
     const initPlayer = async () => {
       try {
+        // Clean up any existing player before creating a new one
+        if (playerRef.current) {
+          try {
+            playerRef.current.destroy();
+          } catch (err) {
+            console.error('Error destroying existing player:', err);
+          }
+          playerRef.current = null;
+        }
+
         if (!mpegtsLib.isSupported()) {
           setError('Your browser does not support MPEG-TS playback');
           return;
@@ -692,10 +703,20 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
           console.warn('Autoplay blocked by browser - user interaction required. Click the video or unmute button to start playback:', err);
         });
         
-        // Handle errors
+        // Handle errors with retry capability
         player.on(mpegtsLib.Events.ERROR, (errorType, errorDetail, errorInfo) => {
           console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
           setError('Stream playback error');
+          
+          // Clean up the failed player
+          if (playerRef.current) {
+            try {
+              playerRef.current.destroy();
+            } catch (err) {
+              console.error('Error destroying failed player:', err);
+            }
+            playerRef.current = null;
+          }
         });
 
         playerRef.current = player;
@@ -718,7 +739,12 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
         playerRef.current = null;
       }
     };
-  }, [streamUrl, mpegtsLib]);
+  }, [streamUrl, mpegtsLib, retryKey]);
+
+  const handleRetryPlayer = () => {
+    setError(null);
+    setRetryKey(prev => prev + 1);
+  };
 
   const formatQuality = () => {
     if (!stream.width || !stream.height) return 'Unknown';
@@ -749,10 +775,18 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
             </div>
           ) : error ? (
-            <div className="w-full h-full flex items-center justify-center text-destructive">
+            <div className="w-full h-full flex flex-col items-center justify-center text-destructive">
               <div className="text-center p-4">
                 <AlertCircle className="h-12 w-12 mx-auto mb-2" />
-                <p className="text-sm">{error}</p>
+                <p className="text-sm mb-3">{error}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRetryPlayer}
+                  className="text-sm"
+                >
+                  Retry
+                </Button>
               </div>
             </div>
           ) : (

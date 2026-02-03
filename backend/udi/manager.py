@@ -1438,10 +1438,18 @@ class UDIManager:
     def _ensure_initialized(self) -> None:
         """Ensure UDI Manager is initialized before data access.
         
-        This will auto-initialize if not already done, but only if
-        Dispatcharr credentials are configured.
+        This will auto-initialize if not already done, loading from storage
+        if available, or fetching from API if configured.
         """
         if not self._initialized:
+            # Try to load from storage first if available
+            if self.storage.is_initialized():
+                logger.info("UDI Manager not initialized, loading from storage...")
+                self._load_from_storage()
+                self._initialized = True
+                logger.info("UDI Manager initialized from storage")
+                return
+            
             # Check if Dispatcharr is configured before auto-initializing
             config = get_dispatcharr_config()
             
@@ -1449,7 +1457,7 @@ class UDIManager:
                 logger.warning("UDI Manager not initialized and Dispatcharr credentials not configured. Skipping auto-initialization.")
                 return
             
-            logger.info("UDI Manager not initialized, auto-initializing...")
+            logger.info("UDI Manager not initialized, auto-initializing from API...")
             self.initialize()
     
     def get_proxy_status(self) -> Dict[str, Any]:
