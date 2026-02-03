@@ -465,10 +465,26 @@ class StreamSessionManager:
         
         logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams")
         
+        # Import stream stats utilities for extracting bitrate and other metadata
+        from stream_stats_utils import extract_stream_stats
+        
         # Add streams to session
         for stream_data in matching_streams:
             stream_id = stream_data.get('id')
             if stream_id not in session.streams:
+                # Extract stream stats (including bitrate from stream_stats)
+                stats = extract_stream_stats(stream_data)
+                
+                # Extract bitrate safely, handling various data types
+                bitrate = None
+                if stats.get('bitrate_kbps'):
+                    try:
+                        bitrate = int(stats.get('bitrate_kbps'))
+                    except (ValueError, TypeError):
+                        bitrate = stream_data.get('bitrate')
+                else:
+                    bitrate = stream_data.get('bitrate')
+                
                 stream_info = StreamInfo(
                     stream_id=stream_id,
                     url=stream_data.get('url', ''),
@@ -476,8 +492,8 @@ class StreamSessionManager:
                     channel_id=session.channel_id,
                     width=stream_data.get('width'),
                     height=stream_data.get('height'),
-                    fps=stream_data.get('fps'),
-                    bitrate=stream_data.get('bitrate'),
+                    fps=stats.get('fps') or stream_data.get('fps'),
+                    bitrate=bitrate,
                     m3u_account=stream_data.get('m3u_account')
                 )
                 session.streams[stream_id] = stream_info
@@ -587,13 +603,14 @@ class StreamSessionManager:
             self._save_sessions()
             return True
     
-    def quarantine_stream(self, session_id: str, stream_id: int) -> bool:
+    def quarantine_stream(self, session_id: str, stream_id: int, remove_from_dispatcharr: bool = True) -> bool:
         """
-        Manually quarantine a stream.
+        Manually quarantine a stream and optionally remove it from Dispatcharr.
         
         Args:
             session_id: Session ID
             stream_id: Stream ID to quarantine
+            remove_from_dispatcharr: If True, also removes the stream from Dispatcharr channel
             
         Returns:
             True if quarantined successfully
@@ -614,6 +631,20 @@ class StreamSessionManager:
             self._save_sessions()
         
         logger.info(f"Manually quarantined stream {stream_id} in session {session_id}")
+        
+        # Remove from Dispatcharr channel if requested
+        if remove_from_dispatcharr:
+            try:
+                from udi import get_udi_manager
+                udi = get_udi_manager()
+                success = udi.bulk_delete_streams([stream_id])
+                if success:
+                    logger.info(f"Removed quarantined stream {stream_id} from Dispatcharr channel")
+                else:
+                    logger.warning(f"Failed to remove quarantined stream {stream_id} from Dispatcharr")
+            except Exception as e:
+                logger.error(f"Error removing quarantined stream from Dispatcharr: {e}", exc_info=True)
+        
         return True
     
     def delete_session(self, session_id: str) -> bool:
