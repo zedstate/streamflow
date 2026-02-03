@@ -759,7 +759,6 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
             <>
               <video
                 ref={videoRef}
-                autoPlay
                 muted={isMuted}
                 playsInline
                 className="w-full h-full object-contain [&::-webkit-media-controls]:hidden [&::-webkit-media-controls-enclosure]:hidden"
