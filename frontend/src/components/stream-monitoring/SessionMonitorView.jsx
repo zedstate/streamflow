@@ -15,6 +15,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 
 // Constants
 const FALLBACK_IMAGE_SVG = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225"%3E%3Crect fill="%23111" width="400" height="225"/%3E%3Ctext fill="%23666" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif"%3ENo Image%3C/text%3E%3C/svg%3E';
+const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_';
 
 function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const [session, setSession] = useState(null);
@@ -22,7 +23,24 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const [selectedStream, setSelectedStream] = useState(null);
   const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
   const [aliveScreenshots, setAliveScreenshots] = useState([]);
+  const [logoUrl, setLogoUrl] = useState(null);
   const { toast } = useToast();
+
+  // Cache channel logo from localStorage
+  useEffect(() => {
+    if (session && session.channel_id) {
+      const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${session.channel_id}`);
+      if (cachedLogo) {
+        setLogoUrl(cachedLogo);
+      }
+      
+      // If session has a logo URL, use it and cache it
+      if (session.channel_logo_url) {
+        setLogoUrl(session.channel_logo_url);
+        localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${session.channel_id}`, session.channel_logo_url);
+      }
+    }
+  }, [session?.channel_id, session?.channel_logo_url]);
 
   useEffect(() => {
     loadSession();
@@ -132,10 +150,10 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
           <Button variant="ghost" size="icon" onClick={onBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          {session.channel_logo_url && (
+          {logoUrl && (
             <div className="flex-shrink-0">
               <img 
-                src={session.channel_logo_url} 
+                src={logoUrl} 
                 alt={session.channel_name}
                 className="h-16 w-16 object-contain rounded-md bg-white/5 p-1"
                 onError={(e) => { e.target.style.display = 'none'; }}
