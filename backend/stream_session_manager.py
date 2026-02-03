@@ -465,10 +465,16 @@ class StreamSessionManager:
         
         logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams")
         
+        # Import stream stats utilities for extracting bitrate and other metadata
+        from stream_stats_utils import extract_stream_stats
+        
         # Add streams to session
         for stream_data in matching_streams:
             stream_id = stream_data.get('id')
             if stream_id not in session.streams:
+                # Extract stream stats (including bitrate from stream_stats)
+                stats = extract_stream_stats(stream_data)
+                
                 stream_info = StreamInfo(
                     stream_id=stream_id,
                     url=stream_data.get('url', ''),
@@ -476,8 +482,8 @@ class StreamSessionManager:
                     channel_id=session.channel_id,
                     width=stream_data.get('width'),
                     height=stream_data.get('height'),
-                    fps=stream_data.get('fps'),
-                    bitrate=stream_data.get('bitrate'),
+                    fps=stats.get('fps') or stream_data.get('fps'),
+                    bitrate=int(stats.get('bitrate_kbps')) if stats.get('bitrate_kbps') else stream_data.get('bitrate'),
                     m3u_account=stream_data.get('m3u_account')
                 )
                 session.streams[stream_id] = stream_info
