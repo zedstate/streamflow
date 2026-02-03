@@ -663,7 +663,7 @@ function ScreenshotDialog({ open, onOpenChange, stream }) {
                   onClick={() => setShowVideoPlayer(false)}
                 >
                   <ImageIcon className="h-4 w-4 mr-2" />
-                  Show Screenshot
+                  View Screenshot
                 </Button>
               )}
             </div>
@@ -703,12 +703,14 @@ function ScreenshotDialog({ open, onOpenChange, stream }) {
                   console.error('Video playback error:', e);
                   toast({
                     title: 'Playback Error',
-                    description: 'Unable to play this stream format. Your browser may not support MPEG-TS streams directly.',
+                    description: 'Unable to play this stream format. Your browser may not support MPEG-TS or HLS streams directly.',
                     variant: 'destructive',
                   });
                 }}
               >
+                {/* Try MPEG-TS first (common for IPTV streams) */}
                 <source src={streamUrl} type="video/mp2t" />
+                {/* Fallback to HLS if available */}
                 <source src={streamUrl} type="application/x-mpegURL" />
                 Your browser does not support the video tag or this stream format.
               </video>
@@ -730,8 +732,9 @@ function ScreenshotDialog({ open, onOpenChange, stream }) {
           )}
           
           {!showVideoPlayer && (
-            <div className="flex justify-center gap-2 text-xs text-muted-foreground">
+            <div className="flex flex-col gap-1 items-center text-xs text-muted-foreground">
               <span>💡 Tip: Click "Watch Live" to play the stream directly in your browser.</span>
+              <span className="text-[10px]">Note: Requires browser support for MPEG-TS or HLS streams.</span>
             </div>
           )}
         </div>
