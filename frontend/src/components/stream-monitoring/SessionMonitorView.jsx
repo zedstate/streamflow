@@ -40,13 +40,33 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const loadSession = async () => {
     try {
       const response = await streamSessionsAPI.getSession(sessionId);
-      // Use functional update to prevent flickering - only update if data actually changed
+      // Use shallow comparison to prevent flickering - only update if data actually changed
       setSession(prevSession => {
         const newSession = response.data;
-        // Deep comparison to prevent unnecessary re-renders
-        if (JSON.stringify(prevSession) === JSON.stringify(newSession)) {
+        
+        // Quick check: if no previous session, always update
+        if (!prevSession) return newSession;
+        
+        // Compare key fields that matter for re-rendering
+        const keysToCompare = [
+          'is_active', 'stream_count', 'active_streams',
+          'epg_event_title', 'channel_logo_url'
+        ];
+        
+        // Check if any key fields changed
+        const hasChanged = keysToCompare.some(key => prevSession[key] !== newSession[key]);
+        
+        // Check if streams array length changed
+        const streamsChanged = 
+          !prevSession.streams || 
+          !newSession.streams ||
+          prevSession.streams.length !== newSession.streams.length;
+        
+        // If nothing changed, return previous to prevent re-render
+        if (!hasChanged && !streamsChanged) {
           return prevSession;
         }
+        
         return newSession;
       });
       setLoading(false);
@@ -63,13 +83,24 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const loadAliveScreenshots = async () => {
     try {
       const response = await streamSessionsAPI.getAliveScreenshots(sessionId);
-      // Only update if screenshots actually changed
+      // Only update if screenshots array changed
       setAliveScreenshots(prevScreenshots => {
         const newScreenshots = response.data.screenshots || [];
-        if (JSON.stringify(prevScreenshots) === JSON.stringify(newScreenshots)) {
-          return prevScreenshots;
+        
+        // Quick length check first
+        if (prevScreenshots.length !== newScreenshots.length) {
+          return newScreenshots;
         }
-        return newScreenshots;
+        
+        // Check if screenshot URLs or stream IDs changed
+        const hasChanged = newScreenshots.some((newShot, idx) => {
+          const prevShot = prevScreenshots[idx];
+          return !prevShot || 
+                 prevShot.stream_id !== newShot.stream_id ||
+                 prevShot.screenshot_url !== newShot.screenshot_url;
+        });
+        
+        return hasChanged ? newScreenshots : prevScreenshots;
       });
     } catch (err) {
       console.error('Failed to load screenshots:', err);

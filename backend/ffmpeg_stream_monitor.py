@@ -17,6 +17,10 @@ from logging_config import setup_logging
 
 logger = setup_logging(__name__)
 
+# Constants for bitrate calculation
+BITS_PER_BYTE = 8
+BYTES_TO_KBPS = 1000
+
 
 @dataclass
 class FFmpegStats:
@@ -268,8 +272,8 @@ class FFmpegStreamMonitor:
             
             # Calculate bitrate from size and time if bitrate not directly available
             if self.stats.bitrate == 0 and self.stats.time > 0:
-                # bitrate = (total_size * 8) / time / 1000 (to get kbps)
-                self.stats.bitrate = (self.stats.total_size * 8) / self.stats.time / 1000
+                # bitrate = (total_size * BITS_PER_BYTE) / time / BYTES_TO_KBPS (to get kbps)
+                self.stats.bitrate = (self.stats.total_size * BITS_PER_BYTE) / self.stats.time / BYTES_TO_KBPS
         
         # FPS (e.g., "fps= 30")
         fps_match = re.search(r'fps=\s*(\d+(?:\.\d+)?)', output)
