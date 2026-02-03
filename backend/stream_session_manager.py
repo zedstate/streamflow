@@ -309,12 +309,9 @@ class StreamSessionManager:
         
         # Get channel logo info
         channel_logo_url = None
-        channel_logo_id = None
         channel_tvg_id = channel.get('tvg_id')
         logo_id = channel.get('logo_id')
         if logo_id:
-            # Store logo_id for frontend caching
-            channel_logo_id = logo_id
             # Use cached logo endpoint for better performance
             channel_logo_url = f"/api/channels/logos/{logo_id}/cache"
         

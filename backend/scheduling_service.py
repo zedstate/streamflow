@@ -48,7 +48,15 @@ class SchedulingService:
         self._scheduled_events = self._load_scheduled_events()
         self._auto_create_rules = self._load_auto_create_rules()
         self._executed_events = self._load_executed_events()
+        self._regex_matcher = None  # Lazy-loaded regex matcher
         logger.info("Scheduling service initialized")
+    
+    def _get_regex_matcher(self):
+        """Get or create regex matcher instance (singleton pattern)."""
+        if self._regex_matcher is None:
+            from automated_stream_manager import RegexChannelMatcher
+            self._regex_matcher = RegexChannelMatcher()
+        return self._regex_matcher
     
     def _load_config(self) -> Dict[str, Any]:
         """Load scheduling configuration from file.
@@ -556,8 +564,7 @@ class SchedulingService:
             
             # Try to get channel-specific regex from regex matcher
             try:
-                from automated_stream_manager import RegexChannelMatcher
-                regex_matcher = RegexChannelMatcher()
+                regex_matcher = self._get_regex_matcher()
                 regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
                 logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}")
             except Exception as e:
