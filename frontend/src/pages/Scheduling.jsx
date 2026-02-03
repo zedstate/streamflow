@@ -30,6 +30,7 @@ export default function Scheduling() {
   const [selectedChannel, setSelectedChannel] = useState(null)
   const [selectedProgram, setSelectedProgram] = useState(null)
   const [minutesBefore, setMinutesBefore] = useState(5)
+  const [scheduleType, setScheduleType] = useState('check')  // 'check' or 'monitoring'
   const [refreshInterval, setRefreshInterval] = useState(60)
   const [validateExistingStreams, setValidateExistingStreams] = useState(false)
   const [automationConfig, setAutomationConfig] = useState(null)
@@ -50,6 +51,7 @@ export default function Scheduling() {
   const [ruleName, setRuleName] = useState('')
   const [ruleRegexPattern, setRuleRegexPattern] = useState('')
   const [ruleMinutesBefore, setRuleMinutesBefore] = useState(5)
+  const [ruleScheduleType, setRuleScheduleType] = useState('check')  // 'check' or 'monitoring'
   const [testingRegex, setTestingRegex] = useState(false)
   const [regexMatches, setRegexMatches] = useState([])
   const [deleteRuleDialogOpen, setDeleteRuleDialogOpen] = useState(false)
@@ -178,7 +180,8 @@ export default function Scheduling() {
         program_start_time: selectedProgram.start_time,
         program_end_time: selectedProgram.end_time,
         program_title: selectedProgram.title,
-        minutes_before: minutesBeforeValue
+        minutes_before: minutesBeforeValue,
+        schedule_type: scheduleType
       }
 
       await schedulingAPI.createEvent(eventData)
@@ -194,6 +197,7 @@ export default function Scheduling() {
       setPrograms([])
       setChannelComboboxOpen(false)
       setMinutesBefore(5)
+      setScheduleType('check')
       await loadData()
     } catch (err) {
       console.error('Failed to create event:', err)
@@ -333,7 +337,8 @@ export default function Scheduling() {
         channel_ids: ruleSelectedChannels.map(c => c.id),
         channel_group_ids: ruleSelectedChannelGroups.map(g => g.id),
         regex_pattern: ruleRegexPattern,
-        minutes_before: minutesBeforeValue
+        minutes_before: minutesBeforeValue,
+        schedule_type: ruleScheduleType
       }
 
       if (editingRuleId) {
@@ -359,6 +364,7 @@ export default function Scheduling() {
       setRuleSelectedChannelGroups([])
       setRuleRegexPattern('')
       setRuleMinutesBefore(5)
+      setRuleScheduleType('check')
       setRegexMatches([])
       setRuleChannelComboboxOpen(false)
       setRuleChannelGroupComboboxOpen(false)
@@ -399,6 +405,7 @@ export default function Scheduling() {
     setRuleName(rule.name)
     setRuleRegexPattern(rule.regex_pattern)
     setRuleMinutesBefore(rule.minutes_before)
+    setRuleScheduleType(rule.schedule_type || 'check')  // Default to 'check' for backward compatibility
     
     // Find and set the channels - support both old (channel_id) and new (channel_ids) format
     const selectedChannels = []
@@ -853,6 +860,40 @@ export default function Scheduling() {
                     />
                     <p className="text-sm text-muted-foreground">
                       The channel check will run {minutesBefore || 0} minutes before the program starts
+                    </p>
+                  </div>
+                )}
+
+                {/* Schedule Type Selection */}
+                {selectedProgram && (
+                  <div className="space-y-2">
+                    <Label htmlFor="schedule-type">Schedule Type</Label>
+                    <Select
+                      value={scheduleType}
+                      onValueChange={(value) => setScheduleType(value)}
+                    >
+                      <SelectTrigger id="schedule-type">
+                        <SelectValue placeholder="Select schedule type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="check">
+                          <div className="flex flex-col">
+                            <span className="font-medium">Stream Check</span>
+                            <span className="text-xs text-muted-foreground">Quick stream validation</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="monitoring">
+                          <div className="flex flex-col">
+                            <span className="font-medium">Monitoring Session</span>
+                            <span className="text-xs text-muted-foreground">Continuous quality monitoring</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      {scheduleType === 'check' 
+                        ? 'Performs a quick validation of streams' 
+                        : 'Creates a monitoring session for continuous quality tracking'}
                     </p>
                   </div>
                 )}
@@ -1499,6 +1540,38 @@ export default function Scheduling() {
                           Channel checks will run {ruleMinutesBefore || 0} minutes before matching programs start
                         </p>
                       </div>
+
+                      {/* Schedule Type Selection */}
+                      <div className="space-y-2">
+                        <Label htmlFor="rule-schedule-type">Schedule Type</Label>
+                        <Select
+                          value={ruleScheduleType}
+                          onValueChange={(value) => setRuleScheduleType(value)}
+                        >
+                          <SelectTrigger id="rule-schedule-type">
+                            <SelectValue placeholder="Select schedule type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="check">
+                              <div className="flex flex-col">
+                                <span className="font-medium">Stream Check</span>
+                                <span className="text-xs text-muted-foreground">Quick stream validation</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="monitoring">
+                              <div className="flex flex-col">
+                                <span className="font-medium">Monitoring Session</span>
+                                <span className="text-xs text-muted-foreground">Continuous quality monitoring</span>
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-sm text-muted-foreground">
+                          {ruleScheduleType === 'check' 
+                            ? 'Performs a quick validation of streams' 
+                            : 'Creates monitoring sessions for continuous quality tracking'}
+                        </p>
+                      </div>
                     </>
                   )}
                 </div>
@@ -1512,6 +1585,7 @@ export default function Scheduling() {
                     setRuleSelectedChannelGroups([])
                     setRuleRegexPattern('')
                     setRuleMinutesBefore(5)
+                    setRuleScheduleType('check')
                     setRegexMatches([])
                     setRuleChannelComboboxOpen(false)
                     setRuleChannelGroupComboboxOpen(false)
