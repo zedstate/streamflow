@@ -592,11 +592,17 @@ Schedule channel checks to run before EPG program events for optimal stream qual
 - User notifications
 
 ### Performance
-- Parallel stream checking with configurable worker pool
-- Optimized single ffmpeg call (instead of ffprobe + ffmpeg)
-- Efficient queue processing
-- Minimal API calls
-- Resource optimization
+- **Batch Operations**: Optimized API calls with batch processing
+  - Batch stream stats updates (90% reduction in API calls)
+  - Optional verification to eliminate redundant GET requests
+  - Configurable batch size (default: 10 streams)
+  - See [BATCH_OPERATIONS_OPTIMIZATION.md](BATCH_OPERATIONS_OPTIMIZATION.md) for details
+- **Parallel Stream Checking**: Configurable worker pool for concurrent analysis
+- **Optimized FFmpeg Calls**: Single ffmpeg call (instead of ffprobe + ffmpeg)
+- **Efficient Queue Processing**: Smart channel queuing with priority support
+- **UDI Caching**: Universal Data Index reduces redundant API calls
+- **Resource Optimization**: Minimal memory and network overhead
+- **Early Exit Logic**: Stop processing as soon as results are found
 
 ### Logging
 - Comprehensive activity logs

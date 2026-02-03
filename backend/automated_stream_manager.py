@@ -848,7 +848,8 @@ class AutomatedStreamManager:
                 "auto_stream_discovery": True,
                 "changelog_tracking": True
             },
-            "validate_existing_streams": False  # Validate existing streams in channels against regex patterns
+            "validate_existing_streams": False,  # Validate existing streams in channels against regex patterns
+            "verify_stream_assignments": False  # Verify stream assignments by refreshing UDI (adds API overhead)
         }
         
         self._save_config(default_config)
@@ -1404,8 +1405,9 @@ class AutomatedStreamManager:
                         added_count = add_streams_to_channel(channel_id_int, stream_ids, allow_dead_streams=(not dead_stream_removal_enabled))
                         assignment_count[channel_id] = added_count
                         
-                        # Verify streams were added correctly
-                        if added_count > 0:
+                        # Verify streams were added correctly (if enabled in config)
+                        verify_enabled = self.config.get('verify_stream_assignments', False)
+                        if added_count > 0 and verify_enabled:
                             try:
                                 time.sleep(0.5)  # Brief delay for API processing
                                 # Refresh this specific channel in UDI to get updated data after write
@@ -1425,6 +1427,8 @@ class AutomatedStreamManager:
                                     logger.warning(f"⚠ Could not verify stream addition for channel {channel_id}: channel not found")
                             except Exception as verify_error:
                                 logger.warning(f"⚠ Could not verify stream addition for channel {channel_id}: {verify_error}")
+                        elif added_count > 0:
+                            logger.debug(f"Skipped verification for channel {channel_id} (disabled in config)")
                         
                         # Prepare detailed assignment info
                         channel_assignment = {
@@ -1686,9 +1690,12 @@ class AutomatedStreamManager:
                                 "removed_streams": streams_to_remove[:10]  # Limit to first 10 for logging
                             })
                             
-                            # Refresh channel in UDI after update
-                            time.sleep(0.3)
-                            udi.refresh_channel_by_id(channel_id)
+                            # Refresh channel in UDI after update (if verification enabled)
+                            verify_enabled = self.config.get('verify_stream_assignments', False)
+                            if verify_enabled:
+                                time.sleep(0.3)
+                                udi.refresh_channel_by_id(channel_id)
+                                logger.debug(f"Verified channel {channel_name} update via UDI refresh")
                             
                             logger.info(f"✓ Removed {len(streams_to_remove)} non-matching stream(s) from {channel_name}")
                         else:
