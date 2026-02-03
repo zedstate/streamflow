@@ -15,6 +15,7 @@ from stream_session_manager import get_session_manager, StreamMetrics
 from ffmpeg_stream_monitor import FFmpegStreamMonitor
 from stream_screenshot_service import get_screenshot_service
 from dead_streams_tracker import DeadStreamsTracker
+from udi import get_udi_manager
 
 logger = setup_logging(__name__)
 
@@ -135,6 +136,33 @@ class StreamMonitoringService:
             # Remove session from monitors
             del self.monitors[session_id]
             logger.info(f"All monitors stopped for session {session_id}")
+    
+    def _remove_stream_from_dispatcharr(self, session_id: str, stream_id: int, reason: str):
+        """
+        Remove a stream from Dispatcharr channel and refresh UDI cache.
+        
+        Args:
+            session_id: Session ID
+            stream_id: Stream ID to remove
+            reason: Reason for removal (for logging)
+        """
+        try:
+            session = self.session_manager.get_session(session_id)
+            if not session:
+                logger.warning(f"Session {session_id} not found when removing stream {stream_id}")
+                return
+            
+            udi = get_udi_manager()
+            success = udi.bulk_delete_streams([stream_id])
+            if success:
+                logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel")
+                # Refresh the channel in UDI to update cache after deletion
+                udi.refresh_channel_by_id(session.channel_id)
+                logger.debug(f"Refreshed channel {session.channel_id} in UDI after {reason} stream removal")
+            else:
+                logger.warning(f"Failed to remove {reason} stream {stream_id} from Dispatcharr")
+        except Exception as e:
+            logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
     
     def _monitor_worker(self):
         """Worker thread for monitoring streams"""
@@ -288,21 +316,7 @@ class StreamMonitoringService:
             # Quarantine the stream
             stream_info.is_quarantined = True
             # Remove dead stream from Dispatcharr channel
-            try:
-                from udi import get_udi_manager
-                udi = get_udi_manager()
-                success = udi.bulk_delete_streams([stream_id])
-                if success:
-                    logger.info(f"Removed dead stream {stream_id} from Dispatcharr channel")
-                    # Refresh the channel in UDI to update cache after deletion
-                    session = self.session_manager.get_session(session_id)
-                    if session:
-                        udi.refresh_channel_by_id(session.channel_id)
-                        logger.debug(f"Refreshed channel {session.channel_id} in UDI after dead stream removal")
-                else:
-                    logger.warning(f"Failed to remove dead stream {stream_id} from Dispatcharr")
-            except Exception as e:
-                logger.error(f"Error removing dead stream from Dispatcharr: {e}", exc_info=True)
+            self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
             return
         
         # Update stream metadata if we got better info
@@ -366,12 +380,14 @@ class StreamMonitoringService:
             
             # Check if stream is dead or timed out
             if not stats.is_alive:
-                # Stream has died - quarantine it
+                # Stream has died - quarantine it and remove from Dispatcharr
                 logger.warning(f"Stream {stream_id} is dead in session {session_id}, quarantining")
                 monitor.stop()
                 # Safe to delete since we're iterating over a snapshot
                 del self.monitors[session_id][stream_id]
                 stream_info.is_quarantined = True
+                # Remove dead stream from Dispatcharr channel
+                self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
             else:
                 # Check for timeout/stall on alive streams
                 time_since_update = current_time - stats.last_updated
@@ -381,6 +397,8 @@ class StreamMonitoringService:
                     # Safe to delete since we're iterating over a snapshot
                     del self.monitors[session_id][stream_id]
                     stream_info.is_quarantined = True
+                    # Remove timed-out stream from Dispatcharr channel
+                    self._remove_stream_from_dispatcharr(session_id, stream_id, "timed-out")
     
     def _refresh_session_streams(self, session_id: str):
         """Refresh the list of streams for a session"""
