@@ -594,22 +594,54 @@ function SpeedMetricsChart({ sessionId, streamId }) {
 // Screenshot Dialog Component  
 // LiveStreamsGrid Component with mpegts.js support
 function LiveStreamsGrid({ streams, sessionId }) {
+  const [mpegtsLib, setMpegtsLib] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+
+  useEffect(() => {
+    // Import mpegts.js once for all stream players
+    const loadMpegts = async () => {
+      try {
+        const mpegts = await import('mpegts.js');
+        if (!mpegts.default.isSupported()) {
+          console.error('Browser does not support MPEG-TS playback');
+        }
+        setMpegtsLib(mpegts.default);
+        setLoading(false);
+      } catch (err) {
+        console.error('Failed to load mpegts.js:', err);
+        setLoading(false);
+      }
+    };
+
+    loadMpegts();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+        <p className="text-muted-foreground">Loading stream player...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {streams.map((stream) => (
-        <LiveStreamPlayer key={stream.stream_id} stream={stream} />
+        <LiveStreamPlayer key={stream.stream_id} stream={stream} mpegtsLib={mpegtsLib} />
       ))}
     </div>
   );
 }
 
 // Live Stream Player Component using mpegts.js
-function LiveStreamPlayer({ stream }) {
+function LiveStreamPlayer({ stream, mpegtsLib }) {
   const videoRef = React.useRef(null);
   const playerRef = React.useRef(null);
   const [streamUrl, setStreamUrl] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
+  const [isMuted, setIsMuted] = React.useState(true);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -636,20 +668,17 @@ function LiveStreamPlayer({ stream }) {
 
   useEffect(() => {
     // Initialize mpegts.js player when stream URL is available
-    if (!streamUrl || !videoRef.current) return;
+    if (!streamUrl || !videoRef.current || !mpegtsLib) return;
 
     const initPlayer = async () => {
       try {
-        // Dynamically import mpegts.js
-        const mpegts = await import('mpegts.js');
-        
-        if (!mpegts.default.isSupported()) {
+        if (!mpegtsLib.isSupported()) {
           setError('Your browser does not support MPEG-TS playback');
           return;
         }
 
         // Create player
-        const player = mpegts.default.createPlayer({
+        const player = mpegtsLib.createPlayer({
           type: 'mpegts',
           url: streamUrl,
           isLive: true,
@@ -663,7 +692,7 @@ function LiveStreamPlayer({ stream }) {
         player.load();
         
         // Handle errors
-        player.on(mpegts.default.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+        player.on(mpegtsLib.Events.ERROR, (errorType, errorDetail, errorInfo) => {
           console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
           setError('Stream playback error');
         });
@@ -688,7 +717,7 @@ function LiveStreamPlayer({ stream }) {
         playerRef.current = null;
       }
     };
-  }, [streamUrl]);
+  }, [streamUrl, mpegtsLib]);
 
   const formatQuality = () => {
     if (!stream.width || !stream.height) return 'Unknown';
@@ -703,10 +732,17 @@ function LiveStreamPlayer({ stream }) {
     return `${stream.bitrate} kbps`;
   };
 
+  const handleToggleMute = () => {
+    if (videoRef.current) {
+      videoRef.current.muted = !isMuted;
+      setIsMuted(!isMuted);
+    }
+  };
+
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
+        <div className="aspect-video bg-black rounded-md overflow-hidden mb-3 relative">
           {loading ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -719,12 +755,25 @@ function LiveStreamPlayer({ stream }) {
               </div>
             </div>
           ) : (
-            <video
-              ref={videoRef}
-              controls
-              className="w-full h-full object-contain"
-              muted
-            />
+            <>
+              <video
+                ref={videoRef}
+                controls
+                className="w-full h-full object-contain"
+                muted={isMuted}
+              />
+              {isMuted && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="absolute top-2 right-2 opacity-80 hover:opacity-100"
+                  onClick={handleToggleMute}
+                >
+                  <Monitor className="h-4 w-4 mr-1" />
+                  Unmute
+                </Button>
+              )}
+            </>
           )}
         </div>
         <div className="space-y-2">
