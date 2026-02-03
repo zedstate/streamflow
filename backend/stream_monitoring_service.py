@@ -292,10 +292,25 @@ class StreamMonitoringService:
             return
         
         try:
-            path = self.screenshot_service.capture(stream_info.url, stream_id)
+            # Check if bitrate is missing
+            check_bitrate = not stream_info.bitrate
+            
+            # Capture screenshot and optionally probe bitrate
+            path, bitrate = self.screenshot_service.capture(
+                stream_info.url, 
+                stream_id, 
+                check_bitrate=check_bitrate
+            )
+            
             if path:
                 stream_info.screenshot_path = path
                 logger.debug(f"Captured screenshot for stream {stream_id}: {path}")
+            
+            # Update bitrate if we found one
+            if check_bitrate and bitrate:
+                stream_info.bitrate = bitrate
+                logger.info(f"Updated missing bitrate for stream {stream_id} from screenshot probe: {bitrate} kbps")
+                
         except Exception as e:
             logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
 

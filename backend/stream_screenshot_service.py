@@ -53,17 +53,20 @@ class StreamScreenshotService:
         
         logger.info(f"Screenshot service initialized, saving to {self.screenshot_dir}")
     
-    def capture(self, url: str, stream_id: int, timeout: int = SCREENSHOT_TIMEOUT) -> Optional[str]:
+    def capture(self, url: str, stream_id: int, timeout: int = SCREENSHOT_TIMEOUT, check_bitrate: bool = False) -> tuple[Optional[str], Optional[int]]:
         """
-        Capture a screenshot from a stream.
+        Capture a screenshot from a stream and optionally check bitrate.
         
         Args:
             url: Stream URL
             stream_id: Stream ID (used for filename)
             timeout: Maximum time to wait for capture
+            check_bitrate: If True, attempts to parse bitrate from FFmpeg output
             
         Returns:
-            Path to screenshot file (relative to data directory), or None if failed
+            Tuple of (screenshot_path, bitrate_kbps)
+            screenshot_path is None if failed
+            bitrate_kbps is None if not found or not requested
         """
         try:
             # Filename: stream_id.jpg (overwrite to save space)
@@ -89,25 +92,40 @@ class StreamScreenshotService:
             
             # Wait for completion with timeout
             try:
-                process.wait(timeout=timeout)
+                stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 process.kill()
                 logger.warning(f"Screenshot timeout for stream {stream_id}")
-                return None
+                return None, None
             
             # Check if successful
+            bitrate = None
             if process.returncode == 0 and output_path.exists():
                 # Return relative path
                 relative_path = f"screenshots/{filename}"
                 logger.debug(f"Captured screenshot for stream {stream_id}: {relative_path}")
-                return relative_path
+                
+                # Parse bitrate if requested
+                if check_bitrate and stderr:
+                    import re
+                    # Look for "bitrate: 1234 kb/s" in stderr
+                    # Pattern matches "bitrate: " followed by digits then " kb/s"
+                    match = re.search(r'bitrate:\s+(\d+)\s+kb/s', stderr)
+                    if match:
+                        try:
+                            bitrate = int(match.group(1))
+                            logger.info(f"Extracted bitrate {bitrate} kbps from screenshot probe for stream {stream_id}")
+                        except ValueError:
+                            pass
+                
+                return relative_path, bitrate
             else:
                 logger.warning(f"Screenshot failed for stream {stream_id}, exit code: {process.returncode}")
-                return None
+                return None, None
                 
         except Exception as e:
             logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
-            return None
+            return None, None
     
     def get_screenshot_path(self, stream_id: int) -> Optional[str]:
         """
