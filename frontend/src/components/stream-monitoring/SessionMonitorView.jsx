@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as React from 'react';
-import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -31,7 +31,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       if (cachedLogo) {
         setLogoUrl(cachedLogo);
       }
-      
+
       // If session has a logo URL, use it and cache it
       if (session.channel_logo_url) {
         setLogoUrl(session.channel_logo_url);
@@ -44,14 +44,14 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     loadSession();
     loadAliveScreenshots();
     loadPlayingStreams();
-    
+
     // Poll for updates every 2 seconds
     const interval = setInterval(() => {
       loadSession();
       loadAliveScreenshots();
       loadPlayingStreams();
     }, 2000);
-    
+
     return () => clearInterval(interval);
   }, [sessionId]);
 
@@ -87,20 +87,20 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       // Only update if screenshots array changed
       setAliveScreenshots(prevScreenshots => {
         const newScreenshots = response.data.screenshots || [];
-        
+
         // Quick length check first
         if (prevScreenshots.length !== newScreenshots.length) {
           return newScreenshots;
         }
-        
+
         // Check if screenshot URLs or stream IDs changed
         const hasChanged = newScreenshots.some((newShot, idx) => {
           const prevShot = prevScreenshots[idx];
-          return !prevShot || 
-                 prevShot.stream_id !== newShot.stream_id ||
-                 prevShot.screenshot_url !== newShot.screenshot_url;
+          return !prevShot ||
+            prevShot.stream_id !== newShot.stream_id ||
+            prevShot.screenshot_url !== newShot.screenshot_url;
         });
-        
+
         return hasChanged ? newScreenshots : prevScreenshots;
       });
     } catch (err) {
@@ -154,8 +154,8 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
           </Button>
           {logoUrl && (
             <div className="flex-shrink-0">
-              <img 
-                src={logoUrl} 
+              <img
+                src={logoUrl}
                 alt={session.channel_name}
                 className="h-16 w-16 object-contain rounded-md bg-white/5 p-1"
                 onError={(e) => { e.target.style.display = 'none'; }}
@@ -230,7 +230,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                 <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                 <TabsTrigger value="live">Live Streams</TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="screenshots">
                 {aliveScreenshots.length > 0 ? (
                   <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800">
@@ -270,7 +270,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   </div>
                 )}
               </TabsContent>
-              
+
               <TabsContent value="live">
                 <LiveStreamsGrid streams={activeStreams} sessionId={sessionId} />
               </TabsContent>
@@ -439,10 +439,9 @@ function StreamsTable({ streams, sessionId, onQuarantine, playingStreamIds = new
                       {stream.name}
                     </span>
                     {playingStreamIds.has(stream.stream_id) && (
-                      <Badge variant="default" className="bg-green-600 hover:bg-green-700 flex-shrink-0">
-                        <Play className="h-3 w-3 mr-1 fill-current" />
-                        Playing
-                      </Badge>
+                      <div className="flex items-center justify-center bg-green-100 dark:bg-green-900/30 p-1 rounded-full" title="Broadcasting">
+                        <Radio className="h-3 w-3 text-green-600 dark:text-green-400" />
+                      </div>
                     )}
                   </div>
                 </TableCell>
@@ -498,7 +497,7 @@ function SpeedMetricsChart({ sessionId, streamId }) {
 
   useEffect(() => {
     loadMetrics();
-    
+
     // Refresh metrics every 5 seconds
     const interval = setInterval(loadMetrics, 5000);
     return () => clearInterval(interval);
@@ -508,7 +507,7 @@ function SpeedMetricsChart({ sessionId, streamId }) {
     try {
       const response = await streamSessionsAPI.getStreamMetrics(sessionId, streamId);
       const metricsData = response.data?.metrics || [];
-      
+
       // Transform metrics data for the chart
       const chartData = metricsData.map((metric) => {
         // Timestamp is in Unix seconds, convert to milliseconds for JavaScript Date
@@ -523,7 +522,7 @@ function SpeedMetricsChart({ sessionId, streamId }) {
           timestamp: metric.timestamp, // Keep original for reference
         };
       }).slice(-20); // Keep last 20 data points
-      
+
       setMetrics(chartData);
       setLoading(false);
     } catch (err) {
@@ -554,29 +553,29 @@ function SpeedMetricsChart({ sessionId, streamId }) {
       <ResponsiveContainer width="100%" height={80}>
         <LineChart data={metrics} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-          <XAxis 
-            dataKey="time" 
+          <XAxis
+            dataKey="time"
             tick={{ fontSize: 10 }}
             interval="preserveStartEnd"
           />
-          <YAxis 
+          <YAxis
             tick={{ fontSize: 10 }}
             width={30}
             domain={[0, 'auto']}
           />
-          <RechartsTooltip 
-            contentStyle={{ 
-              backgroundColor: 'hsl(var(--background))', 
+          <RechartsTooltip
+            contentStyle={{
+              backgroundColor: 'hsl(var(--background))',
               border: '1px solid hsl(var(--border))',
               borderRadius: '6px',
               fontSize: '12px'
             }}
             formatter={(value) => [`${value.toFixed(2)}x`, 'Speed']}
           />
-          <Line 
-            type="monotone" 
-            dataKey="speed" 
-            stroke="hsl(var(--primary))" 
+          <Line
+            type="monotone"
+            dataKey="speed"
+            stroke="hsl(var(--primary))"
             strokeWidth={2}
             dot={false}
             animationDuration={300}
@@ -702,17 +701,17 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
 
         player.attachMediaElement(videoRef.current);
         player.load();
-        
+
         // Auto-play the stream
         player.play().catch(err => {
           console.warn('Autoplay blocked by browser - user interaction required. Click the video or unmute button to start playback:', err);
         });
-        
+
         // Handle errors with retry capability
         player.on(mpegtsLib.Events.ERROR, (errorType, errorDetail, errorInfo) => {
           console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
           setError('Stream playback error');
-          
+
           // Clean up the failed player
           cleanupPlayer();
         });
