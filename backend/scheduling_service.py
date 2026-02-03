@@ -318,6 +318,7 @@ class SchedulingService:
                 - program_end_time: Program end time (ISO format)
                 - program_title: Program title
                 - minutes_before: Minutes before program start to check
+                - schedule_type: Type of schedule - 'check' or 'monitoring' (default: 'check')
                 
         Returns:
             Created event dictionary
@@ -352,6 +353,11 @@ class SchedulingService:
                 if logo:
                     logo_url = logo.get('cache_url') or logo.get('url')
             
+            # Get schedule type (default to 'check' for backward compatibility)
+            schedule_type = event_data.get('schedule_type', 'check')
+            if schedule_type not in ['check', 'monitoring']:
+                schedule_type = 'check'
+            
             # Create event
             event = {
                 'id': event_id,
@@ -364,13 +370,14 @@ class SchedulingService:
                 'minutes_before': minutes_before,
                 'check_time': check_time.isoformat(),
                 'tvg_id': channel.get('tvg_id'),
+                'schedule_type': schedule_type,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self._scheduled_events.append(event)
             self._save_scheduled_events()
             
-            logger.info(f"Created scheduled event {event_id} for channel {channel.get('name')} at {check_time}")
+            logger.info(f"Created scheduled event {event_id} ({schedule_type}) for channel {channel.get('name')} at {check_time}")
             return event
     
     def delete_scheduled_event(self, event_id: str) -> bool:
@@ -708,6 +715,7 @@ class SchedulingService:
                 - channel_id: Single channel ID for backward compatibility (optional)
                 - regex_pattern: Regex pattern to match program names
                 - minutes_before: Minutes before program start to check
+                - schedule_type: Type of schedule - 'check' or 'monitoring' (default: 'check')
                 
         Returns:
             Created rule dictionary
@@ -801,6 +809,11 @@ class SchedulingService:
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
             
+            # Get schedule type (default to 'check' for backward compatibility)
+            schedule_type = rule_data.get('schedule_type', 'check')
+            if schedule_type not in ['check', 'monitoring']:
+                schedule_type = 'check'
+            
             # Create rule
             rule = {
                 'id': rule_id,
@@ -811,6 +824,7 @@ class SchedulingService:
                 'channels_info': channels_info,  # Store full channel info for display (expanded)
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
+                'schedule_type': schedule_type,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
@@ -823,7 +837,7 @@ class SchedulingService:
                 desc_parts.append(f"{len(channel_ids)} individual channel(s)")
             if channel_group_ids:
                 desc_parts.append(f"{len(channel_group_ids)} channel group(s)")
-            logger.info(f"Created auto-create rule {rule_id} '{rule_data['name']}' for {', '.join(desc_parts)} (total {len(channels_info)} channels)")
+            logger.info(f"Created auto-create rule {rule_id} '{rule_data['name']}' ({schedule_type}) for {', '.join(desc_parts)} (total {len(channels_info)} channels)")
             
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
@@ -1225,6 +1239,9 @@ class SchedulingService:
                         if logo:
                             logo_url = logo.get('cache_url') or logo.get('url')
                     
+                    # Get schedule type from rule (default to 'check' for backward compatibility)
+                    schedule_type = rule.get('schedule_type', 'check')
+                    
                     event_data = {
                         'id': str(uuid.uuid4()),
                         'channel_id': channel_id,
@@ -1236,6 +1253,7 @@ class SchedulingService:
                         'minutes_before': minutes_before,
                         'check_time': check_time.isoformat(),
                         'tvg_id': tvg_id,
+                        'schedule_type': schedule_type,
                         'created_at': datetime.now(timezone.utc).isoformat(),
                         'auto_created': True,
                         'auto_create_rule_id': rule.get('id'),
