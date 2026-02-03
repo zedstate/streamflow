@@ -763,10 +763,6 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
                 muted={isMuted}
                 playsInline
                 className="w-full h-full object-contain [&::-webkit-media-controls]:hidden [&::-webkit-media-controls-enclosure]:hidden"
-                style={{
-                  // Hide all default browser controls
-                  WebkitAppearance: 'none',
-                }}
               />
               <Button
                 size="sm"
