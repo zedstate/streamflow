@@ -199,6 +199,15 @@ class FFmpegStreamMonitor:
             'no route to host',
         ]
         
+        # Non-fatal error patterns that should be logged at debug level only
+        # These are common codec errors that don't indicate stream failure
+        non_fatal_error_patterns = [
+            'decode_slice_header error',
+            'concealing',
+            'error while decoding mb',
+            'missing picture in access unit',
+        ]
+        
         try:
             for line in self._process.stderr:
                 if not self._running:
@@ -212,9 +221,18 @@ class FFmpegStreamMonitor:
                 line_lower = line.lower()
                 is_fatal = any(pattern in line_lower for pattern in fatal_error_patterns)
                 
+                # Check if this is a non-fatal error that should be logged at debug level
+                is_non_fatal_error = any(pattern in line_lower for pattern in non_fatal_error_patterns)
+                
                 # Check for errors
                 if 'error' in line_lower or 'failed' in line_lower:
-                    logger.warning(f"FFmpeg error for {self.url[:50]}: {line.strip()}")
+                    if is_non_fatal_error:
+                        # Log non-fatal errors at debug level to avoid spam
+                        logger.debug(f"FFmpeg non-fatal error for {self.url[:50]}: {line.strip()}")
+                    else:
+                        # Log other errors at warning level
+                        logger.warning(f"FFmpeg error for {self.url[:50]}: {line.strip()}")
+                    
                     if is_fatal or 'fatal' in line_lower:
                         self.stats.error_message = line.strip()
                         self.stats.is_alive = False

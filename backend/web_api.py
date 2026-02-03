@@ -4156,18 +4156,13 @@ def create_stream_session():
         # Get regex filter - if not provided, use channel's configured regex
         regex_filter = data.get('regex_filter')
         if not regex_filter:
-            # Try to get channel's configured regex from channel settings
+            # Try to get channel's configured regex from regex matcher
             try:
-                from channel_settings_manager import get_channel_settings_manager
-                settings_manager = get_channel_settings_manager()
-                channel_settings = settings_manager.get_channel_effective_settings(channel_id)
-                if channel_settings and channel_settings.get('regex_pattern'):
-                    regex_filter = channel_settings['regex_pattern']
-                    logger.info(f"Using channel's configured regex for manual session: {regex_filter}")
-                else:
-                    regex_filter = '.*'  # Default fallback
+                regex_matcher = get_regex_matcher()
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
+                logger.info(f"Using channel's configured regex for manual session: {regex_filter}")
             except Exception as e:
-                logger.debug(f"Could not get channel regex settings: {e}")
+                logger.debug(f"Could not get channel regex from matcher: {e}")
                 regex_filter = '.*'  # Default fallback
         
         pre_event_minutes = data.get('pre_event_minutes', 30)

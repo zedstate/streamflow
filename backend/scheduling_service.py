@@ -48,7 +48,15 @@ class SchedulingService:
         self._scheduled_events = self._load_scheduled_events()
         self._auto_create_rules = self._load_auto_create_rules()
         self._executed_events = self._load_executed_events()
+        self._regex_matcher = None  # Lazy-loaded regex matcher
         logger.info("Scheduling service initialized")
+    
+    def _get_regex_matcher(self):
+        """Get or create regex matcher instance (singleton pattern)."""
+        if self._regex_matcher is None:
+            from automated_stream_manager import RegexChannelMatcher
+            self._regex_matcher = RegexChannelMatcher()
+        return self._regex_matcher
     
     def _load_config(self) -> Dict[str, Any]:
         """Load scheduling configuration from file.
@@ -550,19 +558,17 @@ class SchedulingService:
                 'description': event.get('program_description', '')
             }
             
-            # Get channel's configured regex from channel settings if available
+            # Get channel's configured regex from regex matcher
             channel_id = event.get('channel_id')
             regex_filter = ".*"  # Default
             
-            # Try to get channel-specific regex from channel settings
+            # Try to get channel-specific regex from regex matcher
             try:
-                from channel_settings_manager import get_channel_settings_manager
-                settings_manager = get_channel_settings_manager()
-                channel_settings = settings_manager.get_channel_effective_settings(channel_id)
-                if channel_settings and channel_settings.get('regex_pattern'):
-                    regex_filter = channel_settings['regex_pattern']
+                regex_matcher = self._get_regex_matcher()
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
+                logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}")
             except Exception as e:
-                logger.debug(f"Could not get channel regex settings: {e}")
+                logger.debug(f"Could not get channel regex from matcher: {e}")
             
             # Create session
             session_id = session_manager.create_session(

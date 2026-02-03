@@ -741,6 +741,59 @@ class RegexChannelMatcher:
             regex_patterns = channel_config.get("regex", [])
         
         return isinstance(regex_patterns, list) and len(regex_patterns) > 0
+    
+    def get_channel_regex_filter(self, channel_id: str) -> str:
+        """Get the combined regex filter for a channel for stream name matching.
+        
+        Combines all enabled regex patterns for the channel into a single OR pattern.
+        Returns '.*' if no patterns are configured or channel is disabled.
+        
+        Args:
+            channel_id: Channel ID to get regex filter for
+            
+        Returns:
+            Combined regex pattern string (e.g., '(pattern1|pattern2|pattern3)')
+        """
+        channel_config = self.channel_patterns.get("patterns", {}).get(str(channel_id))
+        if not channel_config:
+            return ".*"
+        
+        # Check if the pattern is enabled
+        if not channel_config.get("enabled", True):
+            return ".*"
+        
+        # Get regex patterns (support both old and new format)
+        regex_patterns = channel_config.get("regex_patterns")
+        if regex_patterns is None:
+            # Fallback to old format
+            regex_patterns = channel_config.get("regex", [])
+        
+        if not isinstance(regex_patterns, list) or len(regex_patterns) == 0:
+            return ".*"
+        
+        # Extract pattern strings from objects (new format) or use directly (old format)
+        pattern_strings = []
+        for pattern_obj in regex_patterns:
+            if isinstance(pattern_obj, dict):
+                pattern = pattern_obj.get('pattern', '')
+            else:
+                # Legacy format
+                pattern = pattern_obj
+            
+            if pattern and isinstance(pattern, str):
+                pattern_strings.append(pattern)
+        
+        if not pattern_strings:
+            return ".*"
+        
+        # If only one pattern, return it directly
+        if len(pattern_strings) == 1:
+            return pattern_strings[0]
+        
+        # Combine multiple patterns with OR
+        # Each pattern is wrapped in a non-capturing group for safety
+        combined = '|'.join(f'(?:{p})' for p in pattern_strings)
+        return f'({combined})'
 
 
 class AutomatedStreamManager:

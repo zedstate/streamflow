@@ -312,12 +312,8 @@ class StreamSessionManager:
         channel_tvg_id = channel.get('tvg_id')
         logo_id = channel.get('logo_id')
         if logo_id:
-            # Build logo URL from Dispatcharr
-            from dispatcharr_config import get_dispatcharr_config
-            dispatcharr_config = get_dispatcharr_config()
-            base_url = dispatcharr_config.get_base_url()
-            if base_url:
-                channel_logo_url = f"{base_url}/api/channels/logos/{logo_id}/"
+            # Use cached logo endpoint for better performance
+            channel_logo_url = f"/api/channels/logos/{logo_id}/cache"
         
         # Create session
         session = SessionInfo(
