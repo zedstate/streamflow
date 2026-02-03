@@ -197,6 +197,11 @@ class FFmpegStreamMonitor:
             'server returned 5',  # HTTP errors
             'connection refused',
             'no route to host',
+            'connection timed out',
+            'end of file',
+            'i/o error',
+            'protocol not found',
+            'no such file or directory',
         ]
         
         # Non-fatal error patterns that should be logged at debug level only
@@ -252,6 +257,16 @@ class FFmpegStreamMonitor:
             logger.error(f"Error monitoring FFmpeg output: {e}")
         
         finally:
+            # Check if process exited unexpectedly
+            if self._process:
+                try:
+                    exit_code = self._process.poll()
+                    if exit_code is not None and exit_code != 0:
+                        logger.warning(f"FFmpeg process exited with code {exit_code} for {self.url[:50]}")
+                        self.stats.error_message = f"FFmpeg exited with code {exit_code}"
+                except Exception as e:
+                    logger.error(f"Error checking FFmpeg exit code: {e}")
+            
             with self._lock:
                 self._running = False
                 self.stats.is_alive = False

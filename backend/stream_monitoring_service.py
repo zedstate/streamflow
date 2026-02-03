@@ -348,11 +348,19 @@ class StreamMonitoringService:
                 scoring_window.add_measurement(is_healthy, stats.speed)
                 stream_info.reliability_score = scoring_window.get_score()
             
-            # Check for timeout/stall
-            if stats.is_alive:
+            # Check if stream is dead or timed out
+            if not stats.is_alive:
+                # Stream has died - quarantine it
+                logger.warning(f"Stream {stream_id} is dead in session {session_id}, quarantining")
+                monitor.stop()
+                # Safe to delete since we're iterating over a snapshot
+                del self.monitors[session_id][stream_id]
+                stream_info.is_quarantined = True
+            elif stats.is_alive:
+                # Check for timeout/stall on alive streams
                 time_since_update = current_time - stats.last_updated
                 if time_since_update > (session.timeout_ms / 1000.0):
-                    logger.warning(f"Stream {stream_id} timed out in session {session_id}")
+                    logger.warning(f"Stream {stream_id} timed out in session {session_id} (no updates for {time_since_update:.1f}s)")
                     monitor.stop()
                     # Safe to delete since we're iterating over a snapshot
                     del self.monitors[session_id][stream_id]
