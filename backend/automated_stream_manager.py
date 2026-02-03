@@ -1379,7 +1379,8 @@ class AutomatedStreamManager:
                             "channel_name": channel_names.get(channel_id, f'Channel {channel_id}'),
                             "logo_url": channel_logo_urls.get(channel_id),
                             "stream_count": added_count,
-                            "streams": assignment_details[channel_id][:20]  # Limit to first 20 for changelog
+                            "streams": assignment_details[channel_id][:20],  # Limit to first 20 for changelog
+                            "added_to_session": False
                         }
                         detailed_assignments.append(channel_assignment)
                         
