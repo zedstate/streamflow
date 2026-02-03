@@ -526,6 +526,54 @@ def update_channel_streams(
                 f"{status}"
             )
             return False
+    except requests.exceptions.HTTPError as e:
+        # Handle "Invalid pk" errors by refreshing UDI and retrying with validated IDs
+        if e.response.status_code == 400 and 'Invalid pk' in str(e.response.text):
+            logger.warning(
+                f"Stream ID validation failed for channel {channel_id}. "
+                f"Refreshing UDI and retrying with valid IDs only..."
+            )
+            try:
+                # Refresh streams in UDI to get latest data
+                udi = get_udi_manager()
+                udi.refresh_streams()
+                
+                # Re-validate stream IDs with fresh data
+                current_valid_ids = udi.get_valid_stream_ids()
+                revalidated_stream_ids = [sid for sid in filtered_stream_ids if sid in current_valid_ids]
+                
+                invalid_count = len(filtered_stream_ids) - len(revalidated_stream_ids)
+                if invalid_count > 0:
+                    logger.info(
+                        f"Filtered out {invalid_count} invalid stream ID(s) after UDI refresh "
+                        f"for channel {channel_id}"
+                    )
+                
+                # Retry with validated IDs
+                if revalidated_stream_ids:
+                    retry_data = {"streams": revalidated_stream_ids}
+                    retry_response = patch_request(url, retry_data)
+                    if retry_response and retry_response.status_code in [200, 204]:
+                        logger.info(
+                            f"✓ Successfully updated channel {channel_id} with "
+                            f"{len(revalidated_stream_ids)} validated streams (after retry)"
+                        )
+                        return True
+                else:
+                    logger.warning(
+                        f"No valid streams remaining for channel {channel_id} after UDI refresh"
+                    )
+                    return False
+            except Exception as retry_error:
+                logger.error(
+                    f"Retry failed for channel {channel_id} after UDI refresh: {retry_error}"
+                )
+                raise
+        else:
+            logger.error(
+                f"Failed to update channel {channel_id} streams: {e}"
+            )
+            raise
     except Exception as e:
         logger.error(
             f"Failed to update channel {channel_id} streams: {e}"
