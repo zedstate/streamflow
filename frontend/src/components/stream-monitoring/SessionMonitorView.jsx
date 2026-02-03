@@ -687,7 +687,6 @@ function ScreenshotDialog({ open, onOpenChange, stream }) {
     </Dialog>
   );
 }
-
 // Helper function
 function calculateAverageScore(streams) {
   if (streams.length === 0) return 0;
