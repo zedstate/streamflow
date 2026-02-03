@@ -4153,7 +4153,23 @@ def create_stream_session():
         if not channel_id:
             return jsonify({"error": "channel_id is required"}), 400
         
-        regex_filter = data.get('regex_filter', '.*')
+        # Get regex filter - if not provided, use channel's configured regex
+        regex_filter = data.get('regex_filter')
+        if not regex_filter:
+            # Try to get channel's configured regex from channel settings
+            try:
+                from channel_settings_manager import get_channel_settings_manager
+                settings_manager = get_channel_settings_manager()
+                channel_settings = settings_manager.get_channel_effective_settings(channel_id)
+                if channel_settings and channel_settings.get('regex_pattern'):
+                    regex_filter = channel_settings['regex_pattern']
+                    logger.info(f"Using channel's configured regex for manual session: {regex_filter}")
+                else:
+                    regex_filter = '.*'  # Default fallback
+            except Exception as e:
+                logger.debug(f"Could not get channel regex settings: {e}")
+                regex_filter = '.*'  # Default fallback
+        
         pre_event_minutes = data.get('pre_event_minutes', 30)
         stagger_ms = data.get('stagger_ms', 200)
         timeout_ms = data.get('timeout_ms', 30000)

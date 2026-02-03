@@ -424,7 +424,7 @@ class SchedulingService:
         return due_events
     
     def execute_scheduled_check(self, event_id: str, stream_checker_service) -> bool:
-        """Execute a scheduled channel check and remove the event.
+        """Execute a scheduled channel check or create monitoring session and remove the event.
         
         Args:
             event_id: Event ID to execute
@@ -449,23 +449,47 @@ class SchedulingService:
             channel_id = event.get('channel_id')
             program_title = event.get('program_title', 'Unknown Program')
             program_start_time = event.get('program_start_time')
+            schedule_type = event.get('schedule_type', 'check')  # Default to 'check' for backward compatibility
             
             # Validate required fields
             if not channel_id or not program_start_time:
                 logger.error(f"Scheduled event {event_id} missing required fields (channel_id or program_start_time)")
                 return False
         
-        # Release lock before executing the long-running channel check
-        logger.info(f"Executing scheduled check for channel {channel_id} (program: {program_title})")
+        # Release lock before executing the long-running operation
+        logger.info(f"Executing scheduled {schedule_type} for channel {channel_id} (program: {program_title})")
         
         try:
-            # Execute the check with program context (without holding the lock)
-            result = stream_checker_service.check_single_channel(
-                channel_id, 
-                program_name=program_title
-            )
+            if schedule_type == 'monitoring':
+                # Create and start monitoring session
+                session_id = self.create_session_from_event(event_id)
+                
+                if session_id:
+                    # Start the session
+                    from stream_session_manager import get_session_manager
+                    session_manager = get_session_manager()
+                    
+                    if session_manager.start_session(session_id):
+                        logger.info(f"Started monitoring session {session_id} for event {event_id}")
+                        success = True
+                    else:
+                        logger.error(f"Failed to start monitoring session {session_id} for event {event_id}")
+                        success = False
+                else:
+                    logger.error(f"Failed to create monitoring session for event {event_id}")
+                    success = False
+            else:
+                # Execute traditional stream check
+                result = stream_checker_service.check_single_channel(
+                    channel_id, 
+                    program_name=program_title
+                )
+                success = result.get('success', False)
+                
+                if not success:
+                    logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
             
-            if result.get('success'):
+            if success:
                 # Re-acquire lock only to delete the event and record execution
                 with self._lock:
                     # Remove the event and check if it was actually present
@@ -474,7 +498,7 @@ class SchedulingService:
                     
                     if len(self._scheduled_events) < initial_count:
                         self._save_scheduled_events()
-                        logger.info(f"Scheduled event {event_id} executed and removed successfully")
+                        logger.info(f"Scheduled event {event_id} ({schedule_type}) executed and removed successfully")
                     else:
                         logger.warning(f"Scheduled event {event_id} was already removed by another thread")
                     
@@ -484,7 +508,6 @@ class SchedulingService:
                 
                 return True
             else:
-                logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
                 return False
                 
         except Exception as e:

@@ -1297,6 +1297,14 @@ class AutomatedStreamManager:
             
             logger.info(f"✓ Completed processing {total_streams} streams. Found {sum(len(s) for s in assignments.values())} new stream assignments across {len(assignments)} channels")
             
+            # Get channels in active monitoring sessions to handle them separately
+            from stream_session_manager import get_session_manager
+            session_manager = get_session_manager()
+            channels_in_sessions = session_manager.get_channels_in_active_sessions()
+            
+            if channels_in_sessions:
+                logger.info(f"Found {len(channels_in_sessions)} channel(s) in active monitoring sessions - will add streams to sessions instead of direct assignment")
+            
             # Prepare detailed changelog data
             detailed_assignments = []
             
@@ -1307,7 +1315,40 @@ class AutomatedStreamManager:
             for channel_id, stream_ids in assignments.items():
                 if stream_ids:
                     try:
-                        added_count = add_streams_to_channel(int(channel_id), stream_ids, allow_dead_streams=(not dead_stream_removal_enabled))
+                        channel_id_int = int(channel_id)
+                        
+                        # Check if channel is in an active monitoring session
+                        if channel_id_int in channels_in_sessions:
+                            # Add streams to the active session(s) instead of direct channel assignment
+                            logger.info(f"Channel {channel_id} is in an active monitoring session - adding {len(stream_ids)} streams to session(s)")
+                            added_to_session = 0
+                            
+                            # Find all active sessions for this channel
+                            active_sessions = [s for s in session_manager.get_active_sessions() if s.channel_id == channel_id_int]
+                            
+                            for session in active_sessions:
+                                for stream_id in stream_ids:
+                                    if session_manager.add_stream_to_session(session.session_id, stream_id):
+                                        added_to_session += 1
+                            
+                            if added_to_session > 0:
+                                logger.info(f"Added {added_to_session} new streams to monitoring session(s) for channel {channel_id}")
+                                assignment_count[channel_id] = added_to_session
+                                
+                                # Prepare detailed assignment info
+                                channel_assignment = {
+                                    "channel_id": channel_id,
+                                    "channel_name": channel_names.get(channel_id, f'Channel {channel_id}'),
+                                    "logo_url": channel_logo_urls.get(channel_id),
+                                    "stream_count": added_to_session,
+                                    "streams": assignment_details[channel_id][:20],  # Limit to first 20 for changelog
+                                    "added_to_session": True
+                                }
+                                detailed_assignments.append(channel_assignment)
+                            continue
+                        
+                        # Normal channel assignment (not in session)
+                        added_count = add_streams_to_channel(channel_id_int, stream_ids, allow_dead_streams=(not dead_stream_removal_enabled))
                         assignment_count[channel_id] = added_count
                         
                         # Verify streams were added correctly

@@ -496,6 +496,92 @@ class StreamSessionManager:
         """Get all active sessions"""
         return [s for s in self.sessions.values() if s.is_active]
     
+    def is_channel_in_active_session(self, channel_id: int) -> bool:
+        """Check if a channel is currently in an active monitoring session.
+        
+        Args:
+            channel_id: Channel ID to check
+            
+        Returns:
+            True if channel is in an active session
+        """
+        for session in self.sessions.values():
+            if session.is_active and session.channel_id == channel_id:
+                return True
+        return False
+    
+    def get_channels_in_active_sessions(self) -> Set[int]:
+        """Get set of channel IDs that are currently in active monitoring sessions.
+        
+        Returns:
+            Set of channel IDs in active sessions
+        """
+        channels = set()
+        for session in self.sessions.values():
+            if session.is_active:
+                channels.add(session.channel_id)
+        return channels
+    
+    def add_stream_to_session(self, session_id: str, stream_id: int) -> bool:
+        """Add a newly discovered stream to an active session.
+        
+        This is called when automation discovers new streams for a channel
+        that's currently in a monitoring session.
+        
+        Args:
+            session_id: Session ID
+            stream_id: Stream ID to add
+            
+        Returns:
+            True if stream was added successfully
+        """
+        if session_id not in self.sessions:
+            logger.error(f"Session {session_id} not found")
+            return False
+        
+        session = self.sessions[session_id]
+        if not session.is_active:
+            logger.warning(f"Session {session_id} is not active")
+            return False
+        
+        # Check if stream already exists
+        if stream_id in session.streams:
+            logger.debug(f"Stream {stream_id} already in session {session_id}")
+            return True
+        
+        # Get stream info from UDI
+        udi = get_udi_manager()
+        stream = udi.get_stream_by_id(stream_id)
+        if not stream:
+            logger.error(f"Stream {stream_id} not found in UDI")
+            return False
+        
+        # Check if stream matches session's regex filter
+        import re
+        try:
+            pattern = re.compile(session.regex_filter, re.IGNORECASE)
+            if not pattern.search(stream.get('name', '')):
+                logger.debug(f"Stream {stream_id} does not match session regex filter")
+                return False
+        except re.error:
+            logger.warning(f"Invalid regex filter in session {session_id}")
+        
+        # Add stream to session
+        with self.session_locks[session_id]:
+            stream_info = StreamInfo(
+                stream_id=stream_id,
+                url=stream.get('url', ''),
+                name=stream.get('name', ''),
+                channel_id=session.channel_id,
+                m3u_account=stream.get('m3u_account')
+            )
+            session.streams[stream_id] = stream_info
+            self.scoring_windows[session_id][stream_id] = CappedSlidingWindow(session.window_size)
+            
+            logger.info(f"Added stream {stream_id} to session {session_id}")
+            self._save_sessions()
+            return True
+    
     def delete_session(self, session_id: str) -> bool:
         """Delete a session"""
         if session_id not in self.sessions:
