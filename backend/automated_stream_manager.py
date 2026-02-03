@@ -1169,10 +1169,10 @@ class AutomatedStreamManager:
             enabled_account_ids = set()
             
             if all_accounts:
-                # Filter out "custom" account and non-active accounts
+                # Filter specific accounts
                 non_custom_accounts = [
                     acc for acc in all_accounts
-                    if acc.get('name', '').lower() != 'custom' and acc.get('is_active', True)
+                    if acc.get('is_active', True)
                 ]
                 
                 # Get enabled accounts from config

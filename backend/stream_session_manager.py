@@ -758,9 +758,17 @@ class StreamSessionManager:
         if session_id not in self.sessions:
             return False
         
-        # Stop if active
+        # Stop if active, but ALWAYS try to stop monitors to ensure cleanup
         if self.sessions[session_id].is_active:
             self.stop_session(session_id)
+        else:
+            # Even if marked inactive, ensure monitors are stopped
+            try:
+                from stream_monitoring_service import get_monitoring_service
+                monitoring_service = get_monitoring_service()
+                monitoring_service.stop_session_monitors(session_id)
+            except Exception as e:
+                logger.error(f"Error checking monitors for deleted session {session_id}: {e}")
         
         # Remove session
         del self.sessions[session_id]
