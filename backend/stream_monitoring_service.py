@@ -405,12 +405,14 @@ class StreamMonitoringService:
                     self._remove_stream_from_dispatcharr(session_id, stream_id, "timed-out")
                 else:
                     # Check for persistently slow speed (auto-quarantine)
-                    if stats.speed < SLOW_SPEED_THRESHOLD:
+                    # Handle None speed values gracefully
+                    current_speed = stats.speed if stats.speed is not None else 0.0
+                    if current_speed < SLOW_SPEED_THRESHOLD:
                         # Speed is too slow
                         if stream_info.low_speed_start_time is None:
                             # First time below threshold, start tracking
                             stream_info.low_speed_start_time = current_time
-                            logger.debug(f"Stream {stream_id} speed dropped below {SLOW_SPEED_THRESHOLD} (current: {stats.speed:.2f}x)")
+                            logger.debug(f"Stream {stream_id} speed dropped below {SLOW_SPEED_THRESHOLD} (current: {current_speed:.2f}x)")
                         else:
                             # Check how long it's been slow
                             slow_duration = current_time - stream_info.low_speed_start_time
@@ -418,7 +420,7 @@ class StreamMonitoringService:
                                 # Been slow for too long, quarantine
                                 logger.warning(
                                     f"Stream {stream_id} has been below {SLOW_SPEED_THRESHOLD}x speed for "
-                                    f"{slow_duration:.1f}s (current: {stats.speed:.2f}x), auto-quarantining"
+                                    f"{slow_duration:.1f}s (current: {current_speed:.2f}x), auto-quarantining"
                                 )
                                 monitor.stop()
                                 # Safe to delete since we're iterating over a snapshot
@@ -429,7 +431,7 @@ class StreamMonitoringService:
                     else:
                         # Speed is acceptable, reset tracking
                         if stream_info.low_speed_start_time is not None:
-                            logger.debug(f"Stream {stream_id} speed recovered (current: {stats.speed:.2f}x)")
+                            logger.debug(f"Stream {stream_id} speed recovered (current: {current_speed:.2f}x)")
                             stream_info.low_speed_start_time = None
     
     def _refresh_session_streams(self, session_id: str):

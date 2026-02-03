@@ -728,7 +728,7 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
 
     // Cleanup on unmount or when dependencies change
     return cleanupPlayer;
-  }, [streamUrl, mpegtsLib, retryKey, cleanupPlayer]);
+  }, [streamUrl, mpegtsLib, retryKey]);
 
   const handleRetry = () => {
     setError(null);
