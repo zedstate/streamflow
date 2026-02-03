@@ -40,6 +40,7 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
   - Prevents frequent stream changes due to minor fluctuations
   - Score range: 0-100%
 - Automatic stream quarantine for failed streams
+- **Manual Quarantine**: Ability to manually quarantine streams from the UI
 - Continuous re-evaluation of stream health
 
 ### 5. Screenshot Capture & Carousel
@@ -47,15 +48,23 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
 - Configurable interval (default: 60 seconds)
 - Helps identify mismatching or incorrect streams
 - Screenshots stored efficiently (one per stream, overwritten)
-- **Live Screenshot Carousel**: All alive streams' screenshots displayed in UI carousel
+- **Scrollable Screenshot Display**: All alive streams' screenshots displayed in scrollable container
 - Screenshots sorted by reliability score for quick quality assessment
 - Accessible via web UI for quick visual checks
 
-### 6. Metrics Persistence & Visualization
+### 6. Active Stream Detection
+- **Play Badge**: Green badge with play icon shows which streams are currently being played
+- Real-time integration with Dispatcharr proxy status
+- Updates every 2 seconds to show current playback state
+- Helps identify which streams are actively in use
+
+### 7. Metrics Persistence & Visualization
 - Historical metrics stored for each stream
 - Session data persisted to JSON files
 - **Speed Stat Graphs**: FFmpeg speed metrics visualized in line charts under each stream
+- **Improved Timeline**: Graph timestamps show HH:MM:SS format for better precision
 - Real-time graph updates showing stream performance trends
+- Stats refresh automatically without page reload
 - Viewable in real-time dashboard
 - Exportable for analysis
 
@@ -294,6 +303,55 @@ Get screenshots and info for all alive (non-quarantined) streams in a session.
       "m3u_account": "premium-account"
     }
   ]
+}
+```
+
+#### POST `/api/stream-sessions/<session_id>/streams/<stream_id>/quarantine`
+Manually quarantine a stream in a session. Useful for streams with mismatched content.
+
+**Response:**
+```json
+{
+  "message": "Stream quarantined successfully",
+  "session_id": "session_123_1706834567",
+  "stream_id": 789
+}
+```
+
+#### GET `/api/proxy/status`
+Get current proxy status showing which streams are actively being played.
+
+**Response:**
+```json
+{
+  "channels": [
+    {
+      "channel_id": "uuid-123",
+      "state": "active",
+      "stream_id": 789,
+      "stream_name": "Stream Name",
+      "client_count": 1,
+      "uptime": 199.12,
+      "avg_bitrate_kbps": 7377.21,
+      "avg_bitrate": "7.38 Mbps",
+      "resolution": "1920x1080",
+      "source_fps": 25.0,
+      "ffmpeg_speed": 1.45,
+      "clients": [...]
+    }
+  ],
+  "count": 2
+}
+```
+
+#### GET `/api/proxy/playing-streams`
+Get list of stream IDs that are currently being played.
+
+**Response:**
+```json
+{
+  "playing_stream_ids": [789, 790, 791],
+  "count": 3
 }
 ```
 

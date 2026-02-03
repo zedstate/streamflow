@@ -113,6 +113,29 @@ class StreamMonitoringService:
         
         logger.info("StreamMonitoringService stopped")
     
+    def stop_session_monitors(self, session_id: str):
+        """
+        Stop all FFmpeg monitors for a specific session.
+        
+        This is called when a session is stopped or deleted to ensure
+        all FFmpeg processes are terminated immediately.
+        
+        Args:
+            session_id: Session ID to stop monitors for
+        """
+        if session_id in self.monitors:
+            logger.info(f"Stopping all monitors for session {session_id}")
+            for stream_id, monitor in list(self.monitors[session_id].items()):
+                try:
+                    monitor.stop()
+                    logger.debug(f"Stopped monitor for stream {stream_id}")
+                except Exception as e:
+                    logger.error(f"Error stopping monitor for stream {stream_id}: {e}")
+            
+            # Remove session from monitors
+            del self.monitors[session_id]
+            logger.info(f"All monitors stopped for session {session_id}")
+    
     def _monitor_worker(self):
         """Worker thread for monitoring streams"""
         logger.info("Monitor worker started")
@@ -294,6 +317,15 @@ class StreamMonitoringService:
             
             stats = monitor.get_stats()
             
+            # Update stream info with latest stats
+            if stats.width > 0:
+                stream_info.width = stats.width
+                stream_info.height = stats.height
+            if stats.fps > 0:
+                stream_info.fps = stats.fps
+            if stats.bitrate > 0:
+                stream_info.bitrate = int(stats.bitrate)
+            
             # Create metrics entry
             metrics = StreamMetrics(
                 timestamp=current_time,
@@ -316,11 +348,19 @@ class StreamMonitoringService:
                 scoring_window.add_measurement(is_healthy, stats.speed)
                 stream_info.reliability_score = scoring_window.get_score()
             
-            # Check for timeout/stall
-            if stats.is_alive:
+            # Check if stream is dead or timed out
+            if not stats.is_alive:
+                # Stream has died - quarantine it
+                logger.warning(f"Stream {stream_id} is dead in session {session_id}, quarantining")
+                monitor.stop()
+                # Safe to delete since we're iterating over a snapshot
+                del self.monitors[session_id][stream_id]
+                stream_info.is_quarantined = True
+            else:
+                # Check for timeout/stall on alive streams
                 time_since_update = current_time - stats.last_updated
                 if time_since_update > (session.timeout_ms / 1000.0):
-                    logger.warning(f"Stream {stream_id} timed out in session {session_id}")
+                    logger.warning(f"Stream {stream_id} timed out in session {session_id} (no updates for {time_since_update:.1f}s)")
                     monitor.stop()
                     # Safe to delete since we're iterating over a snapshot
                     del self.monitors[session_id][stream_id]

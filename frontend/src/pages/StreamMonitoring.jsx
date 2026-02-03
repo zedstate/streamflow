@@ -166,20 +166,18 @@ function StreamMonitoring() {
     loadSessions();
   };
 
-  // If viewing a specific session, show the monitor view
-  if (selectedSessionId) {
-    return (
-      <SessionMonitorView
-        sessionId={selectedSessionId}
-        onBack={handleBackToList}
-        onStop={() => handleStopSession(selectedSessionId)}
-        onDelete={() => handleDeleteSession(selectedSessionId)}
-      />
-    );
-  }
-
   return (
-    <div className="space-y-6">
+    <>
+      {/* If viewing a specific session, show the monitor view */}
+      {selectedSessionId ? (
+        <SessionMonitorView
+          sessionId={selectedSessionId}
+          onBack={handleBackToList}
+          onStop={() => handleStopSession(selectedSessionId)}
+          onDelete={() => handleDeleteSession(selectedSessionId)}
+        />
+      ) : (
+        <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-start">
         <div>
@@ -315,7 +313,9 @@ function StreamMonitoring() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+        </div>
+      )}
+    </>
   );
 }
 
