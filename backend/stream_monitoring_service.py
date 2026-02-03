@@ -287,6 +287,17 @@ class StreamMonitoringService:
                 del self.monitors[session_id][stream_id]
             # Quarantine the stream
             stream_info.is_quarantined = True
+            # Remove dead stream from Dispatcharr channel
+            try:
+                from udi import get_udi_manager
+                udi = get_udi_manager()
+                success = udi.bulk_delete_streams([stream_id])
+                if success:
+                    logger.info(f"Removed dead stream {stream_id} from Dispatcharr channel")
+                else:
+                    logger.warning(f"Failed to remove dead stream {stream_id} from Dispatcharr")
+            except Exception as e:
+                logger.error(f"Error removing dead stream from Dispatcharr: {e}", exc_info=True)
             return
         
         # Update stream metadata if we got better info

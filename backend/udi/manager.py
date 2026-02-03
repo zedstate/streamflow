@@ -91,7 +91,7 @@ class UDIManager:
         # Proxy status cache for real-time stream viewer information
         self._proxy_status_cache: Dict[str, Any] = {}
         self._proxy_status_last_fetch: float = 0
-        self._proxy_status_ttl: float = 5.0  # Cache proxy status for 5 seconds
+        self._proxy_status_ttl: float = 1.0  # Cache proxy status for 1 second to match FFmpeg stats update frequency
         
         logger.info("UDI Manager created")
     
@@ -1483,6 +1483,55 @@ class UDIManager:
                     playing_stream_ids.add(stream_id)
         
         return playing_stream_ids
+    
+    def bulk_delete_streams(self, stream_ids: List[int]) -> bool:
+        """
+        Delete multiple streams from Dispatcharr by their IDs.
+        
+        Args:
+            stream_ids: List of stream IDs to delete
+            
+        Returns:
+            True if deletion successful, False otherwise
+        """
+        if not stream_ids:
+            logger.debug("No stream IDs provided for bulk delete")
+            return True
+        
+        try:
+            import requests
+            from dispatcharr_config import get_dispatcharr_config
+            from udi.fetcher import _get_auth_headers
+            
+            config = get_dispatcharr_config()
+            base_url = config.get_base_url()
+            
+            if not base_url:
+                logger.error("DISPATCHARR_BASE_URL not set, cannot delete streams")
+                return False
+            
+            url = f"{base_url}/api/channels/streams/bulk-delete/"
+            headers = _get_auth_headers()
+            payload = {"stream_ids": stream_ids}
+            
+            logger.info(f"Bulk deleting {len(stream_ids)} streams from Dispatcharr")
+            response = requests.delete(url, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 204:
+                logger.info(f"Successfully deleted {len(stream_ids)} streams from Dispatcharr")
+                # Force refresh streams cache after deletion
+                self._streams_cache = []
+                self._streams_by_id = {}
+                self._streams_by_url = {}
+                self._valid_stream_ids = set()
+                return True
+            else:
+                logger.error(f"Failed to delete streams: HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error deleting streams from Dispatcharr: {e}", exc_info=True)
+            return False
 
 
 # Global singleton instance

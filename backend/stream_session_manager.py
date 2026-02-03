@@ -587,13 +587,14 @@ class StreamSessionManager:
             self._save_sessions()
             return True
     
-    def quarantine_stream(self, session_id: str, stream_id: int) -> bool:
+    def quarantine_stream(self, session_id: str, stream_id: int, remove_from_dispatcharr: bool = True) -> bool:
         """
-        Manually quarantine a stream.
+        Manually quarantine a stream and optionally remove it from Dispatcharr.
         
         Args:
             session_id: Session ID
             stream_id: Stream ID to quarantine
+            remove_from_dispatcharr: If True, also removes the stream from Dispatcharr channel
             
         Returns:
             True if quarantined successfully
@@ -614,6 +615,20 @@ class StreamSessionManager:
             self._save_sessions()
         
         logger.info(f"Manually quarantined stream {stream_id} in session {session_id}")
+        
+        # Remove from Dispatcharr channel if requested
+        if remove_from_dispatcharr:
+            try:
+                from udi import get_udi_manager
+                udi = get_udi_manager()
+                success = udi.bulk_delete_streams([stream_id])
+                if success:
+                    logger.info(f"Removed quarantined stream {stream_id} from Dispatcharr channel")
+                else:
+                    logger.warning(f"Failed to remove quarantined stream {stream_id} from Dispatcharr")
+            except Exception as e:
+                logger.error(f"Error removing quarantined stream from Dispatcharr: {e}", exc_info=True)
+        
         return True
     
     def delete_session(self, session_id: str) -> bool:
