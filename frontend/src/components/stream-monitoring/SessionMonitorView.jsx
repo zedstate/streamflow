@@ -641,6 +641,18 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
   const [retryKey, setRetryKey] = React.useState(0);
   const { toast } = useToast();
 
+  // Helper function to clean up player instance
+  const cleanupPlayer = React.useCallback(() => {
+    if (playerRef.current) {
+      try {
+        playerRef.current.destroy();
+      } catch (err) {
+        console.error('Error destroying player:', err);
+      }
+      playerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     // Load stream URL
     const loadStreamUrl = async () => {
@@ -670,14 +682,7 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
     const initPlayer = async () => {
       try {
         // Clean up any existing player before creating a new one
-        if (playerRef.current) {
-          try {
-            playerRef.current.destroy();
-          } catch (err) {
-            console.error('Error destroying existing player:', err);
-          }
-          playerRef.current = null;
-        }
+        cleanupPlayer();
 
         if (!mpegtsLib.isSupported()) {
           setError('Your browser does not support MPEG-TS playback');
@@ -709,14 +714,7 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
           setError('Stream playback error');
           
           // Clean up the failed player
-          if (playerRef.current) {
-            try {
-              playerRef.current.destroy();
-            } catch (err) {
-              console.error('Error destroying failed player:', err);
-            }
-            playerRef.current = null;
-          }
+          cleanupPlayer();
         });
 
         playerRef.current = player;
@@ -728,20 +726,11 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
 
     initPlayer();
 
-    // Cleanup
-    return () => {
-      if (playerRef.current) {
-        try {
-          playerRef.current.destroy();
-        } catch (err) {
-          console.error('Error destroying player:', err);
-        }
-        playerRef.current = null;
-      }
-    };
-  }, [streamUrl, mpegtsLib, retryKey]);
+    // Cleanup on unmount or when dependencies change
+    return cleanupPlayer;
+  }, [streamUrl, mpegtsLib, retryKey, cleanupPlayer]);
 
-  const handleRetryPlayer = () => {
+  const handleRetry = () => {
     setError(null);
     setRetryKey(prev => prev + 1);
   };
@@ -782,7 +771,7 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={handleRetryPlayer}
+                  onClick={handleRetry}
                   className="text-sm"
                 >
                   Retry
