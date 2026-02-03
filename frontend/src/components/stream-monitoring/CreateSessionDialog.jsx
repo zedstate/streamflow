@@ -15,8 +15,6 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     channel_id: '',
-    regex_filter: '.*',
-    pre_event_minutes: 30,
     stagger_ms: 200,
     timeout_ms: 30000,
     autoStart: true
@@ -98,38 +96,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              The channel to monitor streams for
-            </p>
-          </div>
-
-          {/* Regex Filter */}
-          <div className="space-y-2">
-            <Label htmlFor="regex">Stream Filter (Regex)</Label>
-            <Input
-              id="regex"
-              value={formData.regex_filter}
-              onChange={(e) => handleChange('regex_filter', e.target.value)}
-              placeholder=".*"
-              className="font-mono"
-            />
-            <p className="text-xs text-muted-foreground">
-              Regular expression to filter which streams to monitor. Use .* for all streams.
-            </p>
-          </div>
-
-          {/* Pre-event Minutes */}
-          <div className="space-y-2">
-            <Label htmlFor="pre_event">Pre-Event Start (Minutes)</Label>
-            <Input
-              id="pre_event"
-              type="number"
-              min="5"
-              max="120"
-              value={formData.pre_event_minutes}
-              onChange={(e) => handleChange('pre_event_minutes', parseInt(e.target.value))}
-            />
-            <p className="text-xs text-muted-foreground">
-              How many minutes before an event to start monitoring (5-120)
+              The channel to monitor streams for. Will use the channel&apos;s configured regex rules.
             </p>
           </div>
 

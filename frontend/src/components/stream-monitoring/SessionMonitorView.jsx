@@ -477,7 +477,7 @@ function SpeedMetricsChart({ sessionId, streamId }) {
   const loadMetrics = async () => {
     try {
       const response = await streamSessionsAPI.getStreamMetrics(sessionId, streamId);
-      const metricsData = response.data || [];
+      const metricsData = response.data?.metrics || [];
       
       // Transform metrics data for the chart
       const chartData = metricsData.map((metric) => ({
