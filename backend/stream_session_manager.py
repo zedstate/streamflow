@@ -203,6 +203,9 @@ class StreamSessionManager:
         # Load existing sessions if any
         self._load_sessions()
         
+        # Track last stream list refresh time
+        self._last_streams_refresh = 0
+        
         logger.info("StreamSessionManager initialized")
     
     def _load_sessions(self):
@@ -289,6 +292,23 @@ class StreamSessionManager:
         """
         # Get channel info from UDI
         udi = get_udi_manager()
+        
+        # Always refresh the specific channel to ensure metadata (name, logo) is up to date
+        udi.refresh_channel_by_id(channel_id)
+        
+        # Refresh global stream list with rate limiting (30s cooldown)
+        # This prevents API spam when batch creating sessions while keeping data reasonably fresh
+        current_time = time.time()
+        if current_time - self._last_streams_refresh > 30:
+            logger.info("Refreshing global stream list (cooldown passed)")
+            if udi.refresh_streams():
+                self._last_streams_refresh = current_time
+        else:
+            logger.debug(
+                f"Skipping stream list refresh (cooldown active, "
+                f"{30 - (current_time - self._last_streams_refresh):.1f}s remaining)"
+            )
+        
         channel = udi.get_channel_by_id(channel_id)
         if not channel:
             raise ValueError(f"Channel {channel_id} not found")
