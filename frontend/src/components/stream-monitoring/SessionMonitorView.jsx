@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as React from 'react';
-import { ArrowLeft, Square, Trash2, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Monitor } from 'lucide-react';
+import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +16,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 const FALLBACK_IMAGE_SVG = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225"%3E%3Crect fill="%23111" width="400" height="225"/%3E%3Ctext fill="%23666" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif"%3ENo Image%3C/text%3E%3C/svg%3E';
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_';
 
-function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
+function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [aliveScreenshots, setAliveScreenshots] = useState([]);
@@ -176,10 +176,6 @@ function SessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
               Stop Monitoring
             </Button>
           )}
-          <Button variant="outline" onClick={onDelete}>
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete Session
-          </Button>
         </div>
       </div>
 
@@ -691,6 +687,11 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
         player.attachMediaElement(videoRef.current);
         player.load();
         
+        // Auto-play the stream
+        player.play().catch(err => {
+          console.warn('Autoplay failed (may require user interaction):', err);
+        });
+        
         // Handle errors
         player.on(mpegtsLib.Events.ERROR, (errorType, errorDetail, errorInfo) => {
           console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
@@ -758,21 +759,27 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
             <>
               <video
                 ref={videoRef}
-                controls
-                className="w-full h-full object-contain"
+                autoPlay
                 muted={isMuted}
+                playsInline
+                className="w-full h-full object-contain [&::-webkit-media-controls]:hidden [&::-webkit-media-controls-enclosure]:hidden"
+                style={{
+                  // Hide all default browser controls
+                  WebkitAppearance: 'none',
+                }}
               />
-              {isMuted && (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="absolute top-2 right-2 opacity-80 hover:opacity-100"
-                  onClick={handleToggleMute}
-                >
-                  <Monitor className="h-4 w-4 mr-1" />
-                  Unmute
-                </Button>
-              )}
+              <Button
+                size="sm"
+                variant="secondary"
+                className="absolute top-2 right-2 opacity-80 hover:opacity-100"
+                onClick={handleToggleMute}
+              >
+                {isMuted ? (
+                  <VolumeX className="h-4 w-4" />
+                ) : (
+                  <Volume2 className="h-4 w-4" />
+                )}
+              </Button>
             </>
           )}
         </div>

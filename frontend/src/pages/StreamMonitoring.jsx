@@ -174,7 +174,6 @@ function StreamMonitoring() {
           sessionId={selectedSessionId}
           onBack={handleBackToList}
           onStop={() => handleStopSession(selectedSessionId)}
-          onDelete={() => handleDeleteSession(selectedSessionId)}
         />
       ) : (
         <div className="space-y-6">

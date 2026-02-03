@@ -366,12 +366,26 @@ class StreamMonitoringService:
             
             # Check if stream is dead or timed out
             if not stats.is_alive:
-                # Stream has died - quarantine it
+                # Stream has died - quarantine it and remove from Dispatcharr
                 logger.warning(f"Stream {stream_id} is dead in session {session_id}, quarantining")
                 monitor.stop()
                 # Safe to delete since we're iterating over a snapshot
                 del self.monitors[session_id][stream_id]
                 stream_info.is_quarantined = True
+                # Remove dead stream from Dispatcharr channel
+                try:
+                    from udi import get_udi_manager
+                    udi = get_udi_manager()
+                    success = udi.bulk_delete_streams([stream_id])
+                    if success:
+                        logger.info(f"Removed dead stream {stream_id} from Dispatcharr channel")
+                        # Refresh the channel in UDI to update cache after deletion
+                        udi.refresh_channel_by_id(session.channel_id)
+                        logger.debug(f"Refreshed channel {session.channel_id} in UDI after dead stream removal")
+                    else:
+                        logger.warning(f"Failed to remove dead stream {stream_id} from Dispatcharr")
+                except Exception as e:
+                    logger.error(f"Error removing dead stream from Dispatcharr: {e}", exc_info=True)
             else:
                 # Check for timeout/stall on alive streams
                 time_since_update = current_time - stats.last_updated
@@ -381,6 +395,20 @@ class StreamMonitoringService:
                     # Safe to delete since we're iterating over a snapshot
                     del self.monitors[session_id][stream_id]
                     stream_info.is_quarantined = True
+                    # Remove timed-out stream from Dispatcharr channel
+                    try:
+                        from udi import get_udi_manager
+                        udi = get_udi_manager()
+                        success = udi.bulk_delete_streams([stream_id])
+                        if success:
+                            logger.info(f"Removed timed-out stream {stream_id} from Dispatcharr channel")
+                            # Refresh the channel in UDI to update cache after deletion
+                            udi.refresh_channel_by_id(session.channel_id)
+                            logger.debug(f"Refreshed channel {session.channel_id} in UDI after timed-out stream removal")
+                        else:
+                            logger.warning(f"Failed to remove timed-out stream {stream_id} from Dispatcharr")
+                    except Exception as e:
+                        logger.error(f"Error removing timed-out stream from Dispatcharr: {e}", exc_info=True)
     
     def _refresh_session_streams(self, session_id: str):
         """Refresh the list of streams for a session"""
