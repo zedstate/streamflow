@@ -137,7 +137,8 @@ class StreamCheckConfig:
         },
         'batch_operations': {
             'enabled': True,  # Enable batch stats updates to reduce API calls
-            'batch_size': 10  # Number of streams to update per batch
+            'batch_size': 10,  # Number of streams to update per batch
+            'verify_updates': False  # Verify channel updates by refreshing UDI (adds API overhead)
         }
     }
     
@@ -2130,8 +2131,17 @@ class StreamCheckerService:
                 step='Verifying update',
                 step_detail='Confirming stream order was applied'
             )
-            time_module.sleep(0.5)
-            udi.refresh_channel_by_id(channel_id)
+            
+            # Only verify if enabled in configuration
+            batch_config = self.config.get('batch_operations', {})
+            verify_updates = batch_config.get('verify_updates', False)
+            
+            if verify_updates:
+                time_module.sleep(0.5)
+                udi.refresh_channel_by_id(channel_id)
+                logger.debug(f"Verified channel {channel_name} update via UDI refresh")
+            else:
+                logger.debug(f"Skipped verification for channel {channel_name} (disabled in config)")
             
             logger.info(f"✓ Channel {channel_name} checked and streams reordered (parallel mode)")
             
@@ -2603,16 +2613,22 @@ class StreamCheckerService:
                 step='Verifying update',
                 step_detail='Confirming stream order was applied'
             )
-            time.sleep(0.5)  # Brief delay to ensure API has processed the update
-            # Refresh this specific channel in UDI to get updated data after write
-            udi.refresh_channel_by_id(channel_id)
-            updated_channel_data = udi.get_channel_by_id(channel_id)
-            if updated_channel_data:
-                updated_stream_ids = updated_channel_data.get('streams', [])
-                if updated_stream_ids == reordered_ids:
-                    logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
-                else:
-                    logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
+            
+            # Only verify if enabled in configuration
+            batch_config = self.config.get('batch_operations', {})
+            verify_updates = batch_config.get('verify_updates', False)
+            
+            if verify_updates:
+                time.sleep(0.5)  # Brief delay to ensure API has processed the update
+                # Refresh this specific channel in UDI to get updated data after write
+                udi.refresh_channel_by_id(channel_id)
+                updated_channel_data = udi.get_channel_by_id(channel_id)
+                if updated_channel_data:
+                    updated_stream_ids = updated_channel_data.get('streams', [])
+                    if updated_stream_ids == reordered_ids:
+                        logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
+                    else:
+                        logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
                     logger.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
             else:
                 logger.warning(f"⚠ Could not verify stream update for channel {channel_name}")
