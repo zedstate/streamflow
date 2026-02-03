@@ -142,8 +142,7 @@ class StreamMonitoringService:
             logger.info(f"All monitors stopped for session {session_id}")
     
     def _remove_stream_from_dispatcharr(self, session_id: str, stream_id: int, reason: str):
-        """
-        Remove a stream from Dispatcharr channel and refresh UDI cache.
+        Remove a stream from Dispatcharr channel (without deleting it from UDI).
         
         Args:
             session_id: Session ID
@@ -156,15 +155,45 @@ class StreamMonitoringService:
                 logger.warning(f"Session {session_id} not found when removing stream {stream_id}")
                 return
             
+            stream_info = session.streams.get(stream_id)
+            if not stream_info:
+                logger.warning(f"Stream info {stream_id} not found when removing stream")
+                return
+
+            # Mark as dead in tracker (if not already done by caller)
+            # Some callers might have already done this, but it's safe to do again
+            self.dead_streams_tracker.mark_as_dead(
+                stream_url=stream_info.url,
+                stream_id=stream_id,
+                stream_name=stream_info.name,
+                channel_id=session.channel_id
+            )
+            
+            # Remove from channel (but not delete from UDI)
             udi = get_udi_manager()
-            success = udi.bulk_delete_streams([stream_id])
-            if success:
-                logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel")
-                # Refresh the channel in UDI to update cache after deletion
-                udi.refresh_channel_by_id(session.channel_id)
-                logger.debug(f"Refreshed channel {session.channel_id} in UDI after {reason} stream removal")
+            channel = udi.get_channel_by_id(session.channel_id)
+            
+            if channel:
+                current_streams = channel.get('streams', [])
+                if stream_id in current_streams:
+                    # Create new list without the quarantined stream
+                    new_streams = [sid for sid in current_streams if sid != stream_id]
+                    
+                    # Update channel with new stream list
+                    from api_utils import update_channel_streams
+                    success = update_channel_streams(session.channel_id, new_streams)
+                    
+                    if success:
+                        logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel {session.channel_id}")
+                        # Refresh channel in UDI
+                        udi.refresh_channel_by_id(session.channel_id)
+                    else:
+                        logger.warning(f"Failed to update channel {session.channel_id} to remove {reason} stream {stream_id}")
+                else:
+                    logger.info(f"{reason} stream {stream_id} was not in channel {session.channel_id} streams list")
             else:
-                logger.warning(f"Failed to remove {reason} stream {stream_id} from Dispatcharr")
+                logger.warning(f"Channel {session.channel_id} not found, could not remove {reason} stream {stream_id}")
+
         except Exception as e:
             logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
     
