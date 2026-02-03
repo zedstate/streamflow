@@ -601,6 +601,30 @@ class StreamSessionManager:
             
             logger.info(f"Added stream {stream_id} to session {session_id}")
             self._save_sessions()
+            
+            # Also add stream to Dispatcharr channel for real-time sync
+            try:
+                from api_utils import add_streams_to_channel
+                added_count = add_streams_to_channel(session.channel_id, [stream_id])
+                if added_count > 0:
+                    logger.info(
+                        f"✓ Successfully added stream {stream_id} to Dispatcharr "
+                        f"channel {session.channel_id} (real-time sync)"
+                    )
+                    # Refresh the channel in UDI to update cache
+                    udi.refresh_channel_by_id(session.channel_id)
+                else:
+                    logger.debug(
+                        f"Stream {stream_id} already in Dispatcharr channel {session.channel_id} "
+                        f"or filtered out (possibly dead stream)"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Failed to add stream {stream_id} to Dispatcharr channel {session.channel_id}: {e}",
+                    exc_info=True
+                )
+                # Don't fail the entire operation if Dispatcharr sync fails
+            
             return True
     
     def quarantine_stream(self, session_id: str, stream_id: int, remove_from_dispatcharr: bool = True) -> bool:
@@ -640,6 +664,9 @@ class StreamSessionManager:
                 success = udi.bulk_delete_streams([stream_id])
                 if success:
                     logger.info(f"Removed quarantined stream {stream_id} from Dispatcharr channel")
+                    # Refresh the channel in UDI to update cache after deletion
+                    udi.refresh_channel_by_id(session.channel_id)
+                    logger.debug(f"Refreshed channel {session.channel_id} in UDI after stream removal")
                 else:
                     logger.warning(f"Failed to remove quarantined stream {stream_id} from Dispatcharr")
             except Exception as e:
