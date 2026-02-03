@@ -689,7 +689,7 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
         
         // Auto-play the stream
         player.play().catch(err => {
-          console.warn('Autoplay failed (may require user interaction):', err);
+          console.warn('Autoplay blocked by browser - user interaction required. Click the video or unmute button to start playback:', err);
         });
         
         // Handle errors
