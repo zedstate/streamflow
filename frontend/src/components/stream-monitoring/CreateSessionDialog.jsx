@@ -5,16 +5,20 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle } from 'lucide-react';
 import { channelsAPI } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 
 function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
+  const [mode, setMode] = useState('channel');
   const [channels, setChannels] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     channel_id: '',
+    group_id: '',
     stagger_ms: 200,
     timeout_ms: 30000,
     autoStart: true
@@ -23,20 +27,24 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
 
   useEffect(() => {
     if (open) {
-      loadChannels();
+      loadData();
     }
   }, [open]);
 
-  const loadChannels = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      const response = await channelsAPI.getChannels();
-      setChannels(response.data || []);
+      const [channelsRes, groupsRes] = await Promise.all([
+        channelsAPI.getChannels(),
+        channelsAPI.getGroups()
+      ]);
+      setChannels(channelsRes.data || []);
+      setGroups(groupsRes.data || []);
     } catch (err) {
-      console.error('Failed to load channels:', err);
+      console.error('Failed to load data:', err);
       toast({
         title: 'Error',
-        description: 'Failed to load channels',
+        description: 'Failed to load channels or groups',
         variant: 'destructive'
       });
     } finally {
@@ -46,8 +54,8 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    
-    if (!formData.channel_id) {
+
+    if (mode === 'channel' && !formData.channel_id) {
       toast({
         title: 'Validation Error',
         description: 'Please select a channel',
@@ -56,7 +64,22 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
       return;
     }
 
-    onCreateSession(formData);
+    if (mode === 'group' && !formData.group_id) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a group',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    const payload = {
+      ...formData,
+      channel_id: mode === 'channel' ? formData.channel_id : undefined,
+      group_id: mode === 'group' ? formData.group_id : undefined
+    };
+
+    onCreateSession(payload);
   };
 
   const handleChange = (field, value) => {
@@ -72,38 +95,70 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
         <DialogHeader>
           <DialogTitle>Create Monitoring Session</DialogTitle>
           <DialogDescription>
-            Create a new stream monitoring session for live event quality tracking
+            Create monitoring sessions for single channels or entire groups
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Channel Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="channel">Channel *</Label>
-            <Select
-              value={formData.channel_id ? formData.channel_id.toString() : ''}
-              onValueChange={(value) => handleChange('channel_id', parseInt(value))}
-            >
-              <SelectTrigger id="channel">
-                <SelectValue placeholder="Select a channel" />
-              </SelectTrigger>
-              <SelectContent>
-                {channels.map((channel) => (
-                  <SelectItem key={channel.id} value={channel.id.toString()}>
-                    {channel.name} (#{channel.channel_number})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              The channel to monitor streams for. Will use the channel&apos;s configured regex rules.
-            </p>
-          </div>
+          <Tabs value={mode} onValueChange={setMode} className="w-full">
+            <TabsList className="grid w-full grid-cols-2 mb-4">
+              <TabsTrigger value="channel">Single Channel</TabsTrigger>
+              <TabsTrigger value="group">Channel Group</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="channel" className="space-y-4 mt-0">
+              <div className="space-y-2">
+                <Label htmlFor="channel">Channel *</Label>
+                <Select
+                  value={formData.channel_id ? formData.channel_id.toString() : ''}
+                  onValueChange={(value) => handleChange('channel_id', parseInt(value))}
+                >
+                  <SelectTrigger id="channel">
+                    <SelectValue placeholder="Select a channel" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {channels.map((channel) => (
+                      <SelectItem key={channel.id} value={channel.id.toString()}>
+                        {channel.name} (#{channel.channel_number})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Monitor a specific channel using its configured rules.
+                </p>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="group" className="space-y-4 mt-0">
+              <div className="space-y-2">
+                <Label htmlFor="group">Channel Group *</Label>
+                <Select
+                  value={formData.group_id ? formData.group_id.toString() : ''}
+                  onValueChange={(value) => handleChange('group_id', parseInt(value))}
+                >
+                  <SelectTrigger id="group">
+                    <SelectValue placeholder="Select a group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((group) => (
+                      <SelectItem key={group.id} value={group.id.toString()}>
+                        {group.name} ({group.channel_count} channels)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Create and auto-start sessions for all channels in this group.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
 
           {/* Advanced Settings */}
           <div className="border rounded-lg p-4 space-y-3">
             <h4 className="text-sm font-medium">Advanced Settings</h4>
-            
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="stagger" className="text-xs">Stagger Delay (ms)</Label>
@@ -116,9 +171,6 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
                   onChange={(e) => handleChange('stagger_ms', parseInt(e.target.value))}
                   className="text-sm"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Delay between starting stream monitors
-                </p>
               </div>
 
               <div className="space-y-2">
@@ -132,37 +184,37 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
                   onChange={(e) => handleChange('timeout_ms', parseInt(e.target.value))}
                   className="text-sm"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Stream timeout before quarantine
-                </p>
               </div>
             </div>
           </div>
 
           {/* Auto-start Toggle */}
-          <div className="flex items-center justify-between rounded-lg border p-3">
-            <div className="space-y-0.5">
-              <Label htmlFor="autostart" className="text-sm font-medium">
-                Auto-start Monitoring
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Begin monitoring immediately after creation
-              </p>
+          {mode === 'channel' && (
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="autostart" className="text-sm font-medium">
+                  Auto-start Monitoring
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Begin monitoring immediately after creation
+                </p>
+              </div>
+              <Switch
+                id="autostart"
+                checked={formData.autoStart}
+                onCheckedChange={(checked) => handleChange('autoStart', checked)}
+              />
             </div>
-            <Switch
-              id="autostart"
-              checked={formData.autoStart}
-              onCheckedChange={(checked) => handleChange('autoStart', checked)}
-            />
-          </div>
+          )}
 
           {/* Info Alert */}
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription className="text-xs">
-              Sessions continuously monitor stream quality, capture screenshots, and calculate
-              reliability scores using a Capped Sliding Window algorithm to minimize unnecessary
-              stream changes in Dispatcharr.
+              {mode === 'group'
+                ? "Group monitoring will create and immediately start sessions for all channels in the selected group."
+                : "Sessions continuously monitor stream quality, capture screenshots, and calculate reliability scores using Capped Sliding Window algorithm."
+              }
             </AlertDescription>
           </Alert>
 
@@ -170,8 +222,8 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || !formData.channel_id}>
-              Create Session
+            <Button type="submit" disabled={loading || (mode === 'channel' ? !formData.channel_id : !formData.group_id)}>
+              {mode === 'group' ? 'Start Group Monitoring' : 'Create Session'}
             </Button>
           </DialogFooter>
         </form>

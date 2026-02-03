@@ -33,6 +33,15 @@ export const streamSessionsAPI = {
   },
 
   /**
+   * Create and start monitoring sessions for all channels in a group
+   * @param {object} sessionData - Session configuration with group_id
+   * @returns {Promise} Created sessions info
+   */
+  createGroupSession: (sessionData) => {
+    return api.post('/stream-sessions/group/start', sessionData);
+  },
+
+  /**
    * Start monitoring for a session
    * @param {string} sessionId - Session ID
    * @returns {Promise}

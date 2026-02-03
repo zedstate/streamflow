@@ -4197,6 +4197,86 @@ def create_stream_session():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/stream-sessions/group/start', methods=['POST'])
+def create_group_stream_sessions():
+    """Create and start monitoring sessions for all channels in a group."""
+    try:
+        data = request.json
+        
+        group_id = data.get('group_id')
+        if not group_id:
+            return jsonify({"error": "group_id is required"}), 400
+        
+        # Get channels in group
+        udi = get_udi_manager()
+        channels = udi.get_channels_by_group(group_id)
+        
+        if not channels:
+            return jsonify({"error": "Group not found or has no channels"}), 404
+        
+        # Common parameters
+        regex_filter = data.get('regex_filter')
+        pre_event_minutes = data.get('pre_event_minutes', 30)
+        stagger_ms = data.get('stagger_ms', 200)
+        timeout_ms = data.get('timeout_ms', 30000)
+        
+        session_manager = get_session_manager()
+        monitoring_service = get_monitoring_service()
+        
+        created_sessions = []
+        errors = []
+        
+        for channel in channels:
+            try:
+                channel_id = channel.get('id')
+                
+                # Determine regex for this channel
+                channel_regex = regex_filter
+                if not channel_regex:
+                    # Try to get channel's configured regex
+                    try:
+                        regex_matcher = get_regex_matcher()
+                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id))
+                    except Exception:
+                        channel_regex = '.*'
+                
+                # Create session
+                session_id = session_manager.create_session(
+                    channel_id=channel_id,
+                    regex_filter=channel_regex,
+                    pre_event_minutes=pre_event_minutes,
+                    stagger_ms=stagger_ms,
+                    timeout_ms=timeout_ms
+                )
+                
+                # Start session
+                if session_manager.start_session(session_id):
+                    created_sessions.append({
+                        "session_id": session_id,
+                        "channel_id": channel_id,
+                        "channel_name": channel.get('name')
+                    })
+                else:
+                    errors.append(f"Failed to start session for channel {channel.get('name')} ({channel_id})")
+                    
+            except Exception as e:
+                errors.append(f"Error creating session for channel {channel.get('name')} ({channel_id}): {e}")
+        
+        # Ensure monitoring service is running if we started any sessions
+        if created_sessions and not monitoring_service._running:
+            monitoring_service.start()
+        
+        return jsonify({
+            "message": f"Started {len(created_sessions)} sessions from group {group_id}",
+            "sessions": created_sessions,
+            "errors": errors
+        }), 200 if created_sessions else 400
+        
+    except Exception as e:
+        logger.error(f"Error creating group stream sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/stream-sessions/<session_id>', methods=['GET'])
 def get_stream_session(session_id):
     """Get detailed information about a specific session including all streams."""
