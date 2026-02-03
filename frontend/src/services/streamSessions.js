@@ -77,4 +77,13 @@ export const streamSessionsAPI = {
   getScreenshotUrl: (streamId) => {
     return `/data/screenshots/${streamId}.jpg?t=${Date.now()}`;
   },
+
+  /**
+   * Get alive screenshots for a session
+   * @param {string} sessionId - Session ID
+   * @returns {Promise} Array of alive stream screenshots
+   */
+  getAliveScreenshots: (sessionId) => {
+    return api.get(`/stream-sessions/${sessionId}/alive-screenshots`);
+  },
 };

@@ -4120,7 +4120,19 @@ def get_stream_sessions():
                 'screenshot_interval_seconds': session.screenshot_interval_seconds,
                 'window_size': session.window_size,
                 'stream_count': len(session.streams) if session.streams else 0,
-                'active_streams': sum(1 for s in session.streams.values() if not s.is_quarantined) if session.streams else 0
+                'active_streams': sum(1 for s in session.streams.values() if not s.is_quarantined) if session.streams else 0,
+                # EPG event info
+                'epg_event_id': session.epg_event_id,
+                'epg_event_title': session.epg_event_title,
+                'epg_event_start': session.epg_event_start,
+                'epg_event_end': session.epg_event_end,
+                'epg_event_description': session.epg_event_description,
+                # Channel info
+                'channel_logo_url': session.channel_logo_url,
+                'channel_tvg_id': session.channel_tvg_id,
+                # Auto-creation info
+                'auto_created': session.auto_created,
+                'auto_create_rule_id': session.auto_create_rule_id
             }
             sessions_data.append(session_dict)
         
@@ -4146,13 +4158,23 @@ def create_stream_session():
         stagger_ms = data.get('stagger_ms', 200)
         timeout_ms = data.get('timeout_ms', 30000)
         
+        # Extract EPG event if provided
+        epg_event = data.get('epg_event')
+        
+        # Extract auto-creation flags if provided
+        auto_created = data.get('auto_created', False)
+        auto_create_rule_id = data.get('auto_create_rule_id')
+        
         session_manager = get_session_manager()
         session_id = session_manager.create_session(
             channel_id=channel_id,
             regex_filter=regex_filter,
             pre_event_minutes=pre_event_minutes,
             stagger_ms=stagger_ms,
-            timeout_ms=timeout_ms
+            timeout_ms=timeout_ms,
+            epg_event=epg_event,
+            auto_created=auto_created,
+            auto_create_rule_id=auto_create_rule_id
         )
         
         return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
@@ -4212,7 +4234,19 @@ def get_stream_session(session_id):
             'probe_interval_ms': session.probe_interval_ms,
             'screenshot_interval_seconds': session.screenshot_interval_seconds,
             'window_size': session.window_size,
-            'streams': streams_data
+            'streams': streams_data,
+            # EPG event info
+            'epg_event_id': session.epg_event_id,
+            'epg_event_title': session.epg_event_title,
+            'epg_event_start': session.epg_event_start,
+            'epg_event_end': session.epg_event_end,
+            'epg_event_description': session.epg_event_description,
+            # Channel info
+            'channel_logo_url': session.channel_logo_url,
+            'channel_tvg_id': session.channel_tvg_id,
+            # Auto-creation info
+            'auto_created': session.auto_created,
+            'auto_create_rule_id': session.auto_create_rule_id
         }
         
         return jsonify(session_dict), 200
@@ -4322,6 +4356,63 @@ def serve_screenshot(filename):
     except Exception as e:
         logger.error(f"Error serving screenshot {filename}: {e}")
         return jsonify({"error": "Screenshot not found"}), 404
+
+
+@app.route('/api/stream-sessions/<session_id>/alive-screenshots', methods=['GET'])
+def get_alive_screenshots(session_id):
+    """Get screenshots and info for all alive (non-quarantined) streams in a session."""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        
+        # Get all alive streams with screenshots
+        screenshots_data = []
+        if session.streams:
+            for stream_id, stream_info in session.streams.items():
+                if not stream_info.is_quarantined and stream_info.screenshot_path:
+                    screenshots_data.append({
+                        'stream_id': stream_info.stream_id,
+                        'stream_name': stream_info.name,
+                        'screenshot_url': f"/data/screenshots/{Path(stream_info.screenshot_path).name}",
+                        'reliability_score': stream_info.reliability_score,
+                        'm3u_account': stream_info.m3u_account
+                    })
+        
+        # Sort by reliability score descending
+        screenshots_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+        
+        return jsonify({
+            'session_id': session_id,
+            'screenshots': screenshots_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting alive screenshots for session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
+def create_session_from_event(event_id):
+    """Create a monitoring session from a scheduled event."""
+    try:
+        scheduling_service = get_scheduling_service()
+        session_id = scheduling_service.create_session_from_event(event_id)
+        
+        if not session_id:
+            return jsonify({"error": "Failed to create session from event"}), 400
+        
+        return jsonify({
+            "session_id": session_id,
+            "message": "Session created successfully from event"
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating session from event {event_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 
 
 # Serve React app for all frontend routes (catch-all - must be last!)

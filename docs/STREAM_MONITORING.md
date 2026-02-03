@@ -11,8 +11,19 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
 - Configure regex filters to select which streams to monitor
 - Set pre-event timing to start monitoring before events begin
 - Independent session management with start/stop controls
+- **EPG Event Integration**: Sessions can be attached to EPG events for context-aware monitoring
+- **Automatic Creation**: Sessions can be auto-created from scheduled events via regex/group rules
 
-### 2. Continuous Quality Assessment
+### 2. EPG Event Attachment
+- Sessions can be linked to specific EPG program events
+- Displays event information including:
+  - Program title and description
+  - Event start and end times
+  - Event metadata
+- Enables event-context monitoring for live broadcasts
+- Automatic session creation when scheduled events trigger
+
+### 3. Continuous Quality Assessment
 - Lightweight FFmpeg-based monitoring using null muxer (`-c copy -f null -`)
 - Real-time metrics collection:
   - Stream speed (buffering detection)
@@ -20,8 +31,9 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
   - FPS tracking
   - Resolution detection
 - Minimal resource usage through copy codec (no re-encoding)
+- **FFmpeg Speed Stats Storage**: Historical speed metrics stored for graphing
 
-### 3. Reliability Scoring
+### 4. Reliability Scoring
 - **Capped Sliding Window Algorithm**
   - Maintains a fixed-size window of recent measurements (default: 100)
   - Calculates reliability scores with limited variance
@@ -30,16 +42,20 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
 - Automatic stream quarantine for failed streams
 - Continuous re-evaluation of stream health
 
-### 4. Screenshot Capture
+### 5. Screenshot Capture & Carousel
 - Periodic screenshot capture for visual stream verification
 - Configurable interval (default: 60 seconds)
 - Helps identify mismatching or incorrect streams
 - Screenshots stored efficiently (one per stream, overwritten)
+- **Live Screenshot Carousel**: All alive streams' screenshots displayed in UI carousel
+- Screenshots sorted by reliability score for quick quality assessment
 - Accessible via web UI for quick visual checks
 
-### 5. Metrics Persistence
+### 6. Metrics Persistence & Visualization
 - Historical metrics stored for each stream
 - Session data persisted to JSON files
+- **Speed Stat Graphs**: FFmpeg speed metrics visualized in line charts under each stream
+- Real-time graph updates showing stream performance trends
 - Viewable in real-time dashboard
 - Exportable for analysis
 
@@ -93,11 +109,15 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
 
 #### 2. SessionMonitorView Component
 - **Features**:
+  - **Channel Logo Display**: Shows channel logo at top of session view
+  - **EPG Event Info Card**: Displays attached EPG event details (title, description, times)
   - Live monitoring dashboard
   - Stats cards (total, active, quarantined, avg reliability)
+  - **Screenshot Carousel**: Carousel of all alive streams' screenshots above stream list
   - Stream tables with:
     - Reliability scores (with progress bars)
     - Quality metrics (resolution, FPS, bitrate)
+    - **FFmpeg Speed Graphs**: Real-time speed metrics visualization under each stream
     - Screenshot viewing
   - Active/quarantined stream separation
 
@@ -135,7 +155,16 @@ List all monitoring sessions or filter by status.
     "stagger_ms": 200,
     "timeout_ms": 30000,
     "stream_count": 15,
-    "active_streams": 12
+    "active_streams": 12,
+    "epg_event_id": 456,
+    "epg_event_title": "Live Sports Event",
+    "epg_event_start": "2024-01-01T20:00:00Z",
+    "epg_event_end": "2024-01-01T22:00:00Z",
+    "epg_event_description": "Championship game",
+    "channel_logo_url": "http://localhost:9191/api/channels/logos/789/",
+    "channel_tvg_id": "sports-channel",
+    "auto_created": true,
+    "auto_create_rule_id": "rule-uuid-123"
   }
 ]
 ```
@@ -150,7 +179,16 @@ Create a new monitoring session.
   "regex_filter": ".*",
   "pre_event_minutes": 30,
   "stagger_ms": 200,
-  "timeout_ms": 30000
+  "timeout_ms": 30000,
+  "epg_event": {
+    "id": 456,
+    "title": "Live Sports Event",
+    "start_time": "2024-01-01T20:00:00Z",
+    "end_time": "2024-01-01T22:00:00Z",
+    "description": "Championship game"
+  },
+  "auto_created": false,
+  "auto_create_rule_id": null
 }
 ```
 
@@ -240,10 +278,65 @@ Get historical metrics for a stream.
 }
 ```
 
+#### GET `/api/stream-sessions/<session_id>/alive-screenshots`
+Get screenshots and info for all alive (non-quarantined) streams in a session.
+
+**Response:**
+```json
+{
+  "session_id": "session_123_1706834567",
+  "screenshots": [
+    {
+      "stream_id": 789,
+      "stream_name": "Stream Name",
+      "screenshot_url": "/data/screenshots/789.jpg",
+      "reliability_score": 87.3,
+      "m3u_account": "premium-account"
+    }
+  ]
+}
+```
+
+#### POST `/api/scheduled-events/<event_id>/create-session`
+Create a monitoring session from a scheduled event.
+
+**Response:**
+```json
+{
+  "session_id": "session_123_1706834567",
+  "message": "Session created successfully from event"
+}
+```
+
 #### GET `/data/screenshots/<filename>`
 Serve screenshot files.
 
 **Example:** `/data/screenshots/789.jpg?t=1706834567`
+
+## Automatic Session Creation
+
+### Via Scheduled Events
+
+Sessions can be automatically created from scheduled events using the existing auto-create rules system in the scheduling service. When an EPG event matches an auto-create rule:
+
+1. A scheduled event is created for the channel check
+2. The event can be manually converted to a monitoring session via the API endpoint:
+   - `POST /api/scheduled-events/<event_id>/create-session`
+3. The session will:
+   - Inherit the channel's configured regex filter from channel settings
+   - Attach the EPG event information (title, times, description)
+   - Use the pre-event minutes specified in the scheduled event
+   - Be marked as auto-created with the rule ID tracked
+
+### Auto-Create Rules Integration
+
+The existing auto-create rules in the scheduling service support:
+- **Channel-based rules**: Monitor specific channels
+- **Group-based rules**: Monitor all channels in a group
+- **Regex pattern matching**: Filter EPG programs by title
+- **Time-based scheduling**: Configure when monitoring should start (minutes before event)
+
+These rules automatically create scheduled events which can then be converted to monitoring sessions, providing seamless integration between EPG-based scheduling and stream quality monitoring.
 
 ## Usage Guide
 
@@ -257,21 +350,35 @@ Serve screenshot files.
    - Configure pre-event timing
    - Adjust advanced settings if needed
    - Toggle auto-start if desired
+   - Optionally attach EPG event information
 4. Click **Create Session**
+
+Alternatively, create sessions from scheduled events:
+- Navigate to the scheduled events page
+- Use the "Create Session" action on any event
+- The session will automatically inherit EPG event details and channel regex
 
 ### Monitoring Active Sessions
 
 1. Session will appear in the "Active Sessions" tab once started
 2. Click on a session to view the live monitoring dashboard
-3. View real-time statistics:
+3. **Session Header** displays:
+   - Channel logo (if available)
+   - EPG event information card with program details
+4. **Screenshot Carousel** shows:
+   - Live screenshots from all active streams
+   - Stream names and reliability scores
+   - Navigate with previous/next arrows
+5. View real-time statistics:
    - Total streams discovered
    - Active streams being monitored
    - Quarantined streams (failed quality checks)
    - Average reliability score
-4. Browse stream tables:
+6. Browse stream tables:
    - **Active Streams**: Currently monitored with reliability scores
+   - **FFmpeg Speed Graphs**: Real-time performance visualization under each stream
    - **Quarantined**: Failed streams not being monitored
-5. Click **View** on any stream to see its screenshot
+7. Click **View** on any stream to see its screenshot
 
 ### Managing Sessions
 
