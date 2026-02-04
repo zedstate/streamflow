@@ -607,7 +607,6 @@ class StreamMonitoringService:
             return
         
         try:
-        try:
             # Capture screenshot and probe all stats (resolution, fps, bitrate)
             # This merges screenshot capture and stats probing into one FFmpeg call
             path, stats = self.screenshot_service.capture(

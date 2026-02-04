@@ -60,6 +60,24 @@ export const streamSessionsAPI = {
   },
 
   /**
+   * Stop multiple sessions at once
+   * @param {string[]} sessionIds - Array of Session IDs
+   * @returns {Promise}
+   */
+  batchStopSessions: (sessionIds) => {
+    return api.post('/stream-sessions/batch/stop', { session_ids: sessionIds });
+  },
+
+  /**
+   * Delete multiple sessions at once
+   * @param {string[]} sessionIds - Array of Session IDs
+   * @returns {Promise}
+   */
+  batchDeleteSessions: (sessionIds) => {
+    return api.post('/stream-sessions/batch/delete', { session_ids: sessionIds });
+  },
+
+  /**
    * Delete a session
    * @param {string} sessionId - Session ID
    * @returns {Promise}

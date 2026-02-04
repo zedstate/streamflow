@@ -4400,6 +4400,74 @@ def delete_stream_session(session_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/stream-sessions/batch/stop', methods=['POST'])
+def batch_stop_sessions():
+    """Stop multiple monitoring sessions."""
+    try:
+        data = request.json
+        session_ids = data.get('session_ids', [])
+        
+        if not session_ids:
+            return jsonify({"error": "No session_ids provided"}), 400
+            
+        session_manager = get_session_manager()
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        for session_id in session_ids:
+            if session_manager.stop_session(session_id):
+                success_count += 1
+            else:
+                failed_count += 1
+                errors.append(f"Failed to stop session {session_id}")
+        
+        return jsonify({
+            "message": f"Processed {len(session_ids)} sessions",
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in batch stop sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/batch/delete', methods=['POST'])
+def batch_delete_sessions():
+    """Delete multiple monitoring sessions."""
+    try:
+        data = request.json
+        session_ids = data.get('session_ids', [])
+        
+        if not session_ids:
+            return jsonify({"error": "No session_ids provided"}), 400
+            
+        session_manager = get_session_manager()
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        for session_id in session_ids:
+            if session_manager.delete_session(session_id):
+                success_count += 1
+            else:
+                failed_count += 1
+                errors.append(f"Failed to delete session {session_id}")
+        
+        return jsonify({
+            "message": f"Processed {len(session_ids)} sessions",
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in batch delete sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/metrics', methods=['GET'])
 def get_stream_metrics(session_id, stream_id):
     """Get historical metrics for a stream in a session."""
