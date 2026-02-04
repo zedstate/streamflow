@@ -828,6 +828,9 @@ class AutomatedStreamManager:
         # Cache for dead stream removal setting to avoid repeated file I/O
         self._dead_stream_removal_enabled_cache = None
         self._dead_stream_removal_cache_time = None
+        
+        # Lock to prevent concurrent execution of heavy batch processes
+        self._lock = threading.Lock()
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -1273,6 +1276,17 @@ class AutomatedStreamManager:
         return results
 
     def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
+        """Wrapper for stream discovery to ensure single execution."""
+        if not self._lock.acquire(blocking=False):
+            logger.warning("Stream discovery already active - skipping concurrent request")
+            return {}
+        
+        try:
+            return self._discover_and_assign_streams_impl(force, skip_check_trigger)
+        finally:
+            self._lock.release()
+
+    def _discover_and_assign_streams_impl(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
@@ -1444,10 +1458,12 @@ class AutomatedStreamManager:
             
             # Log progress info
             total_streams = len(all_streams)
-            # Use parallel processing for faster matching if we have enough streams
-            # For massive stream lists, this is significantly faster
-            max_workers = min(32, (os.cpu_count() or 1) + 4)
-            batch_size = max(50, total_streams // (max_workers * 4)) # Adaptive batch size
+            # Use parallel processing for faster matching
+            # Limit workers to avoid system thrashing and log spam. 
+            # 8 workers is a sweet spot for regex CPU bound work on typical systems without causing GIL thrashing.
+            max_workers = min(8, os.cpu_count() or 4)
+            # Batch size for streams
+            batch_size = max(100, total_streams // max_workers)
             
             logger.info(f"Processing {total_streams} streams for pattern matching (Parallel, {max_workers} workers)...")
             
@@ -1458,6 +1474,7 @@ class AutomatedStreamManager:
             batches = [all_streams[i:i + batch_size] for i in range(0, total_streams, batch_size)]
             
             completed_count = 0
+            last_log_pct = 0
             
             # Process batches in parallel
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1479,9 +1496,11 @@ class AutomatedStreamManager:
                             
                         completed_count += len(future_to_batch[future])
                         
-                        # Log progress less frequently to avoid spamming
-                        if completed_count % 1000 == 0 or completed_count == total_streams:
-                             logger.info(f"  Progress: {completed_count}/{total_streams} streams processed ({(completed_count/total_streams)*100:.1f}%)")
+                        # Log progress monotonically
+                        current_pct = int((completed_count / total_streams) * 100)
+                        if current_pct >= last_log_pct + 10 or completed_count == total_streams:
+                             logger.info(f"  Progress: {completed_count}/{total_streams} streams processed ({current_pct}%)")
+                             last_log_pct = current_pct
                              
                     except Exception as e:
                         logger.error(f"Error in stream matching batch: {e}")
@@ -1697,9 +1716,24 @@ class AutomatedStreamManager:
                     "details": []
                 }
         
+        # Lock to prevent concurrent execution
+        if not self._lock.acquire(blocking=False):
+            logger.warning("Stream validation already active - skipping concurrent request")
+            return {
+                "channels_checked": 0,
+                "streams_removed": 0,
+                "channels_modified": 0,
+                "details": []
+            }
+            
         try:
-            logger.info("=" * 80)
-            logger.info("Starting validation of existing streams against regex patterns")
+            return self._validate_and_remove_non_matching_streams_impl(force)
+        finally:
+            self._lock.release()
+
+    def _validate_and_remove_non_matching_streams_impl(self, force: bool = False) -> Dict[str, Any]:
+        """Core implementation of stream validation."""
+        log_function_call(logger, "validate_and_remove_non_matching_streams")
             logger.info("=" * 80)
             
             udi = get_udi_manager()
@@ -1753,11 +1787,10 @@ class AutomatedStreamManager:
             stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
             
             # Parallel validation for faster processing
-            import concurrent.futures
-            import os
-            max_workers = min(32, (os.cpu_count() or 1) + 4)
+            # Limit workers to avoid system thrashing.
+            max_workers = min(8, os.cpu_count() or 4)
             # Batch size for channels - smaller than streams since per-channel work is heavier
-            batch_size = max(20, len(all_channels) // (max_workers * 4))
+            batch_size = max(20, len(all_channels) // (max_workers * 2))
             
             logger.info(f"Validating {len(all_channels)} channels (Parallel, {max_workers} workers)...")
             
@@ -1809,9 +1842,11 @@ class AutomatedStreamManager:
                                     logger.debug(f"Found {len(removed_streams)} non-matching streams in channel {channel_id}, but removal is disabled")
                         
                         completed_count += len(future_to_batch[future])
-                        if completed_count % 100 == 0 or completed_count == len(all_channels):
-                            progress_pct = (completed_count / len(all_channels)) * 100
-                            # logger.info(f"  Validation progress: {progress_pct:.1f}%")
+                        # Log less frequently
+                        if completed_count == len(all_channels):
+                             logger.info(f"  Validation progress: 100%")
+                        elif completed_count % 100 == 0:
+                             logger.info(f"  Validation progress: {int(completed_count/len(all_channels)*100)}%")
 
                     except Exception as e:
                         logger.error(f"Error in channel validation batch: {e}")
