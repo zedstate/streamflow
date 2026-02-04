@@ -280,6 +280,8 @@ class StreamSessionManager:
     def create_session(self, channel_id: int, regex_filter: str = ".*",
                       pre_event_minutes: int = DEFAULT_PRE_EVENT_MINUTES,
                       epg_event: Optional[Dict[str, Any]] = None,
+                      allow_duplicate_channel: bool = False,
+                      skip_stream_refresh: bool = False,
                       **kwargs) -> str:
         """
         Create a new monitoring session.
@@ -289,11 +291,21 @@ class StreamSessionManager:
             regex_filter: Regex pattern to filter streams
             pre_event_minutes: Minutes before event to start monitoring
             epg_event: Optional EPG event to attach to this session
+            allow_duplicate_channel: Allow creating a session if one already exists for this channel
+            skip_stream_refresh: Skip refreshing global stream list (useful for batch operations)
             **kwargs: Additional session parameters (auto_created, auto_create_rule_id, etc.)
             
         Returns:
             Session ID
         """
+        # Check for existing active session for this channel
+        if not allow_duplicate_channel and self.is_channel_in_active_session(channel_id):
+            # Find the existing session ID
+            for s in self.sessions.values():
+                if s.is_active and s.channel_id == channel_id:
+                    logger.info(f"Using existing active session {s.session_id} for channel {channel_id}")
+                    return s.session_id
+
         # Get channel info from UDI
         udi = get_udi_manager()
         
@@ -302,16 +314,18 @@ class StreamSessionManager:
         
         # Refresh global stream list with rate limiting (30s cooldown)
         # This prevents API spam when batch creating sessions while keeping data reasonably fresh
-        current_time = time.time()
-        if current_time - self._last_streams_refresh > 30:
-            logger.info("Refreshing global stream list (cooldown passed)")
-            if udi.refresh_streams():
-                self._last_streams_refresh = current_time
-        else:
-            logger.debug(
-                f"Skipping stream list refresh (cooldown active, "
-                f"{30 - (current_time - self._last_streams_refresh):.1f}s remaining)"
-            )
+        if not skip_stream_refresh:
+            current_time = time.time()
+            if current_time - self._last_streams_refresh > 30:
+                logger.info("Refreshing global stream list (cooldown passed)")
+                if udi.refresh_streams():
+                    self._last_streams_refresh = current_time
+            else:
+                logger.debug(
+                    f"Skipping stream list refresh (cooldown active, "
+                    f"{30 - (current_time - self._last_streams_refresh):.1f}s remaining)"
+                )
+
         
         channel = udi.get_channel_by_id(channel_id)
         if not channel:

@@ -4214,6 +4214,11 @@ def create_group_stream_sessions():
         if not channels:
             return jsonify({"error": "Group not found or has no channels"}), 404
         
+        # Refresh global stream list once before creating sessions
+        # This ensures all new streams are discovered without hammering the API in the loop
+        if udi.refresh_streams():
+            logger.info(f"Refreshed stream list before batch session creation for group {group_id}")
+        
         # Common parameters
         regex_filter = data.get('regex_filter')
         pre_event_minutes = data.get('pre_event_minutes', 30)
@@ -4240,13 +4245,14 @@ def create_group_stream_sessions():
                     except Exception:
                         channel_regex = '.*'
                 
-                # Create session
+                # Create session (skip stream refresh as we did it once above)
                 session_id = session_manager.create_session(
                     channel_id=channel_id,
                     regex_filter=channel_regex,
                     pre_event_minutes=pre_event_minutes,
                     stagger_ms=stagger_ms,
-                    timeout_ms=timeout_ms
+                    timeout_ms=timeout_ms,
+                    skip_stream_refresh=True
                 )
                 
                 # Start session
