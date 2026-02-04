@@ -19,6 +19,7 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union
+import concurrent.futures
 from collections import defaultdict
 
 # Pre-compiled regex pattern for whitespace conversion (performance optimization)
@@ -1125,8 +1126,152 @@ class AutomatedStreamManager:
                     "error": str(e),
                     "timestamp": datetime.now().isoformat()
                 })
-            return False
-    
+    def _match_streams_batch(self, streams: List[Dict], channel_streams: Dict[str, set], 
+                           dead_stream_removal_enabled: bool) -> Tuple[Dict[str, List[str]], Dict[str, List[Dict]]]:
+        """
+        Process a batch of streams for regex matching.
+        This method is designed to be run in a separate thread.
+        
+        Args:
+            streams: List of stream dictionaries to process
+            channel_streams: Dict of existing channel streams {channel_id: {stream_ids}}
+            dead_stream_removal_enabled: Whether to skip dead streams
+            
+        Returns:
+            Tuple of (assignments, assignment_details)
+        """
+        assignments = defaultdict(list)
+        assignment_details = defaultdict(list)
+        
+        for stream in streams:
+            # Validate that stream is a dictionary before accessing attributes
+            if not isinstance(stream, dict):
+                continue
+                
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+            
+            if not stream_name or not stream_id:
+                continue
+            
+            # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
+            stream_url = stream.get('url', '')
+            if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
+                if dead_stream_removal_enabled:
+                    # logger.debug(f"Skipping dead stream {stream_id}") # Avoid logging in threads if possible or use thread-safe logger
+                    continue
+            
+            # Get stream's m3u_account for M3U account filtering
+            stream_m3u_account = stream.get('m3u_account')
+            
+            # Find matching channels (with M3U account filtering if applicable)
+            # RegexChannelMatcher is thread-safe for reading patterns
+            matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
+            
+            for channel_id in matching_channels:
+                # Check if stream is already in this channel
+                if channel_id in channel_streams and stream_id not in channel_streams[channel_id]:
+                    assignments[channel_id].append(stream_id)
+                    assignment_details[channel_id].append({
+                        "stream_id": stream_id,
+                        "stream_name": stream_name
+                    })
+                    
+        return assignments, assignment_details
+
+    def _validate_channels_batch(self, channels: List[Dict], stream_lookup: Dict[int, Dict], 
+                               matching_enabled_channel_ids: List[str]) -> Dict[str, Any]:
+        """
+        Process a batch of channels for stream validation.
+        This method is designed to be run in a separate thread.
+        
+        Args:
+            channels: List of channel dictionaries to process
+            stream_lookup: Dict of all streams {stream_id: stream_data}
+            matching_enabled_channel_ids: List of channel IDs where matching is enabled
+            
+        Returns:
+            Dict containing partial validation results
+        """
+        results = {
+            "channels_checked": 0,
+            "streams_removed": 0,
+            "channels_modified": 0,
+            "details": []
+        }
+        
+        udi = get_udi_manager() # Singleton, thread-safe access
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            channel_name = channel.get('name', f'Channel {channel_id}')
+            
+            # Skip channels with matching disabled
+            if channel_id not in matching_enabled_channel_ids:
+                # logger.debug(f"Skipping channel {channel_id} - matching disabled")
+                continue
+            
+            # Skip channels without regex patterns
+            if not self.regex_matcher.has_regex_patterns(str(channel_id)):
+                continue
+            
+            results["channels_checked"] += 1
+            
+            # Get streams for this channel
+            # UDI manager should be thread safe for reading cached data
+            channel_streams = udi.get_channel_streams(channel_id)
+            if not channel_streams:
+                continue
+            
+            streams_to_keep = []
+            streams_to_remove = []
+            
+            for stream in channel_streams:
+                if not isinstance(stream, dict) or 'id' not in stream:
+                    continue
+                
+                stream_id = stream['id']
+                stream_name_in_channel = stream.get('name', '')
+                
+                # Look up full stream data to get m3u_account and up-to-date name
+                full_stream = stream_lookup.get(stream_id)
+                if not full_stream:
+                    # Stream not found in UDI (maybe deleted globally?), keep it safe or remove?
+                    # Original logic implicitly kept it if not found in lookup?
+                    # Actually original logic:
+                    # full_stream = stream_lookup.get(stream_id)
+                    # if not full_stream: logger.warning...; streams_to_keep.append(stream_id); continue
+                    # Replicating original logic:
+                    streams_to_keep.append(stream_id)
+                    continue
+                
+                stream_name = full_stream.get('name', stream_name_in_channel)
+                stream_m3u_account = full_stream.get('m3u_account')
+                
+                # Check if stream still matches this channel
+                matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
+                
+                if str(channel_id) in matching_channels:
+                    streams_to_keep.append(stream_id)
+                else:
+                    streams_to_remove.append({
+                        "id": stream_id, 
+                        "name": stream_name
+                    })
+            
+            if streams_to_remove:
+                results["streams_removed"] += len(streams_to_remove)
+                results["channels_modified"] += 1
+                results["details"].append({
+                    "channel_id": channel_id,
+                    "channel_name": channel_name,
+                    "removed_count": len(streams_to_remove),
+                    "removed_streams": streams_to_remove,
+                    "kept_ids": streams_to_keep
+                })
+                
+        return results
+
     def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
@@ -1299,55 +1444,47 @@ class AutomatedStreamManager:
             
             # Log progress info
             total_streams = len(all_streams)
-            logger.info(f"Processing {total_streams} streams for pattern matching...")
+            # Use parallel processing for faster matching if we have enough streams
+            # For massive stream lists, this is significantly faster
+            max_workers = min(32, (os.cpu_count() or 1) + 4)
+            batch_size = max(50, total_streams // (max_workers * 4)) # Adaptive batch size
             
-            # Progress tracking for long-running operations
-            progress_interval = max(100, total_streams // 10)  # Log every 10% or every 100 streams, whichever is larger
+            logger.info(f"Processing {total_streams} streams for pattern matching (Parallel, {max_workers} workers)...")
             
-            # Process each stream
-            for idx, stream in enumerate(all_streams, 1):
-                # Validate that stream is a dictionary before accessing attributes
-                if not isinstance(stream, dict):
-                    logger.warning(f"Invalid stream format encountered: {type(stream).__name__} - {stream}")
-                    continue
-                    
-                stream_name = stream.get('name', '')
-                stream_id = stream.get('id')
+            # Get dead stream removal config once
+            dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+            
+            # Create batches
+            batches = [all_streams[i:i + batch_size] for i in range(0, total_streams, batch_size)]
+            
+            completed_count = 0
+            
+            # Process batches in parallel
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_batch = {
+                    executor.submit(self._match_streams_batch, batch, channel_streams, dead_stream_removal_enabled): batch 
+                    for batch in batches
+                }
                 
-                if not stream_name or not stream_id:
-                    continue
-                
-                # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
-                # Dead streams should not be added to channels during subsequent matches
-                stream_url = stream.get('url', '')
-                if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                    # Check if dead stream removal is enabled
-                    dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
-                    if dead_stream_removal_enabled:
-                        logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
-                        continue
-                    else:
-                        logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
-                
-                # Get stream's m3u_account for M3U account filtering
-                stream_m3u_account = stream.get('m3u_account')
-                
-                # Log progress periodically
-                if idx % progress_interval == 0:
-                    progress_pct = (idx / total_streams) * 100
-                    logger.info(f"  Progress: {idx}/{total_streams} streams processed ({progress_pct:.1f}%)")
-                
-                # Find matching channels (with M3U account filtering if applicable)
-                matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
-                
-                for channel_id in matching_channels:
-                    # Check if stream is already in this channel
-                    if channel_id in channel_streams and stream_id not in channel_streams[channel_id]:
-                        assignments[channel_id].append(stream_id)
-                        assignment_details[channel_id].append({
-                            "stream_id": stream_id,
-                            "stream_name": stream_name
-                        })
+                for future in concurrent.futures.as_completed(future_to_batch):
+                    try:
+                        batch_assignments, batch_details = future.result()
+                        
+                        # Merge results
+                        for channel_id, stream_ids in batch_assignments.items():
+                            assignments[channel_id].extend(stream_ids)
+                            
+                        for channel_id, details in batch_details.items():
+                            assignment_details[channel_id].extend(details)
+                            
+                        completed_count += len(future_to_batch[future])
+                        
+                        # Log progress less frequently to avoid spamming
+                        if completed_count % 1000 == 0 or completed_count == total_streams:
+                             logger.info(f"  Progress: {completed_count}/{total_streams} streams processed ({(completed_count/total_streams)*100:.1f}%)")
+                             
+                    except Exception as e:
+                        logger.error(f"Error in stream matching batch: {e}")
             
             logger.info(f"✓ Completed processing {total_streams} streams. Found {sum(len(s) for s in assignments.values())} new stream assignments across {len(assignments)} channels")
             
@@ -1615,93 +1752,69 @@ class AutomatedStreamManager:
             all_streams = udi.get_streams(log_result=False)
             stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
             
-            # Validate each channel's streams
-            for channel in all_channels:
-                channel_id = channel.get('id')
-                channel_name = channel.get('name', f'Channel {channel_id}')
+            # Parallel validation for faster processing
+            import concurrent.futures
+            import os
+            max_workers = min(32, (os.cpu_count() or 1) + 4)
+            # Batch size for channels - smaller than streams since per-channel work is heavier
+            batch_size = max(20, len(all_channels) // (max_workers * 4))
+            
+            logger.info(f"Validating {len(all_channels)} channels (Parallel, {max_workers} workers)...")
+            
+            # Create batches
+            batches = [all_channels[i:i + batch_size] for i in range(0, len(all_channels), batch_size)]
+            
+            completed_count = 0
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_batch = {
+                    executor.submit(self._validate_channels_batch, batch, stream_lookup, matching_enabled_channel_ids): batch 
+                    for batch in batches
+                }
                 
-                # Skip channels with matching disabled (respects channel-level and group-level settings)
-                # Even if a channel has regex patterns, we skip it if matching is disabled
-                if channel_id not in matching_enabled_channel_ids:
-                    logger.debug(f"Skipping channel {channel_id} ({channel_name}) - matching disabled")
-                    continue
-                
-                # Skip channels without regex patterns configured
-                # This prevents removing all streams from channels that don't have regex patterns
-                if not self.regex_matcher.has_regex_patterns(str(channel_id)):
-                    logger.debug(f"Skipping channel {channel_id} ({channel_name}) - no regex patterns configured")
-                    continue
-                
-                validation_results["channels_checked"] += 1
-                
-                # Get streams for this channel
-                channel_streams = udi.get_channel_streams(channel_id)
-                if not channel_streams:
-                    continue
-                
-                streams_to_keep = []
-                streams_to_remove = []
-                
-                for stream in channel_streams:
-                    if not isinstance(stream, dict) or 'id' not in stream:
-                        continue
-                    
-                    stream_id = stream['id']
-                    stream_name = stream.get('name', '')
-                    
-                    # Look up full stream data
-                    full_stream = stream_lookup.get(stream_id)
-                    if not full_stream:
-                        logger.warning(f"Stream {stream_id} not found in UDI for channel {channel_name}")
-                        streams_to_keep.append(stream_id)
-                        continue
-                    
-                    # Get stream's m3u_account for M3U account filtering
-                    stream_m3u_account = full_stream.get('m3u_account')
-                    
-                    # Check if stream matches any pattern for this channel (with M3U account filtering)
-                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
-                    
-                    if str(channel_id) in matching_channels:
-                        # Stream still matches, keep it
-                        streams_to_keep.append(stream_id)
-                    else:
-                        # Stream no longer matches, remove it
-                        streams_to_remove.append({
-                            "stream_id": stream_id,
-                            "stream_name": stream_name
-                        })
-                        logger.info(f"  Removing non-matching stream from {channel_name}: {stream_name}")
-                
-                # Update channel if streams need to be removed
-                if streams_to_remove:
+                for future in concurrent.futures.as_completed(future_to_batch):
                     try:
-                        from api_utils import update_channel_streams
-                        # Respect dead stream removal setting when updating channel
-                        success = update_channel_streams(channel_id, streams_to_keep, allow_dead_streams=(not dead_stream_removal_enabled))
+                        batch_results = future.result()
                         
-                        if success:
-                            validation_results["streams_removed"] += len(streams_to_remove)
-                            validation_results["channels_modified"] += 1
-                            validation_results["details"].append({
-                                "channel_id": channel_id,
-                                "channel_name": channel_name,
-                                "removed_count": len(streams_to_remove),
-                                "removed_streams": streams_to_remove[:10]  # Limit to first 10 for logging
-                            })
+                        validation_results["channels_checked"] += batch_results["channels_checked"]
+                        
+                        # Process results and update UDI if needed
+                        for detail in batch_results.get("details", []):
+                            channel_id = detail["channel_id"]
+                            channel_name = detail["channel_name"]
+                            kept_ids = detail["kept_ids"]
+                            removed_streams = detail["removed_streams"]
                             
-                            # Refresh channel in UDI after update (if verification enabled)
-                            verify_enabled = self.config.get('verify_stream_assignments', False)
-                            if verify_enabled:
-                                time.sleep(0.3)
-                                udi.refresh_channel_by_id(channel_id)
-                                logger.debug(f"Verified channel {channel_name} update via UDI refresh")
-                            
-                            logger.info(f"✓ Removed {len(streams_to_remove)} non-matching stream(s) from {channel_name}")
-                        else:
-                            logger.error(f"Failed to update channel {channel_name} after validation")
+                            # Only apply updates if enabled
+                            if dead_stream_removal_enabled or force:
+                                try:
+                                    from api_utils import update_channel_streams
+                                    # Update channel with kept streams
+                                    success = update_channel_streams(channel_id, kept_ids, allow_dead_streams=(not dead_stream_removal_enabled))
+                                    
+                                    if success:
+                                        validation_results["streams_removed"] += len(removed_streams)
+                                        validation_results["channels_modified"] += 1
+                                        validation_results["details"].append(detail)
+                                        
+                                        logger.info(f"✓ Removed {len(removed_streams)} non-matching stream(s) from {channel_name}")
+                                    else:
+                                        logger.error(f"Failed to update channel {channel_name} after validation")
+                                        
+                                except Exception as update_err:
+                                    logger.error(f"Failed to update channel {channel_id}: {update_err}")
+                            else:
+                                if len(removed_streams) > 0:
+                                    # Log but don't count as removed since we didn't update
+                                    logger.debug(f"Found {len(removed_streams)} non-matching streams in channel {channel_id}, but removal is disabled")
+                        
+                        completed_count += len(future_to_batch[future])
+                        if completed_count % 100 == 0 or completed_count == len(all_channels):
+                            progress_pct = (completed_count / len(all_channels)) * 100
+                            # logger.info(f"  Validation progress: {progress_pct:.1f}%")
+
                     except Exception as e:
-                        logger.error(f"Error removing streams from channel {channel_name}: {e}")
+                        logger.error(f"Error in channel validation batch: {e}")
             
             logger.info(f"Stream validation completed: Checked {validation_results['channels_checked']} channels, " +
                        f"removed {validation_results['streams_removed']} streams from {validation_results['channels_modified']} channels")
