@@ -813,26 +813,70 @@ def add_bulk_regex_patterns():
                 
                 # Get existing patterns for this channel
                 patterns = matcher.get_patterns()
-                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
-                existing_regex = existing_patterns.get('regex', [])
-                existing_m3u_accounts = existing_patterns.get('m3u_accounts')
+                existing_pattern_data = patterns.get('patterns', {}).get(str(channel_id), {})
                 
-                # Merge with new patterns (avoid duplicates)
-                merged_regex = list(existing_regex)
-                for pattern in regex_patterns:
-                    if pattern not in merged_regex:
-                        merged_regex.append(pattern)
+                # Get existing regex patterns (support both new and old format)
+                existing_regex_patterns = existing_pattern_data.get('regex_patterns')
                 
-                # Use provided m3u_accounts or keep existing
-                final_m3u_accounts = m3u_accounts if m3u_accounts is not None else existing_m3u_accounts
+                # Normalize existing patterns to list of objects
+                normalized_existing = []
+                if existing_regex_patterns:
+                    # New format: list of dicts
+                    for p in existing_regex_patterns:
+                        if isinstance(p, dict):
+                            normalized_existing.append(p)
+                        else:
+                            # Legacy string in new format (shouldn't happen but be safe)
+                            normalized_existing.append({
+                                "pattern": p,
+                                "m3u_accounts": existing_pattern_data.get('m3u_accounts'),
+                                "priority": 0
+                            })
+                else:
+                    # Old format: regex list
+                    old_regex = existing_pattern_data.get('regex', [])
+                    old_m3u_accounts = existing_pattern_data.get('m3u_accounts')
+                    for p in old_regex:
+                        normalized_existing.append({
+                            "pattern": p,
+                            "m3u_accounts": old_m3u_accounts,
+                            "priority": 0
+                        })
                 
-                # Add/update pattern
+                # Normalize new patterns to list of objects
+                normalized_new = []
+                for p in regex_patterns:
+                    # Use provided m3u_accounts or None (applies to all)
+                    # For bulk add, we default priority to 0
+                    normalized_new.append({
+                        "pattern": p,
+                        "m3u_accounts": m3u_accounts,
+                        "priority": 0
+                    })
+                
+                # Merge patterns (avoid duplicates based on pattern string)
+                # We prioritize existing patterns to preserve their specific settings (priority, m3u_accounts)
+                # unless the user explicitly wants to update them (which bulk add doesn't support yet, use mass edit for that)
+                merged_patterns = list(normalized_existing)
+                existing_pattern_strings = {p['pattern'] for p in normalized_existing}
+                
+                for new_p in normalized_new:
+                    if new_p['pattern'] not in existing_pattern_strings:
+                        merged_patterns.append(new_p)
+                        existing_pattern_strings.add(new_p['pattern'])
+                
+                # Add/update pattern in new format
+                # We use the internal _save_patterns method directly or pass the full object to add_channel_pattern
+                # But add_channel_pattern expects the input format which it then normalizes
+                # So we can pass the merged list of dicts directly
                 matcher.add_channel_pattern(
                     str(channel_id),
                     channel_name,
-                    merged_regex,
-                    existing_patterns.get('enabled', True),
-                    m3u_accounts=final_m3u_accounts
+                    merged_patterns,
+                    existing_pattern_data.get('enabled', True),
+                    m3u_accounts=None, # Not used when passing list of dicts
+                    silent=True
+                )
                 )
                 success_count += 1
             except Exception as e:
