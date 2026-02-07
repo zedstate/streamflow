@@ -288,6 +288,7 @@ class RegexChannelMatcher:
         if config_file is None:
             config_file = CONFIG_DIR / "channel_regex_config.json"
         self.config_file = Path(config_file)
+        self.lock = threading.RLock()
         self.channel_patterns = self._load_patterns()
     
     def _load_patterns(self) -> Dict:
@@ -1734,6 +1735,7 @@ class AutomatedStreamManager:
     def _validate_and_remove_non_matching_streams_impl(self, force: bool = False) -> Dict[str, Any]:
         """Core implementation of stream validation."""
         log_function_call(logger, "validate_and_remove_non_matching_streams")
+        try:
             logger.info("=" * 80)
             
             udi = get_udi_manager()
