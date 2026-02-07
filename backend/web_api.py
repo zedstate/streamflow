@@ -879,7 +879,7 @@ def add_bulk_regex_patterns():
                         m3u_accounts=None, # Not used when passing list of dicts
                         silent=True
                     )
-                )
+
                 success_count += 1
             except Exception as e:
                 logger.error(f"Error adding pattern to channel {channel_id}: {e}")
