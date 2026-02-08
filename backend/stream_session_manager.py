@@ -248,6 +248,10 @@ class StreamSessionManager:
         self.review_duration = DEFAULT_REVIEW_DURATION
         self._load_settings()
         
+        # Track last stream list refresh time
+        self._last_streams_refresh = 0
+        logger.info("StreamSessionManager initialized")
+
         self._load_sessions()
 
     def _load_settings(self):
@@ -279,12 +283,6 @@ class StreamSessionManager:
         self.review_duration = float(duration)
         self.save_settings()
         logger.info(f"Updated review duration to {self.review_duration}s")
-
-        
-        # Track last stream list refresh time
-        self._last_streams_refresh = 0
-        
-        logger.info("StreamSessionManager initialized")
     
     def _load_sessions(self):
         """Load sessions from persistent storage"""
@@ -507,11 +505,13 @@ class StreamSessionManager:
                     stream_info.failure_count = 0
                     stream_info.low_speed_start_time = None
                     
-                    # Reset scoring window
-                    if session_id in self.scoring_windows and stream_id in self.scoring_windows[session_id]:
-                        self.scoring_windows[session_id][stream_id] = CappedSlidingWindow(
-                            window_size=session.window_size
-                        )
+                    # Reset/Create scoring window
+                    if session_id not in self.scoring_windows:
+                        self.scoring_windows[session_id] = {}
+                    
+                    self.scoring_windows[session_id][stream_id] = CappedSlidingWindow(
+                        window_size=session.window_size
+                    )
             
             self._save_sessions()
         

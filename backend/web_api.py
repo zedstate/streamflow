@@ -4776,7 +4776,10 @@ def serve_frontend(path):
         return send_from_directory(static_folder, path)
     else:
         # Return index.html for client-side routing (React Router)
-        return jsonify({"error": "Frontend not found"}), 404
+        try:
+            return send_file(static_folder / 'index.html')
+        except FileNotFoundError:
+            return jsonify({"error": "Frontend not found"}), 404
 
 # ==================== Settings API ====================
 
