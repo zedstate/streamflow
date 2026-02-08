@@ -534,14 +534,19 @@ function SessionCard({ session, onView, onStart, onStop, onDelete, selected, onT
       <CardContent>
         <div className="space-y-3">
           {/* Stats */}
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div>
-              <p className="text-muted-foreground">Total Streams</p>
-              <p className="font-medium">{session.stream_count}</p>
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-2 text-sm text-center">
+            <div className="bg-green-50 dark:bg-green-900/20 p-2 rounded-md">
+              <p className="text-xs text-green-700 dark:text-green-400 font-medium">Stable</p>
+              <p className="font-bold text-green-800 dark:text-green-300">{session.stable_count || 0}</p>
             </div>
-            <div>
-              <p className="text-muted-foreground">Active</p>
-              <p className="font-medium">{session.active_streams}</p>
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md">
+              <p className="text-xs text-blue-700 dark:text-blue-400 font-medium">Review</p>
+              <p className="font-bold text-blue-800 dark:text-blue-300">{session.review_count || 0}</p>
+            </div>
+            <div className="bg-amber-50 dark:bg-amber-900/20 p-2 rounded-md">
+              <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">Quarantined</p>
+              <p className="font-bold text-amber-800 dark:text-amber-300">{session.quarantined_count || 0}</p>
             </div>
           </div>
 
