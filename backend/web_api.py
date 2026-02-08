@@ -4131,7 +4131,7 @@ def trigger_epg_refresh():
 # Advanced stream monitoring with live quality tracking, reliability scoring,
 # and screenshot capture for event-based stream management
 
-from stream_session_manager import get_session_manager
+from stream_session_manager import get_session_manager, REVIEW_DURATION
 from stream_monitoring_service import get_monitoring_service
 
 
@@ -4363,6 +4363,14 @@ def get_stream_session(session_id):
                     'last_screenshot_time': stream_info.last_screenshot_time,
                     'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0
                 }
+                
+                # Calculate review time remaining
+                if stream_info.status == 'review':
+                    time_in_review = time.time() - stream_info.last_status_change
+                    review_limit = session_manager.get_review_duration()
+                    remaining = max(0, review_limit - time_in_review)
+                    stream_dict['review_time_remaining'] = remaining
+                
                 streams_data.append(stream_dict)
         
         # Sort streams to match Dispatcharr channel order
@@ -4768,10 +4776,40 @@ def serve_frontend(path):
         return send_from_directory(static_folder, path)
     else:
         # Return index.html for client-side routing (React Router)
-        try:
-            return send_file(static_folder / 'index.html')
-        except FileNotFoundError:
-            return jsonify({"error": "Frontend not found"}), 404
+        return jsonify({"error": "Frontend not found"}), 404
+
+# ==================== Settings API ====================
+
+@app.route('/api/settings/session', methods=['GET', 'POST'])
+def handle_session_settings():
+    """Get or update session settings (like review duration)."""
+    try:
+        session_manager = get_session_manager()
+        
+        if request.method == 'GET':
+            return jsonify({
+                "review_duration": session_manager.get_review_duration()
+            })
+            
+        elif request.method == 'POST':
+            data = request.json
+            duration = data.get('review_duration')
+            if duration is not None:
+                try:
+                    val = float(duration)
+                    if val < 0:
+                        return jsonify({"error": "Duration must be positive"}), 400
+                    session_manager.set_review_duration(val)
+                    return jsonify({"message": "Settings updated", "review_duration": val})
+                except ValueError:
+                    return jsonify({"error": "Invalid duration"}), 400
+            
+            return jsonify({"error": "No settings provided"}), 400
+            
+    except Exception as e:
+        logger.error(f"Error handling session settings: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     import argparse

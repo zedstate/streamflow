@@ -35,7 +35,24 @@ DEFAULT_PROBE_INTERVAL_MS = 300000
 DEFAULT_SCREENSHOT_INTERVAL_SECONDS = 60
 DEFAULT_WINDOW_SIZE = 100  # For Capped Sliding Window
 DEFAULT_MAX_SCORE = 100.0
+
+# Session defaults
+DEFAULT_PRE_EVENT_MINUTES = 30
+DEFAULT_STAGGER_MS = 200
+DEFAULT_TIMEOUT_MS = 30000
+DEFAULT_PROBE_INTERVAL_MS = 300000
+DEFAULT_SCREENSHOT_INTERVAL_SECONDS = 60
+DEFAULT_WINDOW_SIZE = 100  # For Capped Sliding Window
+DEFAULT_MAX_SCORE = 100.0
 DEFAULT_MIN_SCORE = 0.0
+
+# Quarantine & Review Lifecycle
+DEFAULT_REVIEW_DURATION = 60.0  # 1 minute in review before stable (default)
+QUARANTINE_DURATION = 900.0  # 15 minutes before retry
+
+# Keep for backward compatibility imports, but will be overridden by instance config
+REVIEW_DURATION = DEFAULT_REVIEW_DURATION
+
 
 # Pre-compiled regex pattern for whitespace conversion (consistent with AutomatedStreamManager)
 _WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
@@ -227,7 +244,42 @@ class StreamSessionManager:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         
         # Load existing sessions if any
+        self.settings_file = CONFIG_DIR / "session_settings.json"
+        self.review_duration = DEFAULT_REVIEW_DURATION
+        self._load_settings()
+        
         self._load_sessions()
+
+    def _load_settings(self):
+        """Load session settings like review duration."""
+        try:
+            if self.settings_file.exists():
+                with open(self.settings_file, 'r') as f:
+                    data = json.load(f)
+                    self.review_duration = data.get('review_duration', DEFAULT_REVIEW_DURATION)
+                    logger.info(f"Loaded session settings: review_duration={self.review_duration}s")
+        except Exception as e:
+            logger.error(f"Failed to load session settings: {e}")
+
+    def save_settings(self):
+        """Save session settings."""
+        try:
+            data = {
+                'review_duration': self.review_duration
+            }
+            with open(self.settings_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save session settings: {e}")
+
+    def get_review_duration(self) -> float:
+        return self.review_duration
+
+    def set_review_duration(self, duration: float):
+        self.review_duration = float(duration)
+        self.save_settings()
+        logger.info(f"Updated review duration to {self.review_duration}s")
+
         
         # Track last stream list refresh time
         self._last_streams_refresh = 0
@@ -441,6 +493,25 @@ class StreamSessionManager:
             
             # Discover streams
             self._discover_streams(session_id)
+            
+            # Reset metrics and status for all streams to ensure fresh calculation
+            # from the new start time
+            current_time = time.time()
+            for stream_id, stream_info in session.streams.items():
+                if not stream_info.is_quarantined:
+                    # Reset non-quarantined streams to 'review' state
+                    stream_info.status = 'review'
+                    stream_info.last_status_change = current_time
+                    stream_info.reliability_score = 50.0  # Reset score
+                    stream_info.metrics_history = []  # Clear history
+                    stream_info.failure_count = 0
+                    stream_info.low_speed_start_time = None
+                    
+                    # Reset scoring window
+                    if session_id in self.scoring_windows and stream_id in self.scoring_windows[session_id]:
+                        self.scoring_windows[session_id][stream_id] = CappedSlidingWindow(
+                            window_size=session.window_size
+                        )
             
             self._save_sessions()
         

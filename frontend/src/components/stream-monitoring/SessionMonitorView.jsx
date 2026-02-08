@@ -464,6 +464,14 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
     return `${bitrate} kbps`;
   };
 
+  const formatTimeRemaining = (seconds) => {
+    if (seconds === undefined || seconds === null) return '-';
+    if (seconds <= 0) return 'Stable soon';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -477,6 +485,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
             {!showQuarantined && (
               <>
                 <TableHead>Reliability</TableHead>
+                {isReview && <TableHead>Time into Stable</TableHead>}
                 <TableHead>Actions</TableHead>
               </>
             )}
@@ -515,6 +524,14 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                         </span>
                       </div>
                     </TableCell>
+                    {isReview && (
+                      <TableCell>
+                        <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 font-medium">
+                          <Clock className="h-4 w-4" />
+                          {formatTimeRemaining(stream.review_time_remaining)}
+                        </div>
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="flex gap-2">
                         <Button

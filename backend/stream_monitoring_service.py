@@ -11,7 +11,14 @@ import time
 from typing import Dict, Optional
 
 from logging_config import setup_logging
-from stream_session_manager import get_session_manager, StreamMetrics
+from stream_session_manager import (
+    StreamInfo,
+    SessionInfo,
+    REVIEW_DURATION,
+    QUARANTINE_DURATION,
+    get_session_manager,
+    StreamMetrics
+)
 from ffmpeg_stream_monitor import FFmpegStreamMonitor
 from stream_screenshot_service import get_screenshot_service
 from dead_streams_tracker import DeadStreamsTracker
@@ -38,9 +45,9 @@ SCORE_SWITCH_THRESHOLD = 10.0  # Points diff required to switch primary stream
 SWITCH_COOLDOWN = 60.0  # Seconds between switches to prevent flapping
 RESOLUTION_SCORE_TOLERANCE = 5.0  # Points to sacrifice for better resolution
 
-# Quarantine Lifecycle
-REVIEW_DURATION = 300.0  # 5 minutes in review before stable
-QUARANTINE_DURATION = 900.0  # 15 minutes before retry (simple constant for now)
+# Quarantine & Review Lifecycle
+# Imported from stream_session_manager
+pass
 PASS_SCORE_THRESHOLD = 70.0  # Score needed to pass review
 class StreamMonitoringService:
     """
@@ -268,7 +275,7 @@ class StreamMonitoringService:
             
             elif info.status == 'review':
                 # Check if it passed review
-                if time_in_state > REVIEW_DURATION:
+                if time_in_state > self.session_manager.get_review_duration():
                     if info.reliability_score >= PASS_SCORE_THRESHOLD:
                         logger.info(f"Stream {stream_id} passed review (Score: {info.reliability_score:.1f}), moving to Stable")
                         with self.session_manager.session_locks[session.session_id]:
