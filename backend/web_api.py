@@ -4666,24 +4666,7 @@ def get_alive_screenshots(session_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/quarantine', methods=['POST'])
-def quarantine_stream(session_id, stream_id):
-    """Manually quarantine a stream in a session."""
-    try:
-        session_manager = get_session_manager()
-        
-        if not session_manager.quarantine_stream(session_id, stream_id):
-            return jsonify({"error": "Failed to quarantine stream"}), 400
-        
-        return jsonify({
-            "message": "Stream quarantined successfully",
-            "session_id": session_id,
-            "stream_id": stream_id
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error quarantining stream {stream_id} in session {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/api/proxy/status', methods=['GET'])
