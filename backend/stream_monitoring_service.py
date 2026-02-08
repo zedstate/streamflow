@@ -33,7 +33,15 @@ SLOW_SPEED_DURATION = 60.0  # seconds - how long to tolerate slow speed before q
 SCORE_SWITCH_THRESHOLD = 10.0  # Points diff required to switch primary stream
 SWITCH_COOLDOWN = 60.0  # Seconds between switches to prevent flapping
 
+# Stream switching thresholds
+SCORE_SWITCH_THRESHOLD = 10.0  # Points diff required to switch primary stream
+SWITCH_COOLDOWN = 60.0  # Seconds between switches to prevent flapping
+RESOLUTION_SCORE_TOLERANCE = 5.0  # Points to sacrifice for better resolution
 
+# Quarantine Lifecycle
+REVIEW_DURATION = 300.0  # 5 minutes in review before stable
+QUARANTINE_DURATION = 900.0  # 15 minutes before retry (simple constant for now)
+PASS_SCORE_THRESHOLD = 70.0  # Score needed to pass review
 class StreamMonitoringService:
     """
     Service that manages continuous monitoring of streams.
@@ -210,6 +218,7 @@ class StreamMonitoringService:
                 
                 for session in active_sessions:
                     self._check_session_auto_stop(session)
+                    self._manage_quarantine_lifecycle(session)
                     self._monitor_session(session.session_id)
                 
                 time.sleep(MONITOR_INTERVAL)
@@ -237,6 +246,39 @@ class StreamMonitoringService:
                 self.session_manager.stop_session(session.session_id)
         except Exception as e:
             logger.error(f"Error checking auto-stop for session {session.session_id}: {e}")
+
+    def _manage_quarantine_lifecycle(self, session):
+        """
+        Manage lifecycle of streams:
+        - Quarantined -> Review (after cooldown)
+        - Review -> Stable (after passing probation)
+        """
+        current_time = time.time()
+        updates_needed = False
+        
+        for stream_id, info in session.streams.items():
+            time_in_state = current_time - info.last_status_change
+            
+            if info.status == 'quarantined':
+                # Check if it's time to give another chance
+                if time_in_state > QUARANTINE_DURATION:
+                    logger.info(f"Stream {stream_id} passed quarantine period ({time_in_state:.0f}s), moving to Review")
+                    # Use session manager to revive (handles locking and saving)
+                    self.session_manager.revive_stream(session.session_id, stream_id)
+            
+            elif info.status == 'review':
+                # Check if it passed review
+                if time_in_state > REVIEW_DURATION:
+                    if info.reliability_score >= PASS_SCORE_THRESHOLD:
+                        logger.info(f"Stream {stream_id} passed review (Score: {info.reliability_score:.1f}), moving to Stable")
+                        with self.session_manager.session_locks[session.session_id]:
+                            info.status = 'stable'
+                            info.last_status_change = current_time
+                            updates_needed = True
+                    # Else: stay in review until score improves or it dies (monitored by standard logic)
+        
+        if updates_needed:
+            self.session_manager._save_sessions()
     
     def _refresh_worker(self):
         """Worker thread for refreshing stream lists and updating stats"""
@@ -526,39 +568,125 @@ class StreamMonitoringService:
             return
 
         # Find best candidate stream in our session
-        best_stream_id = None
-        best_score = -1.0
-        
+        candidates = []
         for stream_id, info in session.streams.items():
             if info.is_quarantined:
+                # Still check resolution for quarantined logic? No, skip dead/bad streams
                 continue
-            # Skip if we don't have enough history to decide? (Optional, but CappedSlidingWindow handles low data)
-            if info.reliability_score > best_score:
-                best_score = info.reliability_score
-                best_stream_id = stream_id
-
-        if best_stream_id and best_stream_id != primary_stream_id:
-            # Calculate difference
-            score_diff = best_score - primary_info.reliability_score
+            candidates.append(info)
             
-            if score_diff >= SCORE_SWITCH_THRESHOLD:
-                logger.info(
-                    f"Switching primary stream for session {session_id}. "
-                    f"New: {best_stream_id} (Score: {best_score:.1f}), "
-                    f"Old: {primary_stream_id} (Score: {primary_info.reliability_score:.1f}), "
-                    f"Diff: {score_diff:.1f}"
-                )
-                
-                # Construct new order: Best first, then others
-                new_order = [best_stream_id] + [sid for sid in current_stream_ids if sid != best_stream_id]
-                
-                from api_utils import update_channel_streams
-                if update_channel_streams(session.channel_id, new_order):
-                    logger.info(f"Updated Dispatcharr channel {session.channel_id} with new stream order")
-                    udi.refresh_channel_by_id(session.channel_id)
-                    self.last_switch_times[session_id] = current_time
+        if not candidates:
+            return
+
+        if not candidates:
+            return
+
+        # Sort candidates to find the best one
+        # Logic: 
+        # 1. Primary stream gets hysterisis bonus (SCORE_SWITCH_THRESHOLD) - ONLY for deciding the top spot
+        # 2. Prefer Higher Resolution if scores are close (RESOLUTION_SCORE_TOLERANCE)
+        # 3. Prefer Higher Score
+        
+        # Primary stream ID from Dispatcharr (source of truth for "current state")
+        current_primary_id = primary_stream_id
+
+        def calculate_sort_score(info):
+            score = info.reliability_score
+            # Hysteresis: Valid only if we are comparing against the current primary 
+            # and trying to displace it.
+            # But here we want a stable sort for the whole list.
+            return score
+
+        # 1. Sort by raw score first
+        candidates.sort(key=lambda x: calculate_sort_score(x), reverse=True)
+        
+        # 2. Refine Sort: Group by "score tiers" and sort by resolution within tiers
+        # We'll rebuild the list
+        sorted_streams = []
+        
+        # We consume candidates as we group them
+        while candidates:
+            current = candidates.pop(0)
+            tier = [current]
+            
+            # Look for others in the same score tolerance
+            i = 0
+            while i < len(candidates):
+                diff = current.reliability_score - candidates[i].reliability_score
+                if diff <= RESOLUTION_SCORE_TOLERANCE:
+                    tier.append(candidates.pop(i))
                 else:
-                    logger.error(f"Failed to update stream order for channel {session.channel_id}")
+                    break
+            
+            # Sort this tier by resolution (width * height) descending
+            tier.sort(key=lambda x: (x.width or 0) * (x.height or 0), reverse=True)
+            sorted_streams.extend(tier)
+
+        # 3. Apply Hysteresis for the *Primary* position only
+        # If the top stream in our new sorted_streams is NOT the current primary,
+        # check if it really deserves to dethrone it.
+        
+        proposed_primary = sorted_streams[0]
+        if proposed_primary.stream_id != current_primary_id:
+            # Find current primary in our list
+            curr_prim_info = next((s for s in sorted_streams if s.stream_id == current_primary_id), None)
+            
+            if curr_prim_info:
+                # Check if proposed is significantly better
+                score_diff = proposed_primary.reliability_score - curr_prim_info.reliability_score
+                
+                # If proposed is better by score threshold, ALLOW switch
+                # OR if proposed has better resolution and similar score (handled by sort?)
+                # Wait, the sort already put proposed on top because it had better res or better score.
+                # So we just need to check if we should REVERT to current_primary if the gap isn't big enough.
+                
+                # Rule: Keep current primary if the new winner isn't winning by enough score
+                # UNLESS the new winner has better resolution?
+                # User said: "Streams of the same stability score but with different resolutions should be ordered by resolution"
+                # This implies strict resolution ordering.
+                
+                # Let's stick to the Hysteresis for Stability Score mostly.
+                if score_diff < SCORE_SWITCH_THRESHOLD:
+                    # Score is similar.
+                    # Does proposed have better resolution?
+                    prop_res = (proposed_primary.width or 0) * (proposed_primary.height or 0)
+                    curr_res = (curr_prim_info.width or 0) * (curr_prim_info.height or 0)
+                    
+                    if prop_res <= curr_res:
+                        # Proposed is NOT better resolution (and score diff is small), so keep status quo
+                        # Move current primary to top
+                        sorted_streams.remove(curr_prim_info)
+                        sorted_streams.insert(0, curr_prim_info)
+                    # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
+
+        # 4. Enforce this order in Dispatcharr
+        new_order_ids = [s.stream_id for s in sorted_streams]
+        
+        # Append any other streams that might be in current_stream_ids but not in our active list
+        # (e.g. streams we are not monitoring but are in the channel? Should rare/impossible if synced)
+        # But we should preserve them at the end if they exist.
+        monitored_ids = set(new_order_ids)
+        for sid in current_stream_ids:
+            if sid not in monitored_ids:
+                # Append at the end (likely dead/review/quarantined streams if we filtered them)
+                # Currently _evaluate iterates over non-quarantined. 
+                # So Quarantined streams in Dispatcharr (if any left) will be pushed to bottom.
+                new_order_ids.append(sid)
+
+        # Check if order changed
+        if new_order_ids != current_stream_ids:
+            logger.info(
+                f"Enforcing new stream order for session {session_id}. "
+                f"Primary: {new_order_ids[0]} (Score: {session.streams[new_order_ids[0]].reliability_score:.1f})"
+            )
+            
+            from api_utils import update_channel_streams
+            if update_channel_streams(session.channel_id, new_order_ids):
+                logger.info(f"Updated Dispatcharr channel {session.channel_id} with new stream order")
+                udi.refresh_channel_by_id(session.channel_id)
+                self.last_switch_times[session_id] = current_time
+            else:
+                logger.error(f"Failed to update stream order for channel {session.channel_id}")
     
     def _refresh_session_streams(self, session_id: str):
         """Refresh the list of streams for a session"""

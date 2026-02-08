@@ -64,7 +64,9 @@ class StreamInfo:
     fps: Optional[float] = None
     bitrate: Optional[int] = None
     m3u_account: Optional[str] = None
-    is_quarantined: bool = False
+    status: str = 'review'  # 'stable', 'review', 'quarantined'
+    last_status_change: float = 0.0
+    failure_count: int = 0
     reliability_score: float = 50.0  # Start at middle score
     metrics_history: List[StreamMetrics] = None
     last_screenshot_time: float = 0
@@ -72,9 +74,29 @@ class StreamInfo:
     # Low speed tracking for auto-quarantine
     low_speed_start_time: Optional[float] = None  # When speed first dropped below threshold
     
+    @property
+    def is_quarantined(self) -> bool:
+        return self.status == 'quarantined'
+    
+    @is_quarantined.setter
+    def is_quarantined(self, value: bool):
+        # Allow setting via property for backward compatibility during deserialization
+        # or legacy code usage
+        if value:
+            # Only update timestamp if it wasn't already quarantined
+            if self.status != 'quarantined':
+                self.status = 'quarantined'
+                self.last_status_change = time.time()
+        elif self.status == 'quarantined':
+            # If was quarantined and setting to False, move to review (safer than stable)
+            self.status = 'review'
+            self.last_status_change = time.time()
+
     def __post_init__(self):
         if self.metrics_history is None:
             self.metrics_history = []
+        if self.last_status_change == 0.0:
+            self.last_status_change = time.time()
 
 
 @dataclass
@@ -262,6 +284,12 @@ class StreamSessionManager:
         if 'streams' in data and data['streams']:
             streams = {}
             for stream_id, stream_data in data['streams'].items():
+                # Handle migration from is_quarantined (bool) to status (str)
+                if 'is_quarantined' in stream_data:
+                    is_q = stream_data.pop('is_quarantined')
+                    if is_q and 'status' not in stream_data:
+                        stream_data['status'] = 'quarantined'
+                
                 # Convert metrics_history back to StreamMetrics objects
                 if 'metrics_history' in stream_data and stream_data['metrics_history']:
                     metrics = []
@@ -554,7 +582,9 @@ class StreamSessionManager:
                     height=stream_data.get('height'),
                     fps=stats.get('fps') or stream_data.get('fps'),
                     bitrate=bitrate,
-                    m3u_account=stream_data.get('m3u_account')
+                    m3u_account=stream_data.get('m3u_account'),
+                    status='review',
+                    last_status_change=time.time()
                 )
                 session.streams[stream_id] = stream_info
                 
@@ -668,7 +698,9 @@ class StreamSessionManager:
                 url=stream.get('url', ''),
                 name=stream.get('name', ''),
                 channel_id=session.channel_id,
-                m3u_account=stream.get('m3u_account')
+                m3u_account=stream.get('m3u_account'),
+                status='review',
+                last_status_change=time.time()
             )
             session.streams[stream_id] = stream_info
             self.scoring_windows[session_id][stream_id] = CappedSlidingWindow(session.window_size)
@@ -725,7 +757,9 @@ class StreamSessionManager:
             return False
         
         with self.session_locks[session_id]:
-            stream_info.is_quarantined = True
+            # Update status to quarantined
+            stream_info.status = 'quarantined'
+            stream_info.last_status_change = time.time()
             self._save_sessions()
         
         logger.info(f"Manually quarantined stream {stream_id} in session {session_id}")
@@ -778,6 +812,37 @@ class StreamSessionManager:
                 logger.error(f"Error handling Dispatcharr updates for quarantined stream {stream_id}: {e}", exc_info=True)
          
         return True
+
+    def revive_stream(self, session_id: str, stream_id: int) -> bool:
+        """
+        Revive a quarantined stream by moving it to 'review' status.
+        
+        Args:
+            session_id: Session ID
+            stream_id: Stream ID
+            
+        Returns:
+            True if successful
+        """
+        if session_id not in self.sessions:
+            return False
+            
+        session = self.sessions[session_id]
+        stream_info = session.streams.get(stream_id)
+        
+        if not stream_info:
+            return False
+            
+        with self.session_locks[session_id]:
+            if stream_info.status == 'quarantined':
+                stream_info.status = 'review'
+                stream_info.last_status_change = time.time()
+                self._save_sessions()
+                logger.info(f"Revived stream {stream_id} in session {session_id} (moved to review)")
+                return True
+            else:
+                logger.info(f"Stream {stream_id} is not quarantined (status: {stream_info.status})")
+                return False
     
     def delete_session(self, session_id: str) -> bool:
         """Delete a session"""

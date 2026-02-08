@@ -125,6 +125,16 @@ export const streamSessionsAPI = {
   },
 
   /**
+   * Manually revive a quarantined stream in a session
+   * @param {string} sessionId - Session ID
+   * @param {number} streamId - Stream ID
+   * @returns {Promise}
+   */
+  reviveStream: (sessionId, streamId) => {
+    return api.post(`/stream-sessions/${sessionId}/streams/${streamId}/revive`);
+  },
+
+  /**
    * Get current proxy status (which streams are being played)
    * @returns {Promise} Proxy status data
    */

@@ -4361,8 +4361,37 @@ def get_stream_session(session_id):
                 }
                 streams_data.append(stream_dict)
         
-        # Sort by reliability score descending
-        streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+        # Sort streams to match Dispatcharr channel order
+        # This ensures the frontend sees the exact same order as Dispatcharr
+        try:
+            from udi import get_udi_manager
+            udi = get_udi_manager()
+            channel = udi.get_channel_by_id(session.channel_id)
+            
+            if channel and 'streams' in channel:
+                # Create a map of stream_id -> index for O(1) lookup
+                order_map = {sid: i for i, sid in enumerate(channel['streams'])}
+                
+                # Sort: 
+                # 1. Streams in Dispatcharr (by index)
+                # 2. Streams not in Dispatcharr (e.g. quarantined) - put at end
+                # 3. Quarantined streams sorted by reliability score as tie breaker
+                
+                def get_sort_key(stream_data):
+                    sid = stream_data['stream_id']
+                    if sid in order_map:
+                        return (0, order_map[sid])
+                    return (1, -stream_data['reliability_score']) # Non-channel streams sorted by score desc
+                
+                streams_data.sort(key=get_sort_key)
+            else:
+                # Fallback if channel not found: sort by reliability score
+                streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+                
+        except Exception as e:
+            logger.warning(f"Failed to sort streams by channel order: {e}")
+            # Fallback
+            streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)
         
         session_dict = {
             'session_id': session.session_id,
@@ -4396,6 +4425,38 @@ def get_stream_session(session_id):
         
     except Exception as e:
         logger.error(f"Error getting stream session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/quarantine', methods=['POST'])
+def quarantine_stream(session_id, stream_id):
+    """Quarantine a stream in a session."""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.quarantine_stream(session_id, stream_id):
+            return jsonify({"error": "Failed to quarantine stream. It may already be quarantined or session/stream not found."}), 400
+            
+        return jsonify({"success": True}), 200
+        
+    except Exception as e:
+        logger.error(f"Error quarantining stream {stream_id} in {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/revive', methods=['POST'])
+def revive_stream(session_id, stream_id):
+    """Revive a quarantined stream in a session"""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.revive_stream(session_id, stream_id):
+            return jsonify({"error": "Failed to revive stream. It may not be quarantined or session not found."}), 400
+            
+        return jsonify({"success": True}), 200
+        
+    except Exception as e:
+        logger.error(f"Error reviving stream {stream_id} in {session_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

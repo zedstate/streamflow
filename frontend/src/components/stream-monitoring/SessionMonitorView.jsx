@@ -132,6 +132,24 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     }
   };
 
+  const handleReviveStream = async (streamId) => {
+    try {
+      await streamSessionsAPI.reviveStream(sessionId, streamId);
+      toast({
+        title: 'Success',
+        description: 'Stream revived successfully (moved to Under Review)'
+      });
+      loadSession();
+    } catch (err) {
+      console.error('Failed to revive stream:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to revive stream',
+        variant: 'destructive'
+      });
+    }
+  };
+
   if (loading || !session) {
     return (
       <div className="text-center py-12">
@@ -141,8 +159,13 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     );
   }
 
-  const activeStreams = session.streams.filter(s => !s.is_quarantined);
-  const quarantinedStreams = session.streams.filter(s => s.is_quarantined);
+  /* New logic: filter by status string */
+  const stableStreams = session.streams.filter(s => s.status === 'stable');
+  const reviewStreams = session.streams.filter(s => s.status === 'review');
+  const quarantinedStreams = session.streams.filter(s => s.status === 'quarantined' || s.is_quarantined); // fallback for mixed data
+
+  // Provide a combined list for specific "All Active" logic if needed, but tabs are better
+  const activeStreams = [...stableStreams, ...reviewStreams];
 
   return (
     <div className="space-y-6">
@@ -307,36 +330,66 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       </div>
 
       {/* Streams Tables */}
-      <Tabs defaultValue="active" className="w-full">
+      <Tabs defaultValue="stable" className="w-full">
         <TabsList>
-          <TabsTrigger value="active">
-            Active Streams ({activeStreams.length})
+          <TabsTrigger value="stable">
+            Stable ({stableStreams.length})
+          </TabsTrigger>
+          <TabsTrigger value="review">
+            Under Review ({reviewStreams.length})
           </TabsTrigger>
           <TabsTrigger value="quarantined">
             Quarantined ({quarantinedStreams.length})
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="active">
+        <TabsContent value="stable">
           <Card>
             <CardHeader>
-              <CardTitle>Active Streams</CardTitle>
+              <CardTitle>Stable Streams</CardTitle>
               <CardDescription>
-                Streams being continuously monitored with reliability scoring
+                Streams that have passed review and are considered reliable.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {activeStreams.length === 0 ? (
+              {stableStreams.length === 0 ? (
                 <div className="text-center py-12">
                   <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">No active streams</p>
+                  <p className="text-muted-foreground">No stable streams</p>
                 </div>
               ) : (
                 <StreamsTable
-                  streams={activeStreams}
+                  streams={stableStreams}
                   sessionId={sessionId}
                   onQuarantine={handleQuarantineStream}
                   playingStreamIds={playingStreamIds}
+                />
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="review">
+          <Card>
+            <CardHeader>
+              <CardTitle>Under Review</CardTitle>
+              <CardDescription>
+                New or revived streams being monitored for reliability before becoming stable.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {reviewStreams.length === 0 ? (
+                <div className="text-center py-12">
+                  <Activity className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">No streams under review</p>
+                </div>
+              ) : (
+                <StreamsTable
+                  streams={reviewStreams}
+                  sessionId={sessionId}
+                  onQuarantine={handleQuarantineStream}
+                  playingStreamIds={playingStreamIds}
+                  isReview
                 />
               )}
             </CardContent>
@@ -348,7 +401,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
             <CardHeader>
               <CardTitle>Quarantined Streams</CardTitle>
               <CardDescription>
-                Streams that failed quality checks and are not being monitored
+                Streams that failed quality checks or are dead. They will be retried automatically after a cooldown.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -362,6 +415,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   streams={quarantinedStreams}
                   sessionId={sessionId}
                   showQuarantined
+                  onRevive={handleReviveStream}
                 />
               )}
             </CardContent>
@@ -396,7 +450,7 @@ function StatsCard({ title, value, suffix = '', icon: Icon, variant = 'default' 
 }
 
 // Streams Table Component
-function StreamsTable({ streams, sessionId, onQuarantine, playingStreamIds = new Set(), showQuarantined = false }) {
+function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false }) {
   const formatQuality = (stream) => {
     if (!stream.width || !stream.height) return 'Unknown';
     return `${stream.width}x${stream.height}`;
@@ -462,14 +516,35 @@ function StreamsTable({ streams, sessionId, onQuarantine, playingStreamIds = new
                       </div>
                     </TableCell>
                     <TableCell>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onQuarantine(stream.stream_id)}
+                          className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950"
+                        >
+                          <Ban className="h-3 w-3 mr-1" />
+                          Quarantine
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </>
+                )}
+                {showQuarantined && onRevive && (
+                  <>
+                    <TableCell>
+                      <span className="text-sm text-muted-foreground">
+                        Score: {stream.reliability_score.toFixed(1)}
+                      </span>
+                    </TableCell>
+                    <TableCell>
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => onQuarantine(stream.stream_id)}
-                        className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950"
+                        onClick={() => onRevive(stream.stream_id)}
                       >
-                        <Ban className="h-3 w-3 mr-1" />
-                        Quarantine
+                        <Activity className="h-3 w-3 mr-1" />
+                        Revive
                       </Button>
                     </TableCell>
                   </>
