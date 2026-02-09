@@ -236,6 +236,20 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const quarantinedStreams = currentStreams.filter(s => s.status === 'quarantined' || s.is_quarantined);
   const activeStreams = [...stableStreams, ...reviewStreams];
 
+  const minTime = useMemo(() => {
+    // Find earliest metric or session start
+    if (!session) return 0;
+    let min = session.created_at || 0;
+    if (session.streams) {
+      session.streams.forEach(s => {
+        if (s.metrics_history && s.metrics_history.length > 0) {
+          if (s.metrics_history[0].timestamp < min) min = s.metrics_history[0].timestamp;
+        }
+      });
+    }
+    return min;
+  }, [session]);
+
   return (
     <div className="space-y-6">
       {/* Header with Channel Logo and EPG Info */}
@@ -496,19 +510,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       {
         session && (
           <TimelineControl
-            minTime={useMemo(() => {
-              // Find earliest metric or session start
-              if (!session) return 0;
-              let min = session.created_at || 0;
-              if (session.streams) {
-                session.streams.forEach(s => {
-                  if (s.metrics_history && s.metrics_history.length > 0) {
-                    if (s.metrics_history[0].timestamp < min) min = s.metrics_history[0].timestamp;
-                  }
-                });
-              }
-              return min;
-            }, [session])}
+            minTime={minTime}
             maxTime={Math.floor(Date.now() / 1000)}
             currentTime={cursorTime || Math.floor(Date.now() / 1000)}
             onTimeChange={handleTimeChange}
