@@ -961,6 +961,10 @@ class StreamSessionManager:
                 stream_info.status = 'review'
                 stream_info.last_status_change = time.time()
                 
+                # Reset counters for fresh start
+                stream_info.low_speed_start_time = None
+                stream_info.failure_count = 0
+                
                 # Remove from persistent blocklist
                 if session.quarantined_stream_ids and stream_id in session.quarantined_stream_ids:
                     session.quarantined_stream_ids.remove(stream_id)
