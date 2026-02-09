@@ -121,6 +121,7 @@ class SessionInfo:
     stagger_ms: int = DEFAULT_STAGGER_MS
     timeout_ms: int = DEFAULT_TIMEOUT_MS
     probe_interval_ms: int = DEFAULT_PROBE_INTERVAL_MS
+    evaluation_interval_ms: int = DEFAULT_EVALUATION_INTERVAL_MS
     screenshot_interval_seconds: int = DEFAULT_SCREENSHOT_INTERVAL_SECONDS
     window_size: int = DEFAULT_WINDOW_SIZE
     streams: Dict[int, StreamInfo] = None
