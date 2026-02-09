@@ -433,7 +433,8 @@ class StreamMonitoringService:
                 monitor.stop()
                 del self.monitors[session_id][stream_id]
             
-            stream_info.is_quarantined = True
+            # Quarantine via session manager to update blocklist
+            self.session_manager.quarantine_stream(session_id, stream_id)
             self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
             return
         
@@ -502,7 +503,7 @@ class StreamMonitoringService:
                 monitor.stop()
                 # Safe to delete since we're iterating over a snapshot
                 del self.monitors[session_id][stream_id]
-                stream_info.is_quarantined = True
+                self.session_manager.quarantine_stream(session_id, stream_id)
                 # Remove dead stream from Dispatcharr channel
                 self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
             else:
@@ -513,7 +514,7 @@ class StreamMonitoringService:
                     monitor.stop()
                     # Safe to delete since we're iterating over a snapshot
                     del self.monitors[session_id][stream_id]
-                    stream_info.is_quarantined = True
+                    self.session_manager.quarantine_stream(session_id, stream_id)
                     # Remove timed-out stream from Dispatcharr channel
                     self._remove_stream_from_dispatcharr(session_id, stream_id, "timed-out")
                 else:
@@ -538,7 +539,7 @@ class StreamMonitoringService:
                                 monitor.stop()
                                 # Safe to delete since we're iterating over a snapshot
                                 del self.monitors[session_id][stream_id]
-                                stream_info.is_quarantined = True
+                                self.session_manager.quarantine_stream(session_id, stream_id)
                                 # Remove slow stream from Dispatcharr channel
                                 self._remove_stream_from_dispatcharr(session_id, stream_id, "slow-speed")
                     else:

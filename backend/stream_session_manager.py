@@ -144,10 +144,14 @@ class SessionInfo:
     # Auto-creation source (for tracking if created by rules)
     auto_created: bool = False
     auto_create_rule_id: Optional[str] = None
+    # Track quarantined stream IDs to prevent re-addition
+    quarantined_stream_ids: Set[int] = None
     
     def __post_init__(self):
         if self.streams is None:
             self.streams = {}
+        if self.quarantined_stream_ids is None:
+            self.quarantined_stream_ids = set()
 
 
 class CappedSlidingWindow:
@@ -610,7 +614,17 @@ class StreamSessionManager:
                 logger.warning(f"Error matching stream {s.get('id')}: {e}")
                 continue
         
-        logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams")
+        # Filter out streams that are currently quarantined in this session
+        # This prevents re-adding streams that were manually or automatically removed
+        quarantined_ids = set(session.quarantined_stream_ids)
+        if quarantined_ids:
+            original_count = len(matching_streams)
+            matching_streams = [s for s in matching_streams if s.get('id') not in quarantined_ids]
+            filtered_count = original_count - len(matching_streams)
+            if filtered_count > 0:
+                logger.debug(f"Session {session_id}: Filtered out {filtered_count} quarantined streams from discovery")
+
+        logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams (after quarantine filtering)")
         
         # Add all discovered streams to Dispatcharr channel (additive only)
         # This ensures streams matched by regex are actually available in the channel
@@ -731,6 +745,11 @@ class StreamSessionManager:
             logger.debug(f"Stream {stream_id} already in session {session_id}")
             return True
         
+        # Check if stream is quarantined in this session
+        if stream_id in session.quarantined_stream_ids:
+            logger.debug(f"Stream {stream_id} is quarantined in session {session_id} - skipping add")
+            return False
+    
         # Get stream info from UDI
         udi = get_udi_manager()
         stream = udi.get_stream_by_id(stream_id)
@@ -884,6 +903,41 @@ class StreamSessionManager:
          
         return True
 
+    def quarantine_stream(self, session_id: str, stream_id: int) -> bool:
+        """
+        Quarantine a stream by setting its status to 'quarantined' and adding to blocklist.
+        
+        Args:
+            session_id: Session ID
+            stream_id: Stream ID
+            
+        Returns:
+            True if successful
+        """
+        if session_id not in self.sessions:
+            return False
+            
+        session = self.sessions[session_id]
+        stream_info = session.streams.get(stream_id)
+        
+        if not stream_info:
+            return False
+            
+        with self.session_locks[session_id]:
+            if stream_info.status != 'quarantined':
+                stream_info.status = 'quarantined'
+                stream_info.last_status_change = time.time()
+                
+                # Add to persistent blocklist
+                if session.quarantined_stream_ids is None:
+                    session.quarantined_stream_ids = set()
+                session.quarantined_stream_ids.add(stream_id)
+                
+                self._save_sessions()
+                logger.info(f"Quarantined stream {stream_id} in session {session_id} (added to blocklist)")
+                return True
+        return False
+
     def revive_stream(self, session_id: str, stream_id: int) -> bool:
         """
         Revive a quarantined stream by moving it to 'review' status.
@@ -908,11 +962,27 @@ class StreamSessionManager:
             if stream_info.status == 'quarantined':
                 stream_info.status = 'review'
                 stream_info.last_status_change = time.time()
+                
+                # Remove from persistent blocklist
+                if session.quarantined_stream_ids and stream_id in session.quarantined_stream_ids:
+                    session.quarantined_stream_ids.remove(stream_id)
+                
                 self._save_sessions()
                 logger.info(f"Revived stream {stream_id} in session {session_id} (moved to review)")
+                
+                # Add back to Dispatcharr channel
+                try:
+                    from api_utils import add_streams_to_channel
+                    add_streams_to_channel(session.channel_id, [stream_id], allow_dead_streams=True)
+                    # Refresh UDI to reflect change
+                    udi = get_udi_manager()
+                    udi.refresh_channel_by_id(session.channel_id)
+                except Exception as e:
+                    logger.error(f"Failed to restore stream {stream_id} to Dispatcharr: {e}")
+                
                 return True
             else:
-                logger.info(f"Stream {stream_id} is not quarantined (status: {stream_info.status})")
+                logger.debug(f"Stream {stream_id} is not quarantined (status: {stream_info.status})")
                 return False
     
     def delete_session(self, session_id: str) -> bool:
