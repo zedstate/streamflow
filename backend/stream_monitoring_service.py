@@ -703,17 +703,22 @@ class StreamMonitoringService:
                     # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
 
         # 4. Enforce this order in Dispatcharr
-        new_order_ids = [s.stream_id for s in final_sorted_streams]
+        # Only publish STABLE streams to Dispatcharr (hide Review/Quarantined)
+        public_streams = [s for s in final_sorted_streams if s.status == 'stable']
+        new_order_ids = [s.stream_id for s in public_streams]
         
         # Append any other streams that might be in current_stream_ids but not in our active list
-        # (e.g. streams we are not monitoring but are in the channel? Should rare/impossible if synced)
-        # But we should preserve them at the end if they exist.
-        monitored_ids = set(new_order_ids)
+        # (e.g. streams we are not monitoring but are in the channel)
+        # But we must NOT re-add streams we know correspond to 'Review' or 'Quarantined' status
+        monitored_ids_set = set(new_order_ids)
         for sid in current_stream_ids:
-            if sid not in monitored_ids:
-                # Append at the end (likely dead/review/quarantined streams if we filtered them)
-                # Currently _evaluate iterates over non-quarantined. 
-                # So Quarantined streams in Dispatcharr (if any left) will be pushed to bottom.
+            if sid not in monitored_ids_set:
+                # Check if this is a stream we are monitoring but decided to hide
+                known_stream = session.streams.get(sid)
+                if known_stream and known_stream.status in ['review', 'quarantined']:
+                    continue  # Explicitly exclude known non-stable streams
+                
+                # Append at the end (likely external or unknown streams)
                 new_order_ids.append(sid)
 
         # Check if order changed

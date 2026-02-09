@@ -19,7 +19,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
   const [formData, setFormData] = useState({
     channel_id: '',
     group_id: '',
-    stagger_ms: 200,
+    stagger_ms: 1000,
     timeout_ms: 30000,
     autoStart: true
   });

@@ -624,19 +624,12 @@ class StreamSessionManager:
             if filtered_count > 0:
                 logger.debug(f"Session {session_id}: Filtered out {filtered_count} quarantined streams from discovery")
 
-        logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams (after quarantine filtering)")
+        # logger.info(f"Session {session_id}: Found {len(matching_streams)} matching streams (after quarantine filtering)")
         
-        # Add all discovered streams to Dispatcharr channel (additive only)
-        # This ensures streams matched by regex are actually available in the channel
-        stream_ids = [s.get('id') for s in matching_streams]
-        if stream_ids:
-            try:
-                from api_utils import add_streams_to_channel
-                added_count = add_streams_to_channel(session.channel_id, stream_ids, allow_dead_streams=True)
-                if added_count > 0:
-                    logger.info(f"Session {session_id}: Added {added_count} new streams to Dispatcharr channel")
-            except Exception as e:
-                logger.error(f"Session {session_id}: Failed to sync streams to Dispatcharr: {e}")
+        # NOTE: We no longer add streams to Dispatcharr immediately upon discovery.
+        # Streams remain in 'Review' status until validated by the monitor.
+        # Check _evaluate_session_streams in stream_monitoring_service.py for the logic
+        # that promotes 'Stable' streams to Dispatcharr.
         
         # Import stream stats utilities for extracting bitrate and other metadata
         from stream_stats_utils import extract_stream_stats

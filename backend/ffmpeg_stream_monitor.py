@@ -294,6 +294,7 @@ class FFmpegStreamMonitor:
             self.stats.speed = float(speed_match.group(1))
         
         # Bitrate (e.g., "bitrate= 406.1kbits/s")
+        bitrate_found = False
         bitrate_match = re.search(r'bitrate=\s*([0-9.]+)\s*([kmg]?)bits/s', output, re.IGNORECASE)
         if bitrate_match:
             value = float(bitrate_match.group(1))
@@ -307,6 +308,7 @@ class FFmpegStreamMonitor:
             # 'k' or empty defaults to kbps
             
             self.stats.bitrate = value
+            bitrate_found = True
         
         # Size (e.g., "size= 12345kB") - for calculating bitrate if not provided
         size_match = re.search(r'size=\s*([0-9.]+)\s*([kmg]?)B', output, re.IGNORECASE)
@@ -324,8 +326,10 @@ class FFmpegStreamMonitor:
             
             self.stats.total_size = int(value)
             
-            # Calculate bitrate from size and time if bitrate not directly available
-            if self.stats.bitrate == 0 and self.stats.time > 0:
+            # Calculate bitrate from size and time if explicit bitrate not available
+            # We check !bitrate_found rather than stats.bitrate == 0 to allow updates 
+            # if the stream stays in "bitrate=N/A" state but size/time keep growing.
+            if not bitrate_found and self.stats.time > 0:
                 # bitrate = (total_size * BITS_PER_BYTE) / time / BYTES_TO_KBPS (to get kbps)
                 self.stats.bitrate = (self.stats.total_size * BITS_PER_BYTE) / self.stats.time / BYTES_TO_KBPS
         
