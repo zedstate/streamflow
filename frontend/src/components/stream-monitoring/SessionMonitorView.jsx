@@ -212,15 +212,6 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     }
   };
 
-  if (loading || !session) {
-    return (
-      <div className="text-center py-12">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-        <p className="text-muted-foreground">Loading session...</p>
-      </div>
-    );
-  }
-
   /* Filter streams based on cursor time */
   const currentStreams = useMemo(() => {
     if (!session || !session.streams) return [];
@@ -249,6 +240,15 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     }
     return min;
   }, [session]);
+
+  if (loading || !session) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+        <p className="text-muted-foreground">Loading session...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
