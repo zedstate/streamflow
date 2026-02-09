@@ -217,66 +217,18 @@ class StreamMonitoringService:
         except Exception as e:
             logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
     
-    def _monitor_worker(self):
-        """Worker thread for monitoring streams"""
-        logger.info("Monitor worker started")
-        
-        while self._running:
-            try:
-                # Process each active session
-                active_sessions = self.session_manager.get_active_sessions()
-                current_time = time.time()
-                
-                for session in active_sessions:
-                    self._check_session_auto_stop(session)
-                    self._manage_quarantine_lifecycle(session)
-                    
-                    # Always monitor (collect stats) - this is fast and non-blocking usually
-                    self._monitor_session(session.session_id)
-                    
-                    # Check if it's time to Evaluate (reorder streams) - this is the adjustable part
-                    last_eval = self.last_evaluation_times.get(session.session_id, 0)
-                    eval_interval_sec = getattr(session, 'evaluation_interval_ms', 1000) / 1000.0
-                    
-                    if current_time - last_eval >= eval_interval_sec:
-                        self._evaluate_session_streams(session.session_id)
-                        self.last_evaluation_times[session.session_id] = current_time
-                
-                # Sleep briefly to avoid CPU spin, but fast enough to catch 100ms intervals if needed
-                time.sleep(0.1)
-                
-            except Exception as e:
-                logger.error(f"Error in monitor worker: {e}", exc_info=True)
-                time.sleep(1)
-        
-        logger.info("Monitor worker stopped")
-    
-    def _check_session_auto_stop(self, session):
-        """Check if session should automatically stop based on EPG event end time"""
-        if not session.epg_event_end:
-            return
-        
-        try:
-            from datetime import datetime, timezone
-            end_time = datetime.fromisoformat(session.epg_event_end.replace('Z', '+00:00'))
-            if end_time.tzinfo is None:
-                end_time = end_time.replace(tzinfo=timezone.utc)
-            
-            now = datetime.now(timezone.utc)
-            if now >= end_time:
-                logger.info(f"EPG event ended for session {session.session_id}, auto-stopping session")
-                self.session_manager.stop_session(session.session_id)
-        except Exception as e:
-            logger.error(f"Error checking auto-stop for session {session.session_id}: {e}")
-
-    def _manage_quarantine_lifecycle(self, session):
+    def _manage_quarantine_lifecycle(self, session) -> bool:
         """
         Manage lifecycle of streams:
         - Quarantined -> Review (after cooldown)
         - Review -> Stable (after passing probation)
+        
+        Returns:
+            bool: True if any stream transitioned to 'stable' (requiring immediate update)
         """
         current_time = time.time()
         updates_needed = False
+        transitioned_to_stable = False
         
         for stream_id, info in session.streams.items():
             time_in_state = current_time - info.last_status_change
@@ -297,10 +249,50 @@ class StreamMonitoringService:
                             info.status = 'stable'
                             info.last_status_change = current_time
                             updates_needed = True
+                            transitioned_to_stable = True
                     # Else: stay in review until score improves or it dies (monitored by standard logic)
         
         if updates_needed:
             self.session_manager._save_sessions()
+            
+        return transitioned_to_stable
+    
+    def _monitor_worker(self):
+        """Worker thread for monitoring streams"""
+        logger.info("Monitor worker started")
+        
+        while self._running:
+            try:
+                # Process each active session
+                active_sessions = self.session_manager.get_active_sessions()
+                current_time = time.time()
+                
+                for session in active_sessions:
+                    self._check_session_auto_stop(session)
+                    
+                    # Check lifecycle updates
+                    became_stable = self._manage_quarantine_lifecycle(session)
+                    
+                    # Always monitor (collect stats) - this is fast and non-blocking usually
+                    self._monitor_session(session.session_id)
+                    
+                    # Check if it's time to Evaluate (reorder streams) - this is the adjustable part
+                    last_eval = self.last_evaluation_times.get(session.session_id, 0)
+                    eval_interval_sec = getattr(session, 'evaluation_interval_ms', 1000) / 1000.0
+                    
+                    # Force update if a stream just became stable, OR if interval passed
+                    if became_stable or (current_time - last_eval >= eval_interval_sec):
+                        self._evaluate_session_streams(session.session_id, force_update=became_stable)
+                        self.last_evaluation_times[session.session_id] = current_time
+                
+                # Sleep briefly to avoid CPU spin, but fast enough to catch 100ms intervals if needed
+                time.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Error in monitor worker: {e}", exc_info=True)
+                time.sleep(1)
+        
+        logger.info("Monitor worker stopped")
     
     def _refresh_worker(self):
         """Worker thread for refreshing stream lists and updating stats"""
@@ -459,7 +451,7 @@ class StreamMonitoringService:
         if stats.bitrate > 0:
             stream_info.bitrate = int(stats.bitrate)
 
-    def _evaluate_session_streams(self, session_id: str):
+    def _evaluate_session_streams(self, session_id: str, force_update: bool = False):
         """Evaluate and score all streams in a session"""
         session = self.session_manager.get_session(session_id)
         if not session:
@@ -565,9 +557,9 @@ class StreamMonitoringService:
         # Logic to reorder streams based on score (with hysteresis)
         # ---------------------------------------------------------
         
-        # Check cooldown
+        # Check cooldown (bypass if force_update is True)
         last_switch = self.last_switch_times.get(session_id, 0)
-        if current_time - last_switch < SWITCH_COOLDOWN:
+        if not force_update and (current_time - last_switch < SWITCH_COOLDOWN):
             return
 
         # Get current channel order from UDI
@@ -576,7 +568,6 @@ class StreamMonitoringService:
         if not channel:
             return
 
-        current_stream_ids = channel.get('streams', [])
         current_stream_ids = channel.get('streams', [])
         # Note: We do NOT return if current_stream_ids is empty, because we want to FILL it.
 
@@ -597,9 +588,6 @@ class StreamMonitoringService:
                 continue
             candidates.append(info)
             
-        if not candidates:
-            return
-
         if not candidates:
             return
 
@@ -742,35 +730,53 @@ class StreamMonitoringService:
                     # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
 
         # 4. Enforce this order in Dispatcharr
-        # Only publish STABLE streams to Dispatcharr (hide Review/Quarantined)
+        # Prefer STABLE streams, but fallback to REVIEW streams if no stable streams exist
+        # This prevents the channel from appearing empty during testing/initial phase
         public_streams = [s for s in final_sorted_streams if s.status == 'stable']
+        
+        if not public_streams and final_sorted_streams:
+             # Fallback: If no stable streams, show ALL available streams (including Review)
+             # but check if we should allow this (user might want strict hiding)
+             # Assuming we should show *something* rather than nothing
+             public_streams = final_sorted_streams
+             msg = f"No stable streams found for session {session_id}. Falling back to all streams."
+             logger.warning(msg)
+
         new_order_ids = [s.stream_id for s in public_streams]
         
         # Append any other streams that might be in current_stream_ids but not in our active list
-        # (e.g. streams we are not monitoring but are in the channel)
-        # But we must NOT re-add streams we know correspond to 'Review' or 'Quarantined' status
+        # We only exclude QUARANTINED streams now
         monitored_ids_set = set(new_order_ids)
         for sid in current_stream_ids:
             if sid not in monitored_ids_set:
-                # Check if this is a stream we are monitoring but decided to hide
                 known_stream = session.streams.get(sid)
-                if known_stream and known_stream.status in ['review', 'quarantined']:
-                    continue  # Explicitly exclude known non-stable streams
-                
-                # Append at the end (likely external or unknown streams)
+                if known_stream and known_stream.status == 'quarantined':
+                     continue # Explicitly exclude quarantined
+                if known_stream and known_stream.status == 'review' and public_streams != final_sorted_streams:
+                     # If we are in "Stable Only" mode, exclude review streams from tail too
+                     continue
+
+                # Append at the end
                 new_order_ids.append(sid)
 
         # Check if order changed
-        if new_order_ids != current_stream_ids:
+        # If force_update is True, we proceed even if order looks same (to handle desync or status updates)
+        if new_order_ids != current_stream_ids or force_update:
             msg = f"Enforcing new stream order for session {session_id}. "
+            if force_update:
+                msg += "[FORCE UPDATE] "
+            
             if new_order_ids:
                 primary_id = new_order_ids[0]
                 score_str = "N/A"
                 if primary_id in session.streams:
-                     score_str = f"{session.streams[primary_id].reliability_score:.1f}"
-                msg += f"Primary: {primary_id} (Score: {score_str})"
+                        score_str = f"{session.streams[primary_id].reliability_score:.1f}"
+                status_str = "Unknown"
+                if primary_id in session.streams:
+                    status_str = session.streams[primary_id].status
+                msg += f"Primary: {primary_id} (Score: {score_str}, Status: {status_str})"
             else:
-                msg += "Emptying channel (no stable streams)."
+                msg += "Emptying channel (no valid streams)."
             
             logger.info(msg)
             

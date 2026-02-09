@@ -102,8 +102,13 @@ class TestStreamProtection(unittest.TestCase):
             mock_update.assert_called()
             args, _ = mock_update.call_args
             new_order = args[1]
-            # Review streams should be filtered out from Dispatcharr updates
-            self.assertEqual(len(new_order), 0, "Review streams should not be pushed to Dispatcharr")
+            mock_update.assert_called()
+            args, _ = mock_update.call_args
+            new_order = args[1]
+            
+            # Since NO stable streams exist, the system should fallback to showing review streams
+            self.assertEqual(len(new_order), 2, "Should fallback to showing review streams if no stable streams exist")
+            self.assertEqual(new_order[0], 102, "Should pick better review stream")
 
     @patch('stream_monitoring_service.get_udi_manager')
     def test_stable_idle_no_protection(self, mock_get_udi):
