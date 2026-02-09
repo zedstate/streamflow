@@ -702,7 +702,7 @@ class StreamMonitoringService:
                     # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
 
         # 4. Enforce this order in Dispatcharr
-        new_order_ids = [s.stream_id for s in sorted_streams]
+        new_order_ids = [s.stream_id for s in final_sorted_streams]
         
         # Append any other streams that might be in current_stream_ids but not in our active list
         # (e.g. streams we are not monitoring but are in the channel? Should rare/impossible if synced)
