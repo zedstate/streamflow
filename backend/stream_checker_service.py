@@ -3252,6 +3252,14 @@ class StreamCheckerService:
             else:
                 logger.info(f"Step 5/6: Skipping stream matching (matching is disabled for this channel)")
             
+            # Refresh UDI cache again to ensure the check in Step 6 sees the newly assigned streams
+            # This is critical because discover_and_assign_streams updates the DB but UDI cache might be stale
+            if matching_enabled:
+                logger.debug("Refreshing UDI cache for streams and channel to reflect new assignments...")
+                udi.refresh_streams()
+                udi.refresh_channel_by_id(channel_id)
+                logger.info(f"✓ UDI cache refreshed with latest stream assignments")
+            
             # Step 6: Mark channel for force check and perform the check (if checking is enabled)
             dead_count = 0
             if checking_enabled:
