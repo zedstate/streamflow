@@ -34,7 +34,7 @@ DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_PROBE_INTERVAL_MS = 1000
 DEFAULT_EVALUATION_INTERVAL_MS = 1000
 DEFAULT_SCREENSHOT_INTERVAL_SECONDS = 60
-DEFAULT_WINDOW_SIZE = 600  # 10 minutes at 1 second interval
+DEFAULT_WINDOW_SIZE = 3600  # 1 hour at 1 second interval (increased from 600)
 DEFAULT_MAX_SCORE = 100.0
 DEFAULT_MIN_SCORE = 0.0
 
@@ -59,6 +59,8 @@ class StreamMetrics:
     fps: float
     is_alive: bool
     buffering: bool = False
+    reliability_score: float = 50.0
+    status: str = 'review'
     
 
 @dataclass

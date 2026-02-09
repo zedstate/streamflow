@@ -4617,7 +4617,9 @@ def get_stream_metrics(session_id, stream_id):
                     'bitrate': metric.bitrate,
                     'fps': metric.fps,
                     'is_alive': metric.is_alive,
-                    'buffering': metric.buffering
+                    'buffering': metric.buffering,
+                    'reliability_score': getattr(metric, 'reliability_score', 50.0),
+                    'status': getattr(metric, 'status', 'review')
                 })
         
         return jsonify({

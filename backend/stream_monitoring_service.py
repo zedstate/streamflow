@@ -497,6 +497,15 @@ class StreamMonitoringService:
             if stats.bitrate > 0:
                 stream_info.bitrate = int(stats.bitrate)
             
+            # Update reliability score first so it's included in metrics
+            scoring_window = self.session_manager.scoring_windows.get(session_id, {}).get(stream_id)
+            current_score = stream_info.reliability_score
+            if scoring_window:
+                is_healthy = stats.is_alive and not monitor.is_buffering()
+                scoring_window.add_measurement(is_healthy, stats.speed)
+                current_score = scoring_window.get_score()
+                stream_info.reliability_score = current_score
+
             # Create metrics entry
             metrics = StreamMetrics(
                 timestamp=current_time,
@@ -504,20 +513,17 @@ class StreamMonitoringService:
                 bitrate=stats.bitrate,
                 fps=stats.fps,
                 is_alive=stats.is_alive,
-                buffering=monitor.is_buffering()
+                buffering=monitor.is_buffering(),
+                reliability_score=current_score,
+                status=stream_info.status
             )
             
             # Add to history (limit size)
             stream_info.metrics_history.append(metrics)
-            if len(stream_info.metrics_history) > 1000:
-                stream_info.metrics_history = stream_info.metrics_history[-1000:]
-            
-            # Update reliability score
-            scoring_window = self.session_manager.scoring_windows.get(session_id, {}).get(stream_id)
-            if scoring_window:
-                is_healthy = stats.is_alive and not monitor.is_buffering()
-                scoring_window.add_measurement(is_healthy, stats.speed)
-                stream_info.reliability_score = scoring_window.get_score()
+            # Use configurable window size from session manager
+            window_size = getattr(self.session_manager, 'DEFAULT_WINDOW_SIZE', 3600)
+            if len(stream_info.metrics_history) > window_size:
+                stream_info.metrics_history = stream_info.metrics_history[-window_size:]
             
             # Check if stream is dead or timed out
             if not stats.is_alive:

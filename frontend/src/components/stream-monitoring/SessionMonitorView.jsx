@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import * as React from 'react';
 import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useToast } from '@/hooks/use-toast';
 import { streamSessionsAPI } from '@/services/streamSessions';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import { TimelineControl } from './TimelineControl';
 
 // Constants
 const FALLBACK_IMAGE_SVG = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225"%3E%3Crect fill="%23111" width="400" height="225"/%3E%3Ctext fill="%23666" x="50%25" y="50%25" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif"%3ENo Image%3C/text%3E%3C/svg%3E';
@@ -22,7 +23,50 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [aliveScreenshots, setAliveScreenshots] = useState([]);
   const [logoUrl, setLogoUrl] = useState(null);
   const [playingStreamIds, setPlayingStreamIds] = useState(new Set());
+  const [cursorTime, setCursorTime] = useState(null); // Current timestamp of the timeline
+  const [isLive, setIsLive] = useState(true); // Whether we are following the latest updates
   const { toast } = useToast();
+
+  // Helper to find the metric closest to the cursor time
+  const getSnapshotAtTime = (stream, time) => {
+    if (!stream.metrics_history || stream.metrics_history.length === 0) return stream;
+
+    // If live, return current state
+    if (isLive) return stream;
+
+    // Find closest metric
+    // Assuming metrics are sorted by timestamp (they should be appended in order)
+    // We can do a simple search or binary search. For < 1000 items, simple reverse search is fine.
+
+    // If time is past the last metric, use the last one (but maybe show as unknown if too far?)
+    const lastMetric = stream.metrics_history[stream.metrics_history.length - 1];
+    if (time >= lastMetric.timestamp) return stream;
+
+    let closest = null;
+    let minDiff = Infinity;
+
+    for (const metric of stream.metrics_history) {
+      const diff = Math.abs(metric.timestamp - time);
+      if (diff <= minDiff) {
+        minDiff = diff;
+        closest = metric;
+      }
+    }
+
+    if (closest) {
+      return {
+        ...stream,
+        speed: closest.speed,
+        bitrate: closest.bitrate,
+        fps: closest.fps,
+        reliability_score: closest.reliability_score !== undefined ? closest.reliability_score : stream.reliability_score,
+        status: closest.status || stream.status, // Fallback if status wasn't recorded in old history
+        is_alive: closest.is_alive
+      };
+    }
+
+    return stream;
+  };
 
   // Cache channel logo from localStorage
   useEffect(() => {
@@ -70,6 +114,12 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       // Always update to ensure stream stats are refreshed
       // The component uses React.memo and other optimizations to prevent unnecessary re-renders
       setSession(response.data);
+
+      // Update cursor if live
+      if (isLive) {
+        setCursorTime(Math.floor(Date.now() / 1000));
+      }
+
       setLoading(false);
     } catch (err) {
       console.error('Failed to load session:', err);
@@ -78,6 +128,18 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         description: 'Failed to load session details',
         variant: 'destructive'
       });
+    }
+  };
+
+  const handleTimeChange = (newTime) => {
+    setCursorTime(newTime);
+    setIsLive(false);
+  };
+
+  const handleLiveClick = () => {
+    setIsLive(true);
+    if (session) {
+      setCursorTime(Math.floor(Date.now() / 1000));
     }
   };
 
@@ -159,12 +221,19 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     );
   }
 
-  /* New logic: filter by status string */
-  const stableStreams = session.streams.filter(s => s.status === 'stable');
-  const reviewStreams = session.streams.filter(s => s.status === 'review');
-  const quarantinedStreams = session.streams.filter(s => s.status === 'quarantined' || s.is_quarantined); // fallback for mixed data
+  /* Filter streams based on cursor time */
+  const currentStreams = useMemo(() => {
+    if (!session || !session.streams) return [];
 
-  // Provide a combined list for specific "All Active" logic if needed, but tabs are better
+    // If we have no cursor time yet, use current time
+    const time = cursorTime || Math.floor(Date.now() / 1000);
+
+    return session.streams.map(stream => getSnapshotAtTime(stream, time));
+  }, [session, cursorTime, isLive]);
+
+  const stableStreams = currentStreams.filter(s => s.status === 'stable');
+  const reviewStreams = currentStreams.filter(s => s.status === 'review');
+  const quarantinedStreams = currentStreams.filter(s => s.status === 'quarantined' || s.is_quarantined);
   const activeStreams = [...stableStreams, ...reviewStreams];
 
   return (
@@ -422,7 +491,33 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
           </Card>
         </TabsContent>
       </Tabs>
-    </div>
+
+      {/* Timeline Control */}
+      {
+        session && (
+          <TimelineControl
+            minTime={useMemo(() => {
+              // Find earliest metric or session start
+              if (!session) return 0;
+              let min = session.created_at || 0;
+              if (session.streams) {
+                session.streams.forEach(s => {
+                  if (s.metrics_history && s.metrics_history.length > 0) {
+                    if (s.metrics_history[0].timestamp < min) min = s.metrics_history[0].timestamp;
+                  }
+                });
+              }
+              return min;
+            }, [session])}
+            maxTime={Math.floor(Date.now() / 1000)}
+            currentTime={cursorTime || Math.floor(Date.now() / 1000)}
+            onTimeChange={handleTimeChange}
+            isLive={isLive}
+            onLiveClick={handleLiveClick}
+          />
+        )
+      }
+    </div >
   );
 }
 
