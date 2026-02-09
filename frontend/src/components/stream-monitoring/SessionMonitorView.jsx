@@ -68,6 +68,14 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     return stream;
   };
 
+  // Use a ref to track isLive state for the interval callback
+  const isLiveRef = useRef(isLive);
+
+  // Update ref when state changes
+  useEffect(() => {
+    isLiveRef.current = isLive;
+  }, [isLive]);
+
   // Cache channel logo from localStorage
   useEffect(() => {
     if (session && session.channel_id) {
@@ -115,8 +123,8 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       // The component uses React.memo and other optimizations to prevent unnecessary re-renders
       setSession(response.data);
 
-      // Update cursor if live
-      if (isLive) {
+      // Update cursor if live, utilizing the ref to avoid stale closures in interval
+      if (isLiveRef.current) {
         setCursorTime(Math.floor(Date.now() / 1000));
       }
 
