@@ -577,16 +577,17 @@ class StreamMonitoringService:
             return
 
         current_stream_ids = channel.get('streams', [])
-        if not current_stream_ids:
-            return
+        current_stream_ids = channel.get('streams', [])
+        # Note: We do NOT return if current_stream_ids is empty, because we want to FILL it.
 
         # Identify current primary (active) stream
-        primary_stream_id = current_stream_ids[0]
-        primary_info = session.streams.get(primary_stream_id)
+        primary_stream_id = current_stream_ids[0] if current_stream_ids else None
+        primary_info = session.streams.get(primary_stream_id) if primary_stream_id else None
         
-        if not primary_info:
-            # Primary stream in channel is not in our session? Weird.
-            return
+        # If primary_info is None, it means either:
+        # 1. Channel is empty (we need to populate it)
+        # 2. Primary stream is not in our session (maybe manual override or old stream)
+        # In either case, we proceed to find the best candidate from our session.
 
         # Find best candidate stream in our session
         candidates = []
