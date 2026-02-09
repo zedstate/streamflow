@@ -330,6 +330,11 @@ class StreamSessionManager:
                     stream_dict['metrics_history'] = stream_dict['metrics_history'][-1000:]  # Keep last 1000
                 streams_dict[str(stream_id)] = stream_dict
             data['streams'] = streams_dict
+            
+        # Convert set to list for JSON serialization
+        if 'quarantined_stream_ids' in data and isinstance(data['quarantined_stream_ids'], set):
+            data['quarantined_stream_ids'] = list(data['quarantined_stream_ids'])
+            
         return data
     
     def _deserialize_session(self, data: Dict[str, Any]) -> SessionInfo:
@@ -357,6 +362,10 @@ class StreamSessionManager:
                 streams[int(stream_id)] = StreamInfo(**stream_data)
             data['streams'] = streams
         
+        # Convert list back to set for internal use
+        if 'quarantined_stream_ids' in data and isinstance(data['quarantined_stream_ids'], list):
+            data['quarantined_stream_ids'] = set(data['quarantined_stream_ids'])
+            
         return SessionInfo(**data)
     
     def create_session(self, channel_id: int, regex_filter: str = ".*",
@@ -364,6 +373,7 @@ class StreamSessionManager:
                       epg_event: Optional[Dict[str, Any]] = None,
                       allow_duplicate_channel: bool = False,
                       skip_stream_refresh: bool = False,
+                      evaluation_interval_ms: int = DEFAULT_EVALUATION_INTERVAL_MS,
                       **kwargs) -> str:
         """
         Create a new monitoring session.
@@ -375,6 +385,7 @@ class StreamSessionManager:
             epg_event: Optional EPG event to attach to this session
             allow_duplicate_channel: Allow creating a session if one already exists for this channel
             skip_stream_refresh: Skip refreshing global stream list (useful for batch operations)
+            evaluation_interval_ms: Interval for stream evaluation in milliseconds
             **kwargs: Additional session parameters (auto_created, auto_create_rule_id, etc.)
             
         Returns:
@@ -446,6 +457,7 @@ class StreamSessionManager:
             created_at=time.time(),
             is_active=False,
             pre_event_minutes=pre_event_minutes,
+            evaluation_interval_ms=evaluation_interval_ms,
             epg_event_id=epg_event_id,
             epg_event_title=epg_event_title,
             epg_event_start=epg_event_start,
@@ -461,7 +473,7 @@ class StreamSessionManager:
         self.scoring_windows[session_id] = {}
         
         self._save_sessions()
-        logger.info(f"Created session {session_id} for channel {channel_id}")
+        logger.info(f"Created session {session_id} for channel {channel_id} (eval interval: {evaluation_interval_ms}ms)")
         
         return session_id
     

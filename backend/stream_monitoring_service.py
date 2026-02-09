@@ -86,6 +86,9 @@ class StreamMonitoringService:
         # Track last switch times for cooldown: session_id -> timestamp
         self.last_switch_times: Dict[str, float] = {}
         
+        # Track last evaluation times: session_id -> timestamp
+        self.last_evaluation_times: Dict[str, float] = {}
+        
         # Worker threads
         self._monitor_thread: Optional[threading.Thread] = None
         self._refresh_thread: Optional[threading.Thread] = None
@@ -222,13 +225,25 @@ class StreamMonitoringService:
             try:
                 # Process each active session
                 active_sessions = self.session_manager.get_active_sessions()
+                current_time = time.time()
                 
                 for session in active_sessions:
                     self._check_session_auto_stop(session)
                     self._manage_quarantine_lifecycle(session)
+                    
+                    # Always monitor (collect stats) - this is fast and non-blocking usually
                     self._monitor_session(session.session_id)
+                    
+                    # Check if it's time to Evaluate (reorder streams) - this is the adjustable part
+                    last_eval = self.last_evaluation_times.get(session.session_id, 0)
+                    eval_interval_sec = getattr(session, 'evaluation_interval_ms', 1000) / 1000.0
+                    
+                    if current_time - last_eval >= eval_interval_sec:
+                        self._evaluate_session_streams(session.session_id)
+                        self.last_evaluation_times[session.session_id] = current_time
                 
-                time.sleep(MONITOR_INTERVAL)
+                # Sleep briefly to avoid CPU spin, but fast enough to catch 100ms intervals if needed
+                time.sleep(0.1)
                 
             except Exception as e:
                 logger.error(f"Error in monitor worker: {e}", exc_info=True)
@@ -407,8 +422,6 @@ class StreamMonitoringService:
                     self.monitors[session_id][stream_id] = monitor
                     logger.info(f"Started monitor for stream {stream_id} in session {session_id}")
                     time.sleep(session.stagger_ms / 1000.0)
-        
-        self._evaluate_session_streams(session_id)
     
     def _on_stats_update(self, session_id: str, stream_id: int, stats):
         """Callback for when FFmpeg stats are updated"""
@@ -616,9 +629,12 @@ class StreamMonitoringService:
             # Resolution Score
             res_score = (info.width or 0) * (info.height or 0)
             
-            return (status_priority, score, res_score)
+            # FPS
+            fps = info.fps or 0
+            
+            return (status_priority, score, res_score, fps)
 
-        # Initial sort by Status and Score and Resolution (unique stable sort)
+        # Initial sort by Status and Score and Resolution and FPS (unique stable sort)
         candidates.sort(key=calculate_sort_key, reverse=True)
         
         # -------------------------------------------------------------------------
@@ -642,8 +658,8 @@ class StreamMonitoringService:
                         tier.append(group.pop(i))
                     else:
                         break
-                # Sort tier by resolution
-                tier.sort(key=lambda x: (x.width or 0) * (x.height or 0), reverse=True)
+                # Sort tier by resolution AND FPS
+                tier.sort(key=lambda x: ((x.width or 0) * (x.height or 0), (x.fps or 0)), reverse=True)
                 res_sorted.extend(tier)
             return res_sorted
 
@@ -689,15 +705,28 @@ class StreamMonitoringService:
                         prop_res = (proposed_primary.width or 0) * (proposed_primary.height or 0)
                         curr_res = (curr_prim_info.width or 0) * (curr_prim_info.height or 0)
                         
+                        # Calculate FPS
+                        prop_fps = proposed_primary.fps or 0
+                        curr_fps = curr_prim_info.fps or 0
+                        
                         # If proposed is NOT better by sufficient score margin
                         if score_diff < SCORE_SWITCH_THRESHOLD:
                             # Strict Hysteresis: 
                             # If score improvement is small, only allow switch if resolution is significantly BETTER.
-                            # If resolution is same or worse, revert to current primary.
+                            # If resolution AND FPS is same or worse, revert to current primary.
                             
-                            if prop_res <= curr_res:
-                                # Proposed doesn't win on resolution, and score win is small -> Keep current
+                            if prop_res < curr_res:
+                                # Proposed has WORSE resolution -> Keep current
                                 if curr_prim_info in final_sorted_streams:
+                                    final_sorted_streams.remove(curr_prim_info)
+                                    final_sorted_streams.insert(0, curr_prim_info)
+                            elif prop_res == curr_res:
+                                # Resolution is SAME, check FPS
+                                if prop_fps <= curr_fps:
+                                    # Proposed has SAME/WORSE FPS -> Keep current
+                                    if curr_prim_info in final_sorted_streams:
+                                        final_sorted_streams.remove(curr_prim_info)
+                                        final_sorted_streams.insert(0, curr_prim_info)
                                     final_sorted_streams.remove(curr_prim_info)
                                     final_sorted_streams.insert(0, curr_prim_info)
                     # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
@@ -723,10 +752,17 @@ class StreamMonitoringService:
 
         # Check if order changed
         if new_order_ids != current_stream_ids:
-            logger.info(
-                f"Enforcing new stream order for session {session_id}. "
-                f"Primary: {new_order_ids[0]} (Score: {session.streams[new_order_ids[0]].reliability_score:.1f})"
-            )
+            msg = f"Enforcing new stream order for session {session_id}. "
+            if new_order_ids:
+                primary_id = new_order_ids[0]
+                score_str = "N/A"
+                if primary_id in session.streams:
+                     score_str = f"{session.streams[primary_id].reliability_score:.1f}"
+                msg += f"Primary: {primary_id} (Score: {score_str})"
+            else:
+                msg += "Emptying channel (no stable streams)."
+            
+            logger.info(msg)
             
             from api_utils import update_channel_streams
             if update_channel_streams(session.channel_id, new_order_ids):

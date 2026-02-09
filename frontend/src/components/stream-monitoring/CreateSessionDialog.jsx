@@ -20,6 +20,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
     channel_id: '',
     group_id: '',
     stagger_ms: 1000,
+    evaluation_interval_ms: 1000,
     timeout_ms: 30000,
     autoStart: true
   });
