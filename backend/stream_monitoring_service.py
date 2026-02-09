@@ -597,73 +597,108 @@ class StreamMonitoringService:
         # Primary stream ID from Dispatcharr (source of truth for "current state")
         current_primary_id = primary_stream_id
 
-        def calculate_sort_score(info):
+        # -------------------------------------------------------------------------
+        # 1. Sort Candidates Globally
+        # Hierarchy:
+        # A. Status: Stable (2) > Review (1)
+        # B. Score: Higher is better
+        # C. Resolution: Higher is better (width * height)
+        # -------------------------------------------------------------------------
+        
+        def calculate_sort_key(info):
+            # Status Priority: Stable (2) > Review (1) > Quarantined (0)
+            status_priority = 2 if info.status == 'stable' else 1
+            
+            # Score
             score = info.reliability_score
-            # Hysteresis: Valid only if we are comparing against the current primary 
-            # and trying to displace it.
-            # But here we want a stable sort for the whole list.
-            return score
-
-        # 1. Sort by raw score first
-        candidates.sort(key=lambda x: calculate_sort_score(x), reverse=True)
-        
-        # 2. Refine Sort: Group by "score tiers" and sort by resolution within tiers
-        # We'll rebuild the list
-        sorted_streams = []
-        
-        # We consume candidates as we group them
-        while candidates:
-            current = candidates.pop(0)
-            tier = [current]
             
-            # Look for others in the same score tolerance
-            i = 0
-            while i < len(candidates):
-                diff = current.reliability_score - candidates[i].reliability_score
-                if diff <= RESOLUTION_SCORE_TOLERANCE:
-                    tier.append(candidates.pop(i))
-                else:
-                    break
+            # Resolution Score
+            res_score = (info.width or 0) * (info.height or 0)
             
-            # Sort this tier by resolution (width * height) descending
-            tier.sort(key=lambda x: (x.width or 0) * (x.height or 0), reverse=True)
-            sorted_streams.extend(tier)
+            return (status_priority, score, res_score)
 
+        # Initial sort by Status and Score and Resolution (unique stable sort)
+        candidates.sort(key=calculate_sort_key, reverse=True)
+        
+        # -------------------------------------------------------------------------
+        # 2. Refine Sort with Resolution Tiers (within same Status)
+        # This handles cases where scores are very close but resolution is different.
+        # -------------------------------------------------------------------------
+        final_sorted_streams = []
+        
+        # Helper to process a group of candidates (same status)
+        def process_group(group):
+            if not group: return []
+            res_sorted = []
+            while group:
+                current = group.pop(0)
+                tier = [current]
+                i = 0
+                while i < len(group):
+                    # Check difference between current top of tier and next candidate
+                    diff = current.reliability_score - group[i].reliability_score
+                    if diff <= RESOLUTION_SCORE_TOLERANCE:
+                        tier.append(group.pop(i))
+                    else:
+                        break
+                # Sort tier by resolution
+                tier.sort(key=lambda x: (x.width or 0) * (x.height or 0), reverse=True)
+                res_sorted.extend(tier)
+            return res_sorted
+
+        # Split into status groups to ensure we don't mix them during tier processing
+        stable_streams = [s for s in candidates if s.status == 'stable']
+        review_streams = [s for s in candidates if s.status == 'review']
+        
+        # Process each group independently and concatenate
+        # Stable streams always come first
+        final_sorted_streams.extend(process_group(stable_streams))
+        final_sorted_streams.extend(process_group(review_streams))
+
+        # -------------------------------------------------------------------------
         # 3. Apply Hysteresis for the *Primary* position only
-        # If the top stream in our new sorted_streams is NOT the current primary,
-        # check if it really deserves to dethrone it.
-        
-        proposed_primary = sorted_streams[0]
-        if proposed_primary.stream_id != current_primary_id:
-            # Find current primary in our list
-            curr_prim_info = next((s for s in sorted_streams if s.stream_id == current_primary_id), None)
+        # -------------------------------------------------------------------------
+        if final_sorted_streams:
+            proposed_primary = final_sorted_streams[0]
             
-            if curr_prim_info:
-                # Check if proposed is significantly better
-                score_diff = proposed_primary.reliability_score - curr_prim_info.reliability_score
+            if proposed_primary.stream_id != current_primary_id:
+                # Find current primary stream info (if it exists and is valid)
+                curr_prim_info = next((s for s in session.streams.values() if s.stream_id == current_primary_id), None)
                 
-                # If proposed is better by score threshold, ALLOW switch
-                # OR if proposed has better resolution and similar score (handled by sort?)
-                # Wait, the sort already put proposed on top because it had better res or better score.
-                # So we just need to check if we should REVERT to current_primary if the gap isn't big enough.
-                
-                # Rule: Keep current primary if the new winner isn't winning by enough score
-                # UNLESS the new winner has better resolution?
-                # User said: "Streams of the same stability score but with different resolutions should be ordered by resolution"
-                # This implies strict resolution ordering.
-                
-                # Let's stick to the Hysteresis for Stability Score mostly.
-                if score_diff < SCORE_SWITCH_THRESHOLD:
-                    # Score is similar.
-                    # Does proposed have better resolution?
-                    prop_res = (proposed_primary.width or 0) * (proposed_primary.height or 0)
-                    curr_res = (curr_prim_info.width or 0) * (curr_prim_info.height or 0)
+                # Only consider hysteresis if current primary is still valid (not dead/quarantined)
+                if curr_prim_info and not curr_prim_info.is_quarantined:
                     
-                    if prop_res <= curr_res:
-                        # Proposed is NOT better resolution (and score diff is small), so keep status quo
-                        # Move current primary to top
-                        sorted_streams.remove(curr_prim_info)
-                        sorted_streams.insert(0, curr_prim_info)
+                    # CASE A: Status Upgrade (Review -> Stable)
+                    # If current is Stable and proposed is Review -> FORCE KEEP CURRENT (Status priority)
+                    if curr_prim_info.status == 'stable' and proposed_primary.status == 'review':
+                        if curr_prim_info in final_sorted_streams:
+                           final_sorted_streams.remove(curr_prim_info)
+                           final_sorted_streams.insert(0, curr_prim_info)
+                    
+                    # CASE B: Status Downgrade (Stable -> Review)
+                    # If current is Review and proposed is Stable -> ALLOW SWITCH (Status priority, no hysteresis for upgrade)
+                    elif curr_prim_info.status == 'review' and proposed_primary.status == 'stable':
+                        pass # Allow switch
+                        
+                    # CASE C: Same Status (Stable vs Stable OR Review vs Review)
+                    elif curr_prim_info.status == proposed_primary.status:
+                        score_diff = proposed_primary.reliability_score - curr_prim_info.reliability_score
+                        
+                        # Calculate resolutions
+                        prop_res = (proposed_primary.width or 0) * (proposed_primary.height or 0)
+                        curr_res = (curr_prim_info.width or 0) * (curr_prim_info.height or 0)
+                        
+                        # If proposed is NOT better by sufficient score margin
+                        if score_diff < SCORE_SWITCH_THRESHOLD:
+                            # Strict Hysteresis: 
+                            # If score improvement is small, only allow switch if resolution is significantly BETTER.
+                            # If resolution is same or worse, revert to current primary.
+                            
+                            if prop_res <= curr_res:
+                                # Proposed doesn't win on resolution, and score win is small -> Keep current
+                                if curr_prim_info in final_sorted_streams:
+                                    final_sorted_streams.remove(curr_prim_info)
+                                    final_sorted_streams.insert(0, curr_prim_info)
                     # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
 
         # 4. Enforce this order in Dispatcharr

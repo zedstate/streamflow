@@ -12,12 +12,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { streamCheckerAPI, deadStreamsAPI } from '@/services/api.js'
-import { 
-  Activity, 
-  CheckCircle2, 
-  Clock, 
-  PlayCircle, 
-  StopCircle, 
+import {
+  Activity,
+  CheckCircle2,
+  Clock,
+  PlayCircle,
+  StopCircle,
   Loader2,
   Settings,
   Trash2,
@@ -145,18 +145,18 @@ export default function StreamChecker() {
     setEditedConfig(prevConfig => {
       const newConfig = JSON.parse(JSON.stringify(prevConfig)) // Deep clone
       const keys = path.split('.')
-      
+
       // Validate keys to prevent prototype pollution
-      const safeKeys = keys.filter(key => 
-        key !== '__proto__' && 
-        key !== 'constructor' && 
+      const safeKeys = keys.filter(key =>
+        key !== '__proto__' &&
+        key !== 'constructor' &&
         key !== 'prototype'
       )
-      
+
       if (safeKeys.length === 0) {
         return prevConfig // Return unchanged if all keys were filtered
       }
-      
+
       let current = newConfig
       for (let i = 0; i < safeKeys.length - 1; i++) {
         const key = safeKeys[i]
@@ -176,7 +176,7 @@ export default function StreamChecker() {
       const response = await deadStreamsAPI.getDeadStreams(page, deadStreamsPagination.per_page)
       const deadStreamsData = response.data.dead_streams || []
       const paginationData = response.data.pagination || {}
-      
+
       // Validate that backend returned the page we requested
       if (paginationData.page && paginationData.page !== page) {
         // Page mismatch - backend returned different page than requested
@@ -187,7 +187,7 @@ export default function StreamChecker() {
           variant: "default"
         })
       }
-      
+
       setDeadStreams(deadStreamsData)
       setTotalDeadStreams(response.data.total_dead_streams || 0)
       setDeadStreamsPagination({
@@ -526,7 +526,7 @@ export default function StreamChecker() {
                       <Input
                         id="retries"
                         type="number"
-                        value={editedConfig?.stream_analysis?.retries || 1}
+                        value={editedConfig?.stream_analysis?.retries ?? 1}
                         onChange={(e) => updateConfigValue('stream_analysis.retries', parseInt(e.target.value))}
                         disabled={!configEditing}
                         min={0}
@@ -626,7 +626,7 @@ export default function StreamChecker() {
                   <p className="text-sm text-muted-foreground">
                     Adjust how different quality metrics are weighted when scoring streams
                   </p>
-                  
+
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="weight_bitrate">Bitrate Weight</Label>
@@ -808,7 +808,7 @@ export default function StreamChecker() {
 
                     {/* Dead Streams List */}
                     <Separator className="my-6" />
-                    
+
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
@@ -901,7 +901,7 @@ export default function StreamChecker() {
                               </Card>
                             ))}
                           </div>
-                          
+
                           {/* Pagination */}
                           {deadStreamsPagination.total_pages > 1 && (
                             <div className="flex flex-col items-center gap-2 pt-4">
@@ -911,19 +911,19 @@ export default function StreamChecker() {
                               <Pagination>
                                 <PaginationContent>
                                   <PaginationItem>
-                                    <PaginationPrevious 
+                                    <PaginationPrevious
                                       onClick={() => deadStreamsPagination.has_prev && loadDeadStreams(deadStreamsPagination.page - 1)}
                                       className={!deadStreamsPagination.has_prev ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                                     />
                                   </PaginationItem>
-                                  
+
                                   {/* Show page numbers with smart windowing */}
                                   {(() => {
                                     const currentPage = deadStreamsPagination.page
                                     const totalPages = deadStreamsPagination.total_pages
                                     const maxVisiblePages = PAGINATION_MAX_VISIBLE_PAGES
                                     let startPage, endPage
-                                    
+
                                     if (totalPages <= maxVisiblePages) {
                                       // Show all pages if total is less than max
                                       startPage = 1
@@ -931,7 +931,7 @@ export default function StreamChecker() {
                                     } else {
                                       // Calculate range to show current page in the middle when possible
                                       const halfVisible = Math.floor(maxVisiblePages / 2)
-                                      
+
                                       if (currentPage <= halfVisible + 1) {
                                         // Near the start
                                         startPage = 1
@@ -946,7 +946,7 @@ export default function StreamChecker() {
                                         endPage = currentPage + halfVisible
                                       }
                                     }
-                                    
+
                                     return Array.from({ length: endPage - startPage + 1 }, (_, i) => {
                                       const pageNum = startPage + i
                                       return (
@@ -962,9 +962,9 @@ export default function StreamChecker() {
                                       )
                                     })
                                   })()}
-                                  
+
                                   <PaginationItem>
-                                    <PaginationNext 
+                                    <PaginationNext
                                       onClick={() => deadStreamsPagination.has_next && loadDeadStreams(deadStreamsPagination.page + 1)}
                                       className={!deadStreamsPagination.has_next ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                                     />

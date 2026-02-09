@@ -1765,6 +1765,53 @@ class StreamCheckerService:
         # At least one stream has an available slot, check can proceed
         return None
     
+    def _get_resolution_product(self, stream_data: Dict) -> int:
+        """Get resolution product (width * height) from stream data."""
+        res = stream_data.get('resolution', '')
+        if 'x' in str(res):
+            try:
+                width, height = map(int, str(res).split('x'))
+                return width * height
+            except: pass
+        return 0
+
+    def _refine_sorted_streams(self, streams: List[Dict]) -> List[Dict]:
+        """Refine sorted streams to prioritize resolution when scores are close.
+        
+        This prevents lower resolution streams with high priority from displacing
+        higher resolution streams, unless the quality difference is significant.
+        """
+        if not streams:
+            return []
+            
+        # Tolerance for treating scores as "equal enough" to look at resolution
+        # 0.15 allows a stream to be boosted by priority (up to ~7 levels) without jumping a resolution tier
+        # unless the base quality difference is also large.
+        SCORE_TOLERANCE = 0.15 
+        
+        refined = []
+        remaining = streams.copy()
+        
+        while remaining:
+            current = remaining.pop(0)
+            tier = [current]
+            
+            i = 0
+            while i < len(remaining):
+                # Since list is sorted descending, diff is positive
+                diff = current.get('score', 0) - remaining[i].get('score', 0)
+                if diff <= SCORE_TOLERANCE:
+                    tier.append(remaining.pop(i))
+                else:
+                    break
+            
+            # Sort tier by resolution product (descending)
+            # This ensures higher resolution streams float to the top within the tolerance group
+            tier.sort(key=self._get_resolution_product, reverse=True)
+            refined.extend(tier)
+            
+        return refined
+    
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
         
@@ -2092,6 +2139,10 @@ class StreamCheckerService:
                 step_detail='Sorting streams by quality score'
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            # Refine sort order to respect resolution for close scores
+            # This handles priority boosts correctly without jumping resolution tiers
+            analyzed_streams = self._refine_sorted_streams(analyzed_streams)
             
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
@@ -2570,6 +2621,10 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
+            # Refine sort order to respect resolution for close scores
+            # This handles priority boosts correctly without jumping resolution tiers
+            analyzed_streams = self._refine_sorted_streams(analyzed_streams)
+            
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
@@ -2892,7 +2947,7 @@ class StreamCheckerService:
             elif priority_mode == 'same_resolution':
                 # Apply a smaller boost that won't override resolution differences
                 # but will prioritize within same resolution
-                boost = priority * 0.2
+                boost = priority * 0.02
                 logger.debug(f"Applying same_resolution priority boost of {boost} to stream {stream_id} (priority: {priority})")
                 return boost
             
