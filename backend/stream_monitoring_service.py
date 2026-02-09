@@ -686,50 +686,59 @@ class StreamMonitoringService:
                 # Only consider hysteresis if current primary is still valid (not dead/quarantined)
                 if curr_prim_info and not curr_prim_info.is_quarantined:
                     
-                    # CASE A: Status Upgrade (Review -> Stable)
-                    # If current is Stable and proposed is Review -> FORCE KEEP CURRENT (Status priority)
-                    if curr_prim_info.status == 'stable' and proposed_primary.status == 'review':
-                        if curr_prim_info in final_sorted_streams:
-                           final_sorted_streams.remove(curr_prim_info)
-                           final_sorted_streams.insert(0, curr_prim_info)
+                    # Determine if we should protect the current primary stream
+                    should_protect = False
                     
-                    # CASE B: Status Downgrade (Stable -> Review)
-                    # If current is Review and proposed is Stable -> ALLOW SWITCH (Status priority, no hysteresis for upgrade)
-                    elif curr_prim_info.status == 'review' and proposed_primary.status == 'stable':
-                        pass # Allow switch
+                    # 1. Review streams are NEVER protected (Testing Phase)
+                    # 2. Stable streams are protected ONLY if they are currently playing
+                    if curr_prim_info.status == 'stable':
+                        try:
+                            # Note: udi variable is defined earlier in this function
+                            playing_ids = udi.get_playing_stream_ids()
+                            if curr_prim_info.stream_id in playing_ids:
+                                should_protect = True
+                        except Exception as e:
+                            logger.error(f"Failed to check playing status for protection logic: {e}")
+                            # Fail-safe: Protect if we can't check
+                            should_protect = True
+                    
+                    if should_protect:
+                        # Protected -> Apply Hysteresis
+                        # Only switch if Proposed is SIGNIFICANTLY better
                         
-                    # CASE C: Same Status (Stable vs Stable OR Review vs Review)
-                    elif curr_prim_info.status == proposed_primary.status:
                         score_diff = proposed_primary.reliability_score - curr_prim_info.reliability_score
                         
-                        # Calculate resolutions
+                        # Resolution
                         prop_res = (proposed_primary.width or 0) * (proposed_primary.height or 0)
                         curr_res = (curr_prim_info.width or 0) * (curr_prim_info.height or 0)
                         
-                        # Calculate FPS
+                        # FPS
                         prop_fps = proposed_primary.fps or 0
                         curr_fps = curr_prim_info.fps or 0
                         
-                        # If proposed is NOT better by sufficient score margin
+                        # Revert swap if improvement is not significant enough
+                        revert_swap = False
+                        
                         if score_diff < SCORE_SWITCH_THRESHOLD:
-                            # Strict Hysteresis: 
+                            # Strict Hysteresis:
                             # If score improvement is small, only allow switch if resolution is significantly BETTER.
-                            # If resolution AND FPS is same or worse, revert to current primary.
-                            
                             if prop_res < curr_res:
                                 # Proposed has WORSE resolution -> Keep current
-                                if curr_prim_info in final_sorted_streams:
-                                    final_sorted_streams.remove(curr_prim_info)
-                                    final_sorted_streams.insert(0, curr_prim_info)
+                                revert_swap = True
                             elif prop_res == curr_res:
                                 # Resolution is SAME, check FPS
                                 if prop_fps <= curr_fps:
                                     # Proposed has SAME/WORSE FPS -> Keep current
-                                    if curr_prim_info in final_sorted_streams:
-                                        final_sorted_streams.remove(curr_prim_info)
-                                        final_sorted_streams.insert(0, curr_prim_info)
-                                    final_sorted_streams.remove(curr_prim_info)
-                                    final_sorted_streams.insert(0, curr_prim_info)
+                                    revert_swap = True
+                        
+                        if revert_swap:
+                             if curr_prim_info in final_sorted_streams:
+                                 final_sorted_streams.remove(curr_prim_info)
+                                 final_sorted_streams.insert(0, curr_prim_info)
+                    
+                    # If NOT protected (should_protect == False):
+                    # We simply allow proposed_primary (which is better sorted) to take over.
+                    # No hysteresis applied.
                     # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
 
         # 4. Enforce this order in Dispatcharr
