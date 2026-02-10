@@ -27,6 +27,8 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 
 - **5 Pipeline Modes**: Choose the automation level that fits your needs (from continuous checking to scheduled-only)
 - **Advanced Stream Monitoring**: Event-based quality tracking with reliability scoring and screenshot capture
+- **Browsable Timeline**: Interactive video-editor style timeline to scrub through stream history with synchronized metrics
+- **Smart Stream Protection**: Intelligent hysteresis to protect active streams while aggressively replacing idle ones
 - **Parallel Stream Checking**: Thread-based parallel stream analysis with configurable worker pool
 - **Per-Account Stream Limits**: Intelligent concurrent stream limiting respects M3U provider limits while maximizing parallelism
 - **Channel Profile Management**: Select specific Dispatcharr profiles, manage dead streams, and use snapshots for automatic re-enabling

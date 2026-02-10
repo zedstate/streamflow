@@ -58,15 +58,25 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
 - Updates every 2 seconds to show current playback state
 - Helps identify which streams are actively in use
 
-### 7. Metrics Persistence & Visualization
-- Historical metrics stored for each stream
-- Session data persisted to JSON files
-- **Speed Stat Graphs**: FFmpeg speed metrics visualized in line charts under each stream
-- **Improved Timeline**: Graph timestamps show HH:MM:SS format for better precision
-- Real-time graph updates showing stream performance trends
-- Stats refresh automatically without page reload
-- Viewable in real-time dashboard
-- Exportable for analysis
+### 7. Browsable Timeline & History
+- **Interactive Timeline**: Video-editor style timeline to browse session history
+- **Time Travel**: Scrub through past moments to see stream state exactly as it was
+- **Event Markers**: Visual indicators for critical events:
+  - **Yellow**: Stream Quarantined
+  - **Green**: Primary Stream Changed
+  - **Blue**: Stream Promoted to Stable
+- **Zoom Controls**: Vertical zoom slider with 30s to 1h range
+- **Live/History Modes**: Seamlessly switch between real-time monitoring and historical analysis
+- **Synchronized Charts**: Speed metrics graphs synced to the exact timeline cursor position
+- **Frozen Timeline**: Inactive sessions have a static, browsable timeline
+
+### 8. Smart Stream Protection
+- **Conditional Hysteresis**: Intelligent logic to order streams
+  - **Review/Testing**: Never protected (always best candidate wins)
+  - **Idle Stable**: Weak protection (easy to replace if better stream found)
+  - **Active Stable**: Strong protection (hard to replace while user is watching)
+- **Dispatcharr Integration**: Real-time checking of what users are actually watching
+- **Automatic Fallback**: Smart handling of empty channels and dead streams
 
 ## Architecture
 
@@ -128,6 +138,10 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
     - Quality metrics (resolution, FPS, bitrate)
     - **FFmpeg Speed Graphs**: Real-time speed metrics visualization under each stream
     - Screenshot viewing
+  - **Timeline Control**:
+    - Scrubbable timeline with zoom (30s - 1h)
+    - Event markers for quarantine/promotion/reordering
+    - "Return to Live" functionality
   - Active/quarantined stream separation
 
 #### 3. CreateSessionDialog Component
@@ -448,14 +462,14 @@ Alternatively, create sessions from scheduled events:
 
 ### Session Parameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `pre_event_minutes` | 30 | Minutes before event to start monitoring |
-| `stagger_ms` | 200 | Milliseconds between starting stream monitors |
-| `timeout_ms` | 30000 | Stream timeout before quarantine (ms) |
-| `probe_interval_ms` | 300000 | Interval for stream list refresh (ms) |
-| `screenshot_interval_seconds` | 60 | Seconds between screenshot captures |
-| `window_size` | 100 | Size of sliding window for scoring |
+| Parameter                     | Default | Description                                   |
+| ----------------------------- | ------- | --------------------------------------------- |
+| `pre_event_minutes`           | 30      | Minutes before event to start monitoring      |
+| `stagger_ms`                  | 200     | Milliseconds between starting stream monitors |
+| `timeout_ms`                  | 30000   | Stream timeout before quarantine (ms)         |
+| `probe_interval_ms`           | 300000  | Interval for stream list refresh (ms)         |
+| `screenshot_interval_seconds` | 60      | Seconds between screenshot captures           |
+| `window_size`                 | 100     | Size of sliding window for scoring            |
 
 ### Capped Sliding Window Algorithm
 
