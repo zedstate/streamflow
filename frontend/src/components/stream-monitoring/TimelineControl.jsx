@@ -134,9 +134,6 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                     </div>
 
                     <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onTimeChange(Math.max(minTime, currentTime - 10))}>
-                            <ChevronLeft className="h-4 w-4" />
-                        </Button>
                         <Button
                             variant="secondary"
                             size="icon"
@@ -144,9 +141,6 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                             onClick={() => setIsPlaying(!isPlaying)}
                         >
                             {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onTimeChange(Math.min(maxTime, currentTime + 10))}>
-                            <ChevronRight className="h-4 w-4" />
                         </Button>
                     </div>
 

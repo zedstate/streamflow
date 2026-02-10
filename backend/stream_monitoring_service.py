@@ -753,6 +753,15 @@ class StreamMonitoringService:
                     # No hysteresis applied.
                     # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
 
+        # -------------------------------------------------------------------------
+        # 3.5 Update StreamMetrics with Rank
+        # -------------------------------------------------------------------------
+        for rank, stream_info in enumerate(final_sorted_streams, start=1):
+            if stream_info.metrics_history:
+                # Update the most recent metric
+                stream_info.metrics_history[-1].rank = rank
+
+
         # 4. Enforce this order in Dispatcharr
         # Prefer STABLE streams, but fallback to REVIEW streams if no stable streams exist
         # This prevents the channel from appearing empty during testing/initial phase

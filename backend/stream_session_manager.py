@@ -61,6 +61,8 @@ class StreamMetrics:
     buffering: bool = False
     reliability_score: float = 50.0
     status: str = 'review'
+    rank: Optional[int] = None
+
     
 
 @dataclass
