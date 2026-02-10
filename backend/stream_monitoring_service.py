@@ -432,6 +432,12 @@ class StreamMonitoringService:
                     self.monitors[session_id][stream_id] = monitor
                     logger.info(f"Started monitor for stream {stream_id} in session {session_id}")
                     time.sleep(session.stagger_ms / 1000.0)
+                else:
+                    logger.error(f"Failed to start monitor for stream {stream_id} in session {session_id}")
+                    # Monitor failed to start (e.g. invalid URL), quarantine immediately
+                    self.session_manager.quarantine_stream(session_id, stream_id)
+                    self._remove_stream_from_dispatcharr(session_id, stream_id, "monitor-start-failed")
+
     
     def _on_stats_update(self, session_id: str, stream_id: int, stats):
         """Callback for when FFmpeg stats are updated"""

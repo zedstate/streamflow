@@ -855,31 +855,24 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
     }
   };
 
+  // Determine the reference time (end of the visible window)
+  const referenceTime = useMemo(() => {
+    if (isLive) {
+      const lastMetric = allMetrics[allMetrics.length - 1];
+      return lastMetric ? lastMetric.timestamp : Math.floor(Date.now() / 1000);
+    } else {
+      // In history mode, use cursor time or fallback to latest metric
+      if (cursorTime) return cursorTime;
+      const lastMetric = allMetrics[allMetrics.length - 1];
+      return lastMetric ? lastMetric.timestamp : Math.floor(Date.now() / 1000);
+    }
+  }, [allMetrics, cursorTime, isLive]);
+
+  const endTimestamp = Math.ceil(referenceTime);
+  const startTime = referenceTime - zoomLevel;
+
   const chartData = useMemo(() => {
     if (!allMetrics.length) return [];
-
-    // Determine the reference time (end of the visible window)
-    let referenceTime;
-
-    if (isLive) {
-      // In live mode, use the timestamp of the latest available metric
-      // This ensures we always see the most recent data
-      const lastMetric = allMetrics[allMetrics.length - 1];
-      referenceTime = lastMetric ? lastMetric.timestamp : Math.floor(Date.now() / 1000);
-    } else {
-      // In history mode, use the cursor time
-      // If cursorTime is null (shouldn't happen if !isLive properly handled), fallback to latest metric
-      referenceTime = cursorTime;
-      if (!referenceTime) {
-        const lastMetric = allMetrics[allMetrics.length - 1];
-        referenceTime = lastMetric ? lastMetric.timestamp : Math.floor(Date.now() / 1000);
-      }
-    }
-
-    // Use ceil to include fractional timestamps that might be slightly ahead of the integer cursor
-    // e.g. cursor at 100, metric at 100.5. We Want to see it.
-    const endTimestamp = Math.ceil(referenceTime);
-    const startTime = referenceTime - zoomLevel;
 
     return allMetrics.filter(m =>
       m.timestamp >= startTime && m.timestamp <= endTimestamp
@@ -896,7 +889,12 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
         timestamp: metric.timestamp, // Keep original for reference
       };
     });
-  }, [allMetrics, cursorTime, isLive, zoomLevel]);
+  }, [allMetrics, startTime, endTimestamp]);
+
+  const formatTime = (ts) => {
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
 
   if (loading) {
     return (
@@ -918,8 +916,11 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
   // If we have metrics but none in the current view (Gap in data)
   if (chartData.length === 0) {
     return (
-      <div className="h-24 flex items-center justify-center text-muted-foreground text-sm">
-        No data in this time range
+      <div className="h-24 flex flex-col items-center justify-center text-muted-foreground text-sm">
+        <span>No data in this time range</span>
+        <span className="text-xs opacity-70">
+          ({formatTime(startTime)} - {formatTime(endTimestamp)})
+        </span>
       </div>
     );
   }
