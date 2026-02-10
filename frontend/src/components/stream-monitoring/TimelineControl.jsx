@@ -1,23 +1,4 @@
 
-import React, { useRef, useEffect, useState } from 'react';
-import { Slider } from "@/components/ui/slider";
-import { Button } from "@/components/ui/button";
-import { Play, Pause, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
-import { Card } from "@/components/ui/card";
-
-/**
- * TimelineControl component
- * 
- * Provides a playback interface for session history.
- * 
- * Props:
- * - minTime: start timestamp (seconds)
- * - maxTime: end timestamp (seconds)
- * - currentTime: current playback position (seconds)
- * - onTimeChange: callback when time changes (seconds)
- * - isLive: boolean, true if currently at the latest edge
- * - onLiveClick: callback to jump to live
- */
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Play, Pause, ChevronLeft, ChevronRight, SkipForward } from "lucide-react";
