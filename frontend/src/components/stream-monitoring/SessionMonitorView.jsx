@@ -62,6 +62,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         fps: closest.fps,
         reliability_score: closest.reliability_score !== undefined ? closest.reliability_score : stream.reliability_score,
         status: closest.status || stream.status, // Fallback if status wasn't recorded in old history
+        is_quarantined: (closest.status || stream.status) === 'quarantined',
         is_alive: closest.is_alive,
         rank: closest.rank
       };
@@ -125,9 +126,28 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       // The component uses React.memo and other optimizations to prevent unnecessary re-renders
       setSession(response.data);
 
-      // Update cursor if live, utilizing the ref to avoid stale closures in interval
-      if (isLiveRef.current) {
-        setCursorTime(Math.floor(Date.now() / 1000));
+      // Handle inactive sessions
+      if (!response.data.is_active) {
+        setIsLive(false);
+        // Find latest timestamp to set as cursor
+        let maxTime = response.data.created_at || 0;
+        if (response.data.streams) {
+          response.data.streams.forEach(s => {
+            if (s.metrics_history && s.metrics_history.length > 0) {
+              const last = s.metrics_history[s.metrics_history.length - 1];
+              if (last.timestamp > maxTime) maxTime = last.timestamp;
+            }
+          });
+        }
+        // Only update cursor if we haven't set it yet or if we were live
+        if (isLiveRef.current || cursorTime === null) {
+          setCursorTime(maxTime);
+        }
+      } else {
+        // Update cursor if live, utilizing the ref to avoid stale closures in interval
+        if (isLiveRef.current) {
+          setCursorTime(Math.floor(Date.now() / 1000));
+        }
       }
 
       setLoading(false);
@@ -345,6 +365,24 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       });
     }
     return min;
+  }, [session]);
+
+  const maxTime = useMemo(() => {
+    if (!session) return Math.floor(Date.now() / 1000);
+    // If active, use current time
+    if (session.is_active) return Math.floor(Date.now() / 1000);
+
+    // If inactive, find max timestamp in metrics
+    let max = session.created_at || 0;
+    if (session.streams) {
+      session.streams.forEach(s => {
+        if (s.metrics_history && s.metrics_history.length > 0) {
+          const last = s.metrics_history[s.metrics_history.length - 1];
+          if (last.timestamp > max) max = last.timestamp;
+        }
+      });
+    }
+    return max;
   }, [session]);
 
 
@@ -622,8 +660,8 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         session && (
           <TimelineControl
             minTime={minTime}
-            maxTime={Math.floor(Date.now() / 1000)}
-            currentTime={cursorTime || Math.floor(Date.now() / 1000)}
+            maxTime={maxTime}
+            currentTime={cursorTime || maxTime}
             onTimeChange={handleTimeChange}
             isLive={isLive}
             onLiveClick={handleLiveClick}
