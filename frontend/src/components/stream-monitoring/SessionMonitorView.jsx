@@ -866,7 +866,8 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
     return filteredData.filter(m => {
       // Only show metrics within the zoom window relative to cursor
       // If live, cursorTime is effectively "now" (latest timestamp)
-      const effectiveCursor = isLive ? (filteredData[filteredData.length - 1]?.timestamp || Math.floor(Date.now() / 1000)) : cursorTime;
+      const lastTimestamp = filteredData[filteredData.length - 1]?.timestamp || Math.floor(Date.now() / 1000);
+      const effectiveCursor = isLive ? lastTimestamp : (cursorTime || lastTimestamp);
       const start = effectiveCursor - zoomLevel;
       return m.timestamp >= start && m.timestamp <= effectiveCursor;
     }).map((metric) => {

@@ -111,9 +111,24 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
     }, [minTime, duration]);
 
     // Zoom levels mapping (index -> seconds)
-    const zoomLevels = [30, 60, 300, 600, 1800, 3600]; // 30s, 1m, 5m, 10m, 30m, 1h
+    // Ordered from Zoom Out (1h) to Zoom In (30s) so slider UP = Zoom In (smaller time window)
+    const zoomLevels = [3600, 1800, 600, 300, 60, 30];
+
     // Find closest index for current zoomLevel
-    const currentZoomIndex = zoomLevels.findIndex(z => z >= zoomLevel);
+    const currentZoomIndex = useMemo(() => {
+        let closestIndex = 0;
+        let minDiff = Infinity;
+        zoomLevels.forEach((level, index) => {
+            const diff = Math.abs(level - zoomLevel);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = index;
+            }
+        });
+        return closestIndex;
+    }, [zoomLevel]);
+
+    const displayValue = zoomLevels[currentZoomIndex];
 
     const handleZoomChange = (val) => {
         const index = val[0];
@@ -228,21 +243,22 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                 </div>
 
                 {/* Vertical Zoom Slider */}
+                {/* Vertical Zoom Slider */}
                 <div className="w-12 border-l bg-muted/10 flex flex-col items-center justify-center py-2 gap-2">
-                    <span className="text-[9px] text-muted-foreground font-bold rotate-180 writing-mode-vertical-rl">ZOOM</span>
+                    <span className="text-[9px] text-muted-foreground font-bold -rotate-90 whitespace-nowrap select-none">ZOOM</span>
                     <div className="h-20 py-2">
                         <Slider
                             orientation="vertical"
                             min={0}
                             max={zoomLevels.length - 1}
                             step={1}
-                            value={[currentZoomIndex !== -1 ? currentZoomIndex : 2]}
+                            value={[currentZoomIndex]}
                             onValueChange={handleZoomChange}
                             className="h-full"
                         />
                     </div>
                     <span className="text-[9px] font-mono text-muted-foreground w-full text-center truncate px-0.5">
-                        {zoomLevels[currentZoomIndex || 2] < 60 ? `${zoomLevels[currentZoomIndex || 2]}s` : `${zoomLevels[currentZoomIndex || 2] / 60}m`}
+                        {displayValue < 60 ? `${displayValue}s` : `${Math.round(displayValue / 60)}m`}
                     </span>
                 </div>
             </div>
