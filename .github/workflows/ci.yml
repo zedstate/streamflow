@@ -8,11 +8,15 @@ on:
     types: [closed]
     branches-ignore:
       - main
+  push:
+    branches:
+      - dev
 
 jobs:
   build:
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       github.event_name == 'release' ||
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref != 'main')
     runs-on: ${{ matrix.runner }}
@@ -155,6 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       github.event_name == 'release' ||
       (github.event_name == 'pull_request' && github.base_ref != 'main' && github.event.pull_request.merged == true)
     needs:

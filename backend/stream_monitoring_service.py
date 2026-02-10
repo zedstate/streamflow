@@ -507,11 +507,16 @@ class StreamMonitoringService:
                 stream_info.reliability_score = current_score
 
             # Create metrics entry
+            # Use stream_info.bitrate/fps which are "sticky" (hold last known good value)
+            # This prevents 0/N/A in history if a single probe fails to get metadata but stream is alive
+            metrics_bitrate = stream_info.bitrate if (stream_info.bitrate and stream_info.bitrate > 0) else stats.bitrate
+            metrics_fps = stream_info.fps if (stream_info.fps and stream_info.fps > 0) else stats.fps
+            
             metrics = StreamMetrics(
                 timestamp=current_time,
                 speed=stats.speed,
-                bitrate=stats.bitrate,
-                fps=stats.fps,
+                bitrate=metrics_bitrate,
+                fps=metrics_fps,
                 is_alive=stats.is_alive,
                 buffering=monitor.is_buffering(),
                 reliability_score=current_score,
