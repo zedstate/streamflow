@@ -592,7 +592,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   onQuarantine={handleQuarantineStream}
                   playingStreamIds={playingStreamIds}
                   cursorTime={cursorTime}
+
                   isLive={isLive}
+                  zoomLevel={zoomLevel}
                 />
               )}
             </CardContent>
@@ -621,6 +623,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   playingStreamIds={playingStreamIds}
                   cursorTime={cursorTime}
                   isLive={isLive}
+                  zoomLevel={zoomLevel}
                   isReview
                 />
               )}
