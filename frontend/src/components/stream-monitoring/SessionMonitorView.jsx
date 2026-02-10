@@ -876,10 +876,13 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
       }
     }
 
+    // Use ceil to include fractional timestamps that might be slightly ahead of the integer cursor
+    // e.g. cursor at 100, metric at 100.5. We Want to see it.
+    const endTimestamp = Math.ceil(referenceTime);
     const startTime = referenceTime - zoomLevel;
 
     return allMetrics.filter(m =>
-      m.timestamp >= startTime && m.timestamp <= referenceTime
+      m.timestamp >= startTime && m.timestamp <= endTimestamp
     ).map((metric) => {
       // Timestamp is in Unix seconds, convert to milliseconds for JavaScript Date
       const date = new Date(metric.timestamp * 1000);
@@ -903,10 +906,20 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
     );
   }
 
+  // If we have no metrics AT ALL for this stream (never recorded)
+  if (allMetrics.length === 0) {
+    return (
+      <div className="h-24 flex items-center justify-center text-muted-foreground text-sm">
+        No metrics recorded
+      </div>
+    );
+  }
+
+  // If we have metrics but none in the current view (Gap in data)
   if (chartData.length === 0) {
     return (
       <div className="h-24 flex items-center justify-center text-muted-foreground text-sm">
-        No metrics data available
+        No data in this time range
       </div>
     );
   }
