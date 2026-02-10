@@ -858,19 +858,29 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
   const chartData = useMemo(() => {
     if (!allMetrics.length) return [];
 
-    let filteredData = allMetrics;
-    if (!isLive && cursorTime) {
-      filteredData = allMetrics.filter(m => m.timestamp <= cursorTime);
+    // Determine the reference time (end of the visible window)
+    let referenceTime;
+
+    if (isLive) {
+      // In live mode, use the timestamp of the latest available metric
+      // This ensures we always see the most recent data
+      const lastMetric = allMetrics[allMetrics.length - 1];
+      referenceTime = lastMetric ? lastMetric.timestamp : Math.floor(Date.now() / 1000);
+    } else {
+      // In history mode, use the cursor time
+      // If cursorTime is null (shouldn't happen if !isLive properly handled), fallback to latest metric
+      referenceTime = cursorTime;
+      if (!referenceTime) {
+        const lastMetric = allMetrics[allMetrics.length - 1];
+        referenceTime = lastMetric ? lastMetric.timestamp : Math.floor(Date.now() / 1000);
+      }
     }
 
-    return filteredData.filter(m => {
-      // Only show metrics within the zoom window relative to cursor
-      // If live, cursorTime is effectively "now" (latest timestamp)
-      const lastTimestamp = filteredData[filteredData.length - 1]?.timestamp || Math.floor(Date.now() / 1000);
-      const effectiveCursor = isLive ? lastTimestamp : (cursorTime || lastTimestamp);
-      const start = effectiveCursor - zoomLevel;
-      return m.timestamp >= start && m.timestamp <= effectiveCursor;
-    }).map((metric) => {
+    const startTime = referenceTime - zoomLevel;
+
+    return allMetrics.filter(m =>
+      m.timestamp >= startTime && m.timestamp <= referenceTime
+    ).map((metric) => {
       // Timestamp is in Unix seconds, convert to milliseconds for JavaScript Date
       const date = new Date(metric.timestamp * 1000);
       // Format as HH:MM:SS for better granularity

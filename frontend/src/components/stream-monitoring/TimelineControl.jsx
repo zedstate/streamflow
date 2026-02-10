@@ -243,9 +243,8 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                 </div>
 
                 {/* Vertical Zoom Slider */}
-                {/* Vertical Zoom Slider */}
                 <div className="w-12 border-l bg-muted/10 flex flex-col items-center justify-center py-2 gap-2">
-                    <span className="text-[9px] text-muted-foreground font-bold -rotate-90 whitespace-nowrap select-none">ZOOM</span>
+                    <span className="text-[9px] text-muted-foreground font-bold whitespace-nowrap select-none">ZOOM</span>
                     <div className="h-20 py-2">
                         <Slider
                             orientation="vertical"
