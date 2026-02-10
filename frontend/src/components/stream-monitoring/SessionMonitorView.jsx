@@ -69,7 +69,158 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     return stream;
   };
 
-  // ... (useRef and useEffects omitted for brevity, logic remains same)
+  // Use a ref to track isLive state for the interval callback
+  const isLiveRef = useRef(isLive);
+
+  // Update ref when state changes
+  useEffect(() => {
+    isLiveRef.current = isLive;
+  }, [isLive]);
+
+  // Cache channel logo from localStorage
+  useEffect(() => {
+    if (session && session.channel_id) {
+      const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${session.channel_id}`);
+      if (cachedLogo) {
+        setLogoUrl(cachedLogo);
+      }
+
+      // If session has a logo URL, use it and cache it
+      if (session.channel_logo_url) {
+        setLogoUrl(session.channel_logo_url);
+        localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${session.channel_id}`, session.channel_logo_url);
+      }
+    }
+  }, [session?.channel_id, session?.channel_logo_url]);
+
+  useEffect(() => {
+    loadSession();
+    loadAliveScreenshots();
+    loadPlayingStreams();
+
+    // Poll for updates every 2 seconds
+    const interval = setInterval(() => {
+      loadSession();
+      loadAliveScreenshots();
+      loadPlayingStreams();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
+  const loadPlayingStreams = async () => {
+    try {
+      const response = await streamSessionsAPI.getPlayingStreams();
+      setPlayingStreamIds(new Set(response.data.playing_stream_ids));
+    } catch (err) {
+      console.error('Failed to load playing streams:', err);
+    }
+  };
+
+  const loadSession = async () => {
+    try {
+      const response = await streamSessionsAPI.getSession(sessionId);
+      // Always update to ensure stream stats are refreshed
+      // The component uses React.memo and other optimizations to prevent unnecessary re-renders
+      setSession(response.data);
+
+      // Update cursor if live, utilizing the ref to avoid stale closures in interval
+      if (isLiveRef.current) {
+        setCursorTime(Math.floor(Date.now() / 1000));
+      }
+
+      setLoading(false);
+    } catch (err) {
+      console.error('Failed to load session:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to load session details',
+        variant: 'destructive'
+      });
+      setLoading(false);
+    }
+  };
+
+  const handleTimeChange = (newTime) => {
+    setCursorTime(newTime);
+    setIsLive(false);
+  };
+
+  const handleLiveClick = () => {
+    setIsLive(true);
+    if (session) {
+      setCursorTime(Math.floor(Date.now() / 1000));
+    }
+  };
+
+  const loadAliveScreenshots = async () => {
+    try {
+      const response = await streamSessionsAPI.getAliveScreenshots(sessionId);
+      // Only update if screenshots array changed
+      setAliveScreenshots(prevScreenshots => {
+        const newScreenshots = response.data.screenshots || [];
+
+        // Quick length check first
+        if (prevScreenshots.length !== newScreenshots.length) {
+          return newScreenshots;
+        }
+
+        // Check if screenshot URLs or stream IDs changed
+        const hasChanged = newScreenshots.some((newShot, idx) => {
+          const prevShot = prevScreenshots[idx];
+          return !prevShot ||
+            prevShot.stream_id !== newShot.stream_id ||
+            prevShot.screenshot_url !== newShot.screenshot_url;
+        });
+
+        return hasChanged ? newScreenshots : prevScreenshots;
+      });
+    } catch (err) {
+      console.error('Failed to load screenshots:', err);
+    }
+  };
+
+  const handleViewScreenshot = (stream) => {
+    setSelectedStream(stream);
+    setScreenshotDialogOpen(true);
+  };
+
+  const handleQuarantineStream = async (streamId) => {
+    try {
+      await streamSessionsAPI.quarantineStream(sessionId, streamId);
+      toast({
+        title: 'Success',
+        description: 'Stream quarantined successfully'
+      });
+      // Reload session to reflect changes
+      loadSession();
+    } catch (err) {
+      console.error('Failed to quarantine stream:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to quarantine stream',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const handleReviveStream = async (streamId) => {
+    try {
+      await streamSessionsAPI.reviveStream(sessionId, streamId);
+      toast({
+        title: 'Success',
+        description: 'Stream revived successfully (moved to Under Review)'
+      });
+      loadSession();
+    } catch (err) {
+      console.error('Failed to revive stream:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to revive stream',
+        variant: 'destructive'
+      });
+    }
+  };
 
   /* Filter streams based on cursor time */
   const currentStreams = useMemo(() => {

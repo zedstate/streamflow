@@ -16,6 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
+from dataclasses import asdict
 from werkzeug.utils import secure_filename
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
@@ -4361,7 +4362,8 @@ def get_stream_session(session_id):
                     'reliability_score': stream_info.reliability_score,
                     'screenshot_path': stream_info.screenshot_path,
                     'last_screenshot_time': stream_info.last_screenshot_time,
-                    'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0
+                    'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0,
+                    'metrics_history': [asdict(m) for m in stream_info.metrics_history] if stream_info.metrics_history else []
                 }
                 
                 # Calculate review time remaining
