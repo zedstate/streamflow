@@ -246,6 +246,92 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const quarantinedStreams = currentStreams.filter(s => s.status === 'quarantined' || s.is_quarantined);
   const activeStreams = [...stableStreams, ...reviewStreams];
 
+  /* Extract significant events for timeline markers */
+  const timelineEvents = useMemo(() => {
+    if (!session || !session.streams) return [];
+
+    const events = [];
+    const streams = session.streams;
+
+    // 1. Stream Status Changes (Quarantine, Promotion)
+    streams.forEach(stream => {
+      if (!stream.metrics_history || stream.metrics_history.length < 2) return;
+
+      // Iterate history to find status changes
+      for (let i = 1; i < stream.metrics_history.length; i++) {
+        const prev = stream.metrics_history[i - 1];
+        const curr = stream.metrics_history[i];
+
+        // Status change detect
+        if (prev.status !== curr.status) {
+          // Stable -> Quarantined (Yellow)
+          if (curr.status === 'quarantined') {
+            events.push({
+              time: curr.timestamp,
+              type: 'Quarantine',
+              description: `${stream.name} quarantined (${curr.reliability_score.toFixed(1)}%)`,
+              color: 'yellow'
+            });
+          }
+          // Review -> Stable (Blue)
+          else if (prev.status === 'review' && curr.status === 'stable') {
+            events.push({
+              time: curr.timestamp,
+              type: 'Promotion',
+              description: `${stream.name} promoted to Stable`,
+              color: 'blue'
+            });
+          }
+        }
+      }
+    });
+
+    // 2. Primary Stream Changes (Green)
+    // We need to find when the rank 1 stream changes
+    // This requires aggregating all streams at each timestamp, which is expensive.
+    // Optimization: Collect all timestamps where any stream has rank 1.
+    const rankOneChanges = [];
+    const timestamps = new Set();
+    streams.forEach(s => {
+      s.metrics_history?.forEach(m => timestamps.add(m.timestamp));
+    });
+
+    const sortedTimestamps = Array.from(timestamps).sort((a, b) => a - b);
+    let lastTopStreamId = null;
+
+    // Sample every few seconds to avoid excessive processing if history is huge
+    // But for accuracy in timeline, we should try to be precise.
+    // Let's filter to timestamps where a rank change might have occurred (approx)
+
+    // Simpler approach: Iterate through all metrics of all streams, filtering for rank=1
+    const rankOneMetrics = [];
+    streams.forEach(s => {
+      s.metrics_history?.forEach(m => {
+        if (m.rank === 1) {
+          rankOneMetrics.push({ ...m, stream_id: s.stream_id, stream_name: s.name });
+        }
+      });
+    });
+
+    rankOneMetrics.sort((a, b) => a.timestamp - b.timestamp);
+
+    rankOneMetrics.forEach(metric => {
+      if (lastTopStreamId !== metric.stream_id) {
+        if (lastTopStreamId !== null) {
+          events.push({
+            time: metric.timestamp,
+            type: 'Order Change',
+            description: `Primary Stream changed to ${metric.stream_name}`,
+            color: 'green'
+          });
+        }
+        lastTopStreamId = metric.stream_id;
+      }
+    });
+
+    return events;
+  }, [session]);
+
   const minTime = useMemo(() => {
     // Find earliest metric or session start
     if (!session) return 0;
@@ -259,6 +345,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     }
     return min;
   }, [session]);
+
 
   if (loading || !session) {
     return (
@@ -539,6 +626,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
             onTimeChange={handleTimeChange}
             isLive={isLive}
             onLiveClick={handleLiveClick}
+            events={timelineEvents}
           />
         )
       }

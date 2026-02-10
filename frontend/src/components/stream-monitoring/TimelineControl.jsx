@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
  * 
  * A video-editor style timeline with a time ruler, scrubbable playhead, and potential for tracks.
  */
-export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick }) {
+export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, events = [] }) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [zoomLevel, setZoomLevel] = useState(1); // Pixels per second
     const containerRef = useRef(null);
@@ -85,6 +85,9 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
 
     // Calculate position percentage for an item
     const getPosition = (time) => {
+        // If live, always pin to end to prevent jitter
+        if (isLive && time === currentTime) return 100;
+
         const relativeTime = Math.max(0, Math.min(time - minTime, duration));
         return (relativeTime / duration) * 100;
     };
@@ -168,6 +171,21 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                         ))}
                     </div>
 
+                    {/* Event Markers */}
+                    {events && events.map((event, i) => (
+                        <div
+                            key={i}
+                            className={cn(
+                                "absolute top-6 bottom-0 w-[2px] z-10 opacity-70 hover:opacity-100 hover:z-20 transition-opacity",
+                                event.color === 'yellow' && "bg-yellow-500",
+                                event.color === 'green' && "bg-green-500",
+                                event.color === 'blue' && "bg-blue-500"
+                            )}
+                            style={{ left: `${getPosition(event.time)}%` }}
+                            title={`${event.type}: ${event.description}`}
+                        />
+                    ))}
+
                     {/* Tracks Area (Visual placeholder for now) */}
                     <div className="absolute top-6 bottom-0 left-0 right-0 p-1 opacity-50">
                         <div className="h-full w-full bg-stripe-pattern opacity-10"></div>
@@ -175,7 +193,7 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
 
                     {/* Playhead / Cursor */}
                     <div
-                        className="absolute top-0 bottom-0 w-[1px] bg-red-500 z-10 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.5)]"
+                        className="absolute top-0 bottom-0 w-[1px] bg-red-500 z-30 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.5)]"
                         style={{ left: `${getPosition(currentTime)}%` }}
                     >
                         <div className="absolute -top-[1px] -left-[4px] w-[9px] h-[9px] bg-red-500 transform rotate-45 rounded-[1px] shadow-sm"></div>
