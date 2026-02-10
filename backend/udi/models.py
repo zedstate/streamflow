@@ -32,6 +32,7 @@ class Channel:
     auto_created_by: Optional[int] = None
     auto_created_by_name: Optional[str] = None
     tvc_guide_stationid: Optional[str] = None
+    match_profile_id: Optional[int] = None  # Reference to assigned match profile
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Channel':
@@ -51,7 +52,8 @@ class Channel:
             auto_created=data.get('auto_created', False),
             auto_created_by=data.get('auto_created_by'),
             auto_created_by_name=data.get('auto_created_by_name'),
-            tvc_guide_stationid=data.get('tvc_guide_stationid')
+            tvc_guide_stationid=data.get('tvc_guide_stationid'),
+            match_profile_id=data.get('match_profile_id')
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -71,7 +73,8 @@ class Channel:
             'auto_created': self.auto_created,
             'auto_created_by': self.auto_created_by,
             'auto_created_by_name': self.auto_created_by_name,
-            'tvc_guide_stationid': self.tvc_guide_stationid
+            'tvc_guide_stationid': self.tvc_guide_stationid,
+            'match_profile_id': self.match_profile_id
         }
 
 
@@ -147,6 +150,7 @@ class ChannelGroup:
     channel_count: int = 0
     m3u_account_count: int = 0
     m3u_accounts: List[int] = field(default_factory=list)
+    match_profile_id: Optional[int] = None  # Reference to assigned match profile
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ChannelGroup':
@@ -156,7 +160,8 @@ class ChannelGroup:
             name=data.get('name', ''),
             channel_count=data.get('channel_count', 0),
             m3u_account_count=data.get('m3u_account_count', 0),
-            m3u_accounts=data.get('m3u_accounts', [])
+            m3u_accounts=data.get('m3u_accounts', []),
+            match_profile_id=data.get('match_profile_id')
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -166,7 +171,8 @@ class ChannelGroup:
             'name': self.name,
             'channel_count': self.channel_count,
             'm3u_account_count': self.m3u_account_count,
-            'm3u_accounts': self.m3u_accounts
+            'm3u_accounts': self.m3u_accounts,
+            'match_profile_id': self.match_profile_id
         }
 
 
@@ -456,4 +462,87 @@ class ScheduledEvent:
             'check_time': self.check_time,
             'tvg_id': self.tvg_id,
             'created_at': self.created_at
+        }
+
+
+@dataclass
+class MatchProfileStep:
+    """Represents a single step in a match profile pipeline."""
+    id: str
+    type: str  # 'regex_name', 'tvg_id', 'regex_url'
+    pattern: str  # The pattern or exact match value
+    variables: Dict[str, str] = field(default_factory=dict)  # Dynamic variables used in pattern
+    enabled: bool = True
+    order: int = 0
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MatchProfileStep':
+        """Create a MatchProfileStep from a dictionary."""
+        return cls(
+            id=data.get('id', ''),
+            type=data.get('type', 'regex_name'),
+            pattern=data.get('pattern', ''),
+            variables=data.get('variables', {}),
+            enabled=data.get('enabled', True),
+            order=data.get('order', 0)
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'type': self.type,
+            'pattern': self.pattern,
+            'variables': self.variables,
+            'enabled': self.enabled,
+            'order': self.order
+        }
+
+
+@dataclass
+class MatchProfile:
+    """
+    Represents a match profile for stream-to-channel matching.
+    
+    Match profiles enable granular control over how streams are matched to channels
+    using a visual pipeline/building blocks approach with support for:
+    - Regex matching on stream name
+    - TVG-ID exact matching
+    - Regex matching on stream URL
+    - Dynamic variables: {channel_name}, {channel_group}, {m3u_account_name}
+    """
+    id: int
+    name: str
+    description: Optional[str] = None
+    steps: List[MatchProfileStep] = field(default_factory=list)
+    enabled: bool = True
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MatchProfile':
+        """Create a MatchProfile from a dictionary."""
+        steps_data = data.get('steps', [])
+        steps = [MatchProfileStep.from_dict(step) for step in steps_data]
+        
+        return cls(
+            id=data.get('id', 0),
+            name=data.get('name', ''),
+            description=data.get('description'),
+            steps=steps,
+            enabled=data.get('enabled', True),
+            created_at=data.get('created_at'),
+            updated_at=data.get('updated_at')
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'steps': [step.to_dict() for step in self.steps],
+            'enabled': self.enabled,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
         }
