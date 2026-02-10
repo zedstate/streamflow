@@ -526,6 +526,54 @@ def update_channel_streams(
                 f"{status}"
             )
             return False
+    except requests.exceptions.HTTPError as e:
+        # Handle "Invalid pk" errors by refreshing UDI and retrying with validated IDs
+        if e.response.status_code == 400 and 'Invalid pk' in str(e.response.text):
+            logger.warning(
+                f"Stream ID validation failed for channel {channel_id}. "
+                f"Refreshing UDI and retrying with valid IDs only..."
+            )
+            try:
+                # Refresh streams in UDI to get latest data
+                udi = get_udi_manager()
+                udi.refresh_streams()
+                
+                # Re-validate stream IDs with fresh data
+                current_valid_ids = udi.get_valid_stream_ids()
+                revalidated_stream_ids = [sid for sid in filtered_stream_ids if sid in current_valid_ids]
+                
+                invalid_count = len(filtered_stream_ids) - len(revalidated_stream_ids)
+                if invalid_count > 0:
+                    logger.info(
+                        f"Filtered out {invalid_count} invalid stream ID(s) after UDI refresh "
+                        f"for channel {channel_id}"
+                    )
+                
+                # Retry with validated IDs
+                if revalidated_stream_ids:
+                    retry_data = {"streams": revalidated_stream_ids}
+                    retry_response = patch_request(url, retry_data)
+                    if retry_response and retry_response.status_code in [200, 204]:
+                        logger.info(
+                            f"✓ Successfully updated channel {channel_id} with "
+                            f"{len(revalidated_stream_ids)} validated streams (after retry)"
+                        )
+                        return True
+                else:
+                    logger.warning(
+                        f"No valid streams remaining for channel {channel_id} after UDI refresh"
+                    )
+                    return False
+            except Exception as retry_error:
+                logger.error(
+                    f"Retry failed for channel {channel_id} after UDI refresh: {retry_error}"
+                )
+                raise
+        else:
+            logger.error(
+                f"Failed to update channel {channel_id} streams: {e}"
+            )
+            raise
     except Exception as e:
         logger.error(
             f"Failed to update channel {channel_id} streams: {e}"
@@ -793,3 +841,107 @@ def add_streams_to_channel(
             f"No new streams to add to channel {channel_id}"
         )
         return 0
+
+def batch_update_stream_stats(stream_stats_list: List[Dict[str, Any]], batch_size: int = 10) -> Tuple[int, int]:
+    """
+    Batch update stream stats to reduce API calls during stream checking.
+    
+    This function updates multiple stream stats in batches to optimize performance
+    during large-scale stream checking operations. Instead of making one API call
+    per stream, it groups updates to reduce network overhead.
+    
+    Parameters:
+        stream_stats_list (List[Dict[str, Any]]): List of dicts with keys:
+            - stream_id: int
+            - stream_stats: dict with resolution, source_fps, video_codec, audio_codec, ffmpeg_output_bitrate
+        batch_size (int): Number of streams to update per batch (default: 10)
+        
+    Returns:
+        Tuple[int, int]: (successful_updates, failed_updates)
+        
+    Example:
+        >>> stats = [
+        ...     {'stream_id': 123, 'stream_stats': {'resolution': '1920x1080', 'source_fps': 30}},
+        ...     {'stream_id': 124, 'stream_stats': {'resolution': '1280x720', 'source_fps': 25}}
+        ... ]
+        >>> success, failed = batch_update_stream_stats(stats, batch_size=10)
+    """
+    import json
+    
+    base_url = _get_base_url()
+    if not base_url:
+        logger.error("DISPATCHARR_BASE_URL not set")
+        return 0, len(stream_stats_list)
+    
+    successful = 0
+    failed = 0
+    total = len(stream_stats_list)
+    
+    # Get UDI manager for cache updates
+    try:
+        udi = get_udi_manager()
+        if not udi:
+            logger.error("UDI manager not available, cannot perform batch update")
+            return 0, total
+    except Exception as e:
+        logger.error(f"Failed to get UDI manager: {e}")
+        return 0, total
+    
+    # Process in batches to limit concurrent API calls
+    for i in range(0, total, batch_size):
+        batch = stream_stats_list[i:i + batch_size]
+        logger.debug(f"Processing batch {i // batch_size + 1}/{(total + batch_size - 1) // batch_size} ({len(batch)} streams)")
+        
+        for item in batch:
+            stream_id = item.get('stream_id')
+            stream_stats = item.get('stream_stats', {})
+            
+            if not stream_id or not stream_stats:
+                logger.warning(f"Invalid stream stats item: {item}")
+                failed += 1
+                continue
+            
+            # Construct URL for this stream
+            stream_url = f"{base_url}/api/channels/streams/{int(stream_id)}/"
+            
+            try:
+                # Fetch existing stream data from UDI cache
+                existing_stream_data = udi.get_stream_by_id(int(stream_id))
+                if not existing_stream_data:
+                    logger.warning(f"Stream {stream_id} not found in UDI cache, skipping stats update")
+                    failed += 1
+                    continue
+                
+                # Get existing stats or empty dict
+                existing_stats = existing_stream_data.get("stream_stats") or {}
+                if isinstance(existing_stats, str):
+                    try:
+                        existing_stats = json.loads(existing_stats)
+                    except json.JSONDecodeError:
+                        existing_stats = {}
+                
+                # Merge existing stats with new stats
+                updated_stats = {**existing_stats, **stream_stats}
+                
+                # Send PATCH request
+                patch_payload = {"stream_stats": updated_stats}
+                response = patch_request(stream_url, patch_payload)
+                
+                if response and response.status_code in [200, 204]:
+                    # Update UDI cache to keep it in sync
+                    updated_stream_data = existing_stream_data.copy()
+                    updated_stream_data['stream_stats'] = updated_stats
+                    udi.update_stream(int(stream_id), updated_stream_data)
+                    successful += 1
+                    logger.debug(f"Updated stats for stream {stream_id}")
+                else:
+                    status = response.status_code if response else 'None'
+                    logger.warning(f"Failed to update stream {stream_id}: status {status}")
+                    failed += 1
+                    
+            except Exception as e:
+                logger.error(f"Error updating stream {stream_id} stats: {e}")
+                failed += 1
+    
+    logger.info(f"Batch stats update complete: {successful} successful, {failed} failed out of {total} total")
+    return successful, failed

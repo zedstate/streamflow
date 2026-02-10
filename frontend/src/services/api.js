@@ -141,6 +141,11 @@ export const dispatcharrAPI = {
   initializeUDI: () => api.post('/dispatcharr/initialize-udi'),
 };
 
+export const sessionSettingsAPI = {
+  getSettings: () => api.get('/settings/session'),
+  updateSettings: (settings) => api.post('/settings/session', settings),
+};
+
 export const schedulingAPI = {
   getConfig: () => api.get('/scheduling/config'),
   updateConfig: (config) => api.put('/scheduling/config', config),
@@ -166,7 +171,7 @@ export const profileAPI = {
   // Profile configuration
   getConfig: () => api.get('/profile-config'),
   updateConfig: (config) => api.put('/profile-config', config),
-  
+
   // Profile management
   getProfiles: () => api.get('/profiles'),
   getProfileChannels: (profileId, includeSnapshot = false) => {
@@ -175,13 +180,13 @@ export const profileAPI = {
   },
   refreshProfiles: () => api.post('/profiles/refresh'),
   diagnoseProfiles: () => api.get('/profiles/diagnose'),
-  
+
   // Snapshot management
   createSnapshot: (profileId) => api.post(`/profiles/${profileId}/snapshot`),
   getSnapshot: (profileId) => api.get(`/profiles/${profileId}/snapshot`),
   deleteSnapshot: (profileId) => api.delete(`/profiles/${profileId}/snapshot`),
   getAllSnapshots: () => api.get('/profiles/snapshots'),
-  
+
   // Actions
   disableEmptyChannels: (profileId) => api.post(`/profiles/${profileId}/disable-empty-channels`),
 };

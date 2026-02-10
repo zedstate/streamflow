@@ -10,7 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Loader2, AlertCircle, CheckCircle2, Trash2, Plus } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamCheckerAPI, dispatcharrAPI } from '@/services/api.js'
+import { automationAPI, streamCheckerAPI, dispatcharrAPI, sessionSettingsAPI } from '@/services/api.js'
 
 // Default values for automation controls
 const DEFAULT_AUTOMATION_CONTROLS = {
@@ -24,11 +24,12 @@ export default function AutomationSettings() {
   const [config, setConfig] = useState(null)
   const [streamCheckerConfig, setStreamCheckerConfig] = useState(null)
   const [dispatcharrConfig, setDispatcharrConfig] = useState(null)
+  const [sessionConfig, setSessionConfig] = useState({ review_duration: 60 })
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionTestResult, setConnectionTestResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  
+
   const { toast } = useToast()
 
   useEffect(() => {
@@ -38,14 +39,16 @@ export default function AutomationSettings() {
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const [automationResponse, streamCheckerResponse, dispatcharrResponse] = await Promise.all([
+      const [automationResponse, streamCheckerResponse, dispatcharrResponse, sessionResponse] = await Promise.all([
         automationAPI.getConfig(),
         streamCheckerAPI.getConfig(),
-        dispatcharrAPI.getConfig()
+        dispatcharrAPI.getConfig(),
+        sessionSettingsAPI.getSettings()
       ])
       setConfig(automationResponse.data)
       setStreamCheckerConfig(streamCheckerResponse.data)
       setDispatcharrConfig(dispatcharrResponse.data)
+      setSessionConfig(sessionResponse.data)
     } catch (err) {
       console.error('Failed to load config:', err)
       toast({
@@ -64,7 +67,8 @@ export default function AutomationSettings() {
       await Promise.all([
         automationAPI.updateConfig(config),
         streamCheckerAPI.updateConfig(streamCheckerConfig),
-        dispatcharrAPI.updateConfig(dispatcharrConfig)
+        dispatcharrAPI.updateConfig(dispatcharrConfig),
+        sessionSettingsAPI.updateSettings(sessionConfig)
       ])
       toast({
         title: "Success",
@@ -139,18 +143,25 @@ export default function AutomationSettings() {
     }))
   }
 
+  const handleSessionConfigChange = (field, value) => {
+    setSessionConfig(prev => ({
+      ...prev,
+      [field]: value
+    }))
+  }
+
   const handleTestConnection = async () => {
     try {
       setTestingConnection(true)
       setConnectionTestResult(null)
-      
+
       const response = await dispatcharrAPI.testConnection(dispatcharrConfig)
       setConnectionTestResult({
         success: true,
         message: 'Connection successful!',
         ...response.data
       })
-      
+
       toast({
         title: "Success",
         description: "Successfully connected to Dispatcharr"
@@ -193,12 +204,12 @@ export default function AutomationSettings() {
   }
 
   const automationControls = streamCheckerConfig?.automation_controls || {}
-  
+
   // Always use individual controls (legacy pipeline mode no longer supported)
   const usingIndividualControls = true
-  
+
   // Determine which settings to show based on pipeline mode or individual controls
-  const showScheduleSettings = usingIndividualControls 
+  const showScheduleSettings = usingIndividualControls
     ? automationControls.scheduled_global_action
     : ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3'].includes(pipelineMode)
   const showUpdateInterval = usingIndividualControls
@@ -215,13 +226,14 @@ export default function AutomationSettings() {
       </div>
 
       <Tabs defaultValue="connection" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="connection">Connection</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
+          <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
           <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
           <TabsTrigger value="queue">Queue</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="connection" className="space-y-6">
           {/* Dispatcharr Configuration */}
           <Card>
@@ -271,8 +283,8 @@ export default function AutomationSettings() {
               </div>
 
               <div className="flex items-center gap-2 pt-2">
-                <Button 
-                  onClick={handleTestConnection} 
+                <Button
+                  onClick={handleTestConnection}
                   disabled={testingConnection}
                   variant="outline"
                 >
@@ -306,7 +318,7 @@ export default function AutomationSettings() {
             </Button>
           </div>
         </TabsContent>
-        
+
         <TabsContent value="automation" className="space-y-6">
           {/* Individual Automation Controls */}
           <Card>
@@ -422,7 +434,40 @@ export default function AutomationSettings() {
             </Button>
           </div>
         </TabsContent>
-        
+
+        <TabsContent value="monitoring" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Monitoring Settings</CardTitle>
+              <CardDescription>
+                Configure thresholds and timings for stream monitoring
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="review_duration">Review Duration (seconds)</Label>
+                <Input
+                  id="review_duration"
+                  type="number"
+                  min="1"
+                  value={sessionConfig?.review_duration || 60}
+                  onChange={(e) => handleSessionConfigChange('review_duration', parseInt(e.target.value))}
+                />
+                <p className="text-sm text-muted-foreground">
+                  Time a stream must remain in "Review" state with good score before becoming "Stable". Default: 60s.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving} size="lg">
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Settings
+            </Button>
+          </div>
+        </TabsContent>
+
         <TabsContent value="scheduling" className="space-y-6">
           {/* Update Interval Settings */}
           {showUpdateInterval && (
@@ -434,8 +479,8 @@ export default function AutomationSettings() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Tabs 
-                  defaultValue={config.playlist_update_cron ? "cron" : "interval"} 
+                <Tabs
+                  defaultValue={config.playlist_update_cron ? "cron" : "interval"}
                   onValueChange={(value) => {
                     // Clear the other option when switching tabs
                     if (value === "interval") {
@@ -454,7 +499,7 @@ export default function AutomationSettings() {
                     <TabsTrigger value="interval">Interval (Minutes)</TabsTrigger>
                     <TabsTrigger value="cron">Cron Expression</TabsTrigger>
                   </TabsList>
-                  
+
                   <TabsContent value="interval" className="space-y-2">
                     <Label htmlFor="playlist_update_interval">Playlist Update Interval (minutes)</Label>
                     <Input
@@ -467,7 +512,7 @@ export default function AutomationSettings() {
                     />
                     <p className="text-sm text-muted-foreground">How often to check for playlist updates (in minutes)</p>
                   </TabsContent>
-                  
+
                   <TabsContent value="cron" className="space-y-2">
                     <Label htmlFor="playlist_update_cron">Cron Expression</Label>
                     <Input
@@ -530,7 +575,7 @@ export default function AutomationSettings() {
                   />
                   <p className="text-sm text-muted-foreground">Enter a cron expression (e.g., '0 3 * * *' for daily at 3:00 AM, '0 3 1 * *' for monthly on the 1st at 3:00 AM)</p>
                 </div>
-                
+
                 <Alert>
                   <AlertCircle className="h-4 w-4" />
                   <AlertTitle>Cron Expression Format</AlertTitle>
@@ -568,7 +613,7 @@ export default function AutomationSettings() {
             </Button>
           </div>
         </TabsContent>
-        
+
         <TabsContent value="queue" className="space-y-6">
           {/* Queue Settings */}
           {(usingIndividualControls ? (automationControls.auto_quality_checking || automationControls.scheduled_global_action) : (pipelineMode && pipelineMode !== 'disabled')) && (

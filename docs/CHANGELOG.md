@@ -2,6 +2,39 @@
 
 This document tracks significant bug fixes and improvements to StreamFlow.
 
+## Recent Updates
+
+### Stream Operations Batch Processing Optimization (2026)
+
+**Problem:** Large playlists (1000+ streams) experienced significant performance degradation due to individual API calls for each stream operation:
+- Stream checking: One PATCH per stream to update stats
+- Verification: One GET per channel after every operation
+- For 50 channels × 20 streams = 1050+ API calls per check cycle
+
+**Solution:** Implemented batch processing at the UDI level:
+1. **Batch Stats Updates**: Group multiple stream stats updates into batches (default: 10 streams)
+2. **Optional Verification**: Made post-operation verification configurable (disabled by default)
+3. **Import Fix**: Fixed critical `get_regex_matcher` import error in stream checker
+
+**Impact:** 
+- **90% reduction** in API calls during stream checking (1050 → ~100 calls)
+- **50% reduction** in API calls during stream matching (200 → 100 calls)
+- Estimated **95 seconds saved** per 1000-stream check cycle
+
+**Configuration:**
+- Stream Checker: `batch_operations.enabled`, `batch_operations.batch_size`, `batch_operations.verify_updates`
+- Automation Manager: `verify_stream_assignments`
+
+**Files Changed:**
+- `backend/api_utils.py` - Added `batch_update_stream_stats()` function
+- `backend/stream_checker_service.py` - Batch processing + import fix + optional verification
+- `backend/automated_stream_manager.py` - Optional verification
+- `docs/BATCH_OPERATIONS_OPTIMIZATION.md` - Comprehensive documentation
+
+**Reference:** See [BATCH_OPERATIONS_OPTIMIZATION.md](BATCH_OPERATIONS_OPTIMIZATION.md) for detailed performance analysis.
+
+---
+
 ## Bug Fixes
 
 ### Automation Service Auto-Start (2024)

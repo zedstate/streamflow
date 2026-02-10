@@ -34,7 +34,8 @@ from api_utils import (
     fetch_channel_streams,
     update_channel_streams,
     _get_base_url,
-    patch_request
+    patch_request,
+    batch_update_stream_stats
 )
 
 # Import UDI for direct data access
@@ -133,6 +134,11 @@ class StreamCheckConfig:
             'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
             'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
             'min_score': 0  # Minimum score (0-100, 0 = no minimum)
+        },
+        'batch_operations': {
+            'enabled': True,  # Enable batch stats updates to reduce API calls
+            'batch_size': 10,  # Number of streams to update per batch
+            'verify_updates': False  # Verify channel updates by refreshing UDI (adds API overhead)
         }
     }
     
@@ -1453,7 +1459,7 @@ class StreamCheckerService:
             "source_fps": stream_data.get("fps"),
             "video_codec": stream_data.get("video_codec"),
             "audio_codec": stream_data.get("audio_codec"),
-            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] and stream_data.get("bitrate_kbps") else None,
+            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
         }
         
         # Clean up the payload, removing any None values or N/A values
@@ -1502,6 +1508,46 @@ class StreamCheckerService:
         except Exception as e:
             logger.error(f"Error updating stats for stream {stream_id}: {e}")
             return False
+    
+    def _prepare_stream_stats_for_batch(self, stream_data: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Prepare stream stats for batch update.
+        
+        This method extracts and formats stream stats from analyzed stream data
+        for use in batch update operations.
+        
+        Parameters:
+            stream_data (Dict): Analyzed stream data with resolution, fps, codecs, bitrate
+            
+        Returns:
+            Optional[Dict[str, Any]]: Dict with 'stream_id' and 'stream_stats' keys,
+                                     or None if no valid stats to update
+        """
+        stream_id = stream_data.get("stream_id")
+        if not stream_id:
+            logger.warning("No stream_id in stream data. Skipping stats preparation.")
+            return None
+        
+        # Construct the stream stats payload from the analyzed stream data
+        stream_stats_payload = {
+            "resolution": stream_data.get("resolution"),
+            "source_fps": stream_data.get("fps"),
+            "video_codec": stream_data.get("video_codec"),
+            "audio_codec": stream_data.get("audio_codec"),
+            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
+        }
+        
+        # Clean up the payload, removing any None values or N/A values
+        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+        
+        if not stream_stats_payload:
+            logger.debug(f"No data to update for stream {stream_id}. Skipping.")
+            return None
+        
+        return {
+            'stream_id': stream_id,
+            'stream_stats': stream_stats_payload
+        }
     
     def _start_batch_changelog(self):
         """Start a new batch for changelog entries."""
@@ -1719,6 +1765,53 @@ class StreamCheckerService:
         # At least one stream has an available slot, check can proceed
         return None
     
+    def _get_resolution_product(self, stream_data: Dict) -> int:
+        """Get resolution product (width * height) from stream data."""
+        res = stream_data.get('resolution', '')
+        if 'x' in str(res):
+            try:
+                width, height = map(int, str(res).split('x'))
+                return width * height
+            except: pass
+        return 0
+
+    def _refine_sorted_streams(self, streams: List[Dict]) -> List[Dict]:
+        """Refine sorted streams to prioritize resolution when scores are close.
+        
+        This prevents lower resolution streams with high priority from displacing
+        higher resolution streams, unless the quality difference is significant.
+        """
+        if not streams:
+            return []
+            
+        # Tolerance for treating scores as "equal enough" to look at resolution
+        # 0.15 allows a stream to be boosted by priority (up to ~7 levels) without jumping a resolution tier
+        # unless the base quality difference is also large.
+        SCORE_TOLERANCE = 0.15 
+        
+        refined = []
+        remaining = streams.copy()
+        
+        while remaining:
+            current = remaining.pop(0)
+            tier = [current]
+            
+            i = 0
+            while i < len(remaining):
+                # Since list is sorted descending, diff is positive
+                diff = current.get('score', 0) - remaining[i].get('score', 0)
+                if diff <= SCORE_TOLERANCE:
+                    tier.append(remaining.pop(i))
+                else:
+                    break
+            
+            # Sort tier by resolution product (descending)
+            # This ensures higher resolution streams float to the top within the tolerance group
+            tier.sort(key=self._get_resolution_product, reverse=True)
+            refined.extend(tier)
+            
+        return refined
+    
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
         
@@ -1923,11 +2016,21 @@ class StreamCheckerService:
                 )
                 
                 # Process results - ALL checks are complete at this point
-                # This is the correct place to update stats and track dead streams
+                # Collect stats for batch update to minimize API calls
+                batch_stats_list = []
+                batch_config = self.config.get('batch_operations', {})
+                batch_enabled = batch_config.get('enabled', True)
+                batch_size = batch_config.get('batch_size', 10)
+                
                 for analyzed in results:
-                    # Update stream stats on Dispatcharr with ffmpeg-extracted data
-                    # Now that all parallel checks are complete, we can safely push the info
-                    self._update_stream_stats(analyzed)
+                    # Prepare stats for batch update
+                    if batch_enabled:
+                        stats_item = self._prepare_stream_stats_for_batch(analyzed)
+                        if stats_item:
+                            batch_stats_list.append(stats_item)
+                    else:
+                        # Fall back to individual updates if batching is disabled
+                        self._update_stream_stats(analyzed)
                     
                     # Check if stream is dead
                     is_dead = self._is_stream_dead(analyzed)
@@ -1957,6 +2060,12 @@ class StreamCheckerService:
                     analyzed['channel_id'] = channel_id
                     analyzed['channel_name'] = channel_name
                     analyzed_streams.append(analyzed)
+                
+                # Perform batch stats update if enabled and we have stats to update
+                if batch_enabled and batch_stats_list:
+                    logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
+                    successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
+                    logger.info(f"Batch update complete: {successful} successful, {failed} failed")
                 
                 logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
             
@@ -2031,6 +2140,10 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
+            # Refine sort order to respect resolution for close scores
+            # This handles priority boosts correctly without jumping resolution tiers
+            analyzed_streams = self._refine_sorted_streams(analyzed_streams)
+            
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
@@ -2069,8 +2182,17 @@ class StreamCheckerService:
                 step='Verifying update',
                 step_detail='Confirming stream order was applied'
             )
-            time_module.sleep(0.5)
-            udi.refresh_channel_by_id(channel_id)
+            
+            # Only verify if enabled in configuration
+            batch_config = self.config.get('batch_operations', {})
+            verify_updates = batch_config.get('verify_updates', False)
+            
+            if verify_updates:
+                time_module.sleep(0.5)
+                udi.refresh_channel_by_id(channel_id)
+                logger.debug(f"Verified channel {channel_name} update via UDI refresh")
+            else:
+                logger.debug(f"Skipped verification for channel {channel_name} (disabled in config)")
             
             logger.info(f"✓ Channel {channel_name} checked and streams reordered (parallel mode)")
             
@@ -2499,6 +2621,10 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
+            # Refine sort order to respect resolution for close scores
+            # This handles priority boosts correctly without jumping resolution tiers
+            analyzed_streams = self._refine_sorted_streams(analyzed_streams)
+            
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
@@ -2542,19 +2668,27 @@ class StreamCheckerService:
                 step='Verifying update',
                 step_detail='Confirming stream order was applied'
             )
-            time.sleep(0.5)  # Brief delay to ensure API has processed the update
-            # Refresh this specific channel in UDI to get updated data after write
-            udi.refresh_channel_by_id(channel_id)
-            updated_channel_data = udi.get_channel_by_id(channel_id)
-            if updated_channel_data:
-                updated_stream_ids = updated_channel_data.get('streams', [])
-                if updated_stream_ids == reordered_ids:
-                    logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
+            
+            # Only verify if enabled in configuration
+            batch_config = self.config.get('batch_operations', {})
+            verify_updates = batch_config.get('verify_updates', False)
+            
+            if verify_updates:
+                time.sleep(0.5)  # Brief delay to ensure API has processed the update
+                # Refresh this specific channel in UDI to get updated data after write
+                udi.refresh_channel_by_id(channel_id)
+                updated_channel_data = udi.get_channel_by_id(channel_id)
+                if updated_channel_data:
+                    updated_stream_ids = updated_channel_data.get('streams', [])
+                    if updated_stream_ids == reordered_ids:
+                        logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
+                    else:
+                        logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
+                        logger.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
                 else:
-                    logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
-                    logger.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
+                    logger.warning(f"⚠ Could not verify channel {channel_name}: channel data not found after refresh")
             else:
-                logger.warning(f"⚠ Could not verify stream update for channel {channel_name}")
+                logger.debug(f"Skipped verification for channel {channel_name} (disabled in config)")
             
             logger.info(f"✓ Channel {channel_name} checked and streams reordered")
             
@@ -2813,7 +2947,7 @@ class StreamCheckerService:
             elif priority_mode == 'same_resolution':
                 # Apply a smaller boost that won't override resolution differences
                 # but will prioritize within same resolution
-                boost = priority * 0.2
+                boost = priority * 0.02
                 logger.debug(f"Applying same_resolution priority boost of {boost} to stream {stream_id} (priority: {priority})")
                 return boost
             
@@ -2854,7 +2988,7 @@ class StreamCheckerService:
                 return 0.0
             
             # Import regex matcher to check which pattern matched this stream
-            from automated_stream_manager import get_regex_matcher
+            from web_api import get_regex_matcher
             regex_matcher = get_regex_matcher()
             
             # Get match results with priority
@@ -3117,6 +3251,14 @@ class StreamCheckerService:
                     logger.error(f"✗ Failed to match streams: {e}")
             else:
                 logger.info(f"Step 5/6: Skipping stream matching (matching is disabled for this channel)")
+            
+            # Refresh UDI cache again to ensure the check in Step 6 sees the newly assigned streams
+            # This is critical because discover_and_assign_streams updates the DB but UDI cache might be stale
+            if matching_enabled:
+                logger.debug("Refreshing UDI cache for streams and channel to reflect new assignments...")
+                udi.refresh_streams()
+                udi.refresh_channel_by_id(channel_id)
+                logger.info(f"✓ UDI cache refreshed with latest stream assignments")
             
             # Step 6: Mark channel for force check and perform the check (if checking is enabled)
             dead_count = 0

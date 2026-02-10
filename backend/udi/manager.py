@@ -25,11 +25,12 @@ Usage:
 
 import threading
 import time
+import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Set, Tuple
 
 from udi.storage import UDIStorage
-from udi.fetcher import UDIFetcher
+from udi.fetcher import UDIFetcher, _get_auth_headers
 from udi.cache import UDICache
 
 from logging_config import setup_logging
@@ -91,7 +92,7 @@ class UDIManager:
         # Proxy status cache for real-time stream viewer information
         self._proxy_status_cache: Dict[str, Any] = {}
         self._proxy_status_last_fetch: float = 0
-        self._proxy_status_ttl: float = 5.0  # Cache proxy status for 5 seconds
+        self._proxy_status_ttl: float = 1.0  # Cache proxy status for 1 second to match FFmpeg stats update frequency
         
         logger.info("UDI Manager created")
     
@@ -1437,10 +1438,18 @@ class UDIManager:
     def _ensure_initialized(self) -> None:
         """Ensure UDI Manager is initialized before data access.
         
-        This will auto-initialize if not already done, but only if
-        Dispatcharr credentials are configured.
+        This will auto-initialize if not already done, loading from storage
+        if available, or fetching from API if configured.
         """
         if not self._initialized:
+            # Try to load from storage first if available
+            if self.storage.is_initialized():
+                logger.info("UDI Manager not initialized, loading from storage...")
+                self._load_from_storage()
+                self._initialized = True
+                logger.info("UDI Manager initialized from storage")
+                return
+            
             # Check if Dispatcharr is configured before auto-initializing
             config = get_dispatcharr_config()
             
@@ -1448,8 +1457,91 @@ class UDIManager:
                 logger.warning("UDI Manager not initialized and Dispatcharr credentials not configured. Skipping auto-initialization.")
                 return
             
-            logger.info("UDI Manager not initialized, auto-initializing...")
+            logger.info("UDI Manager not initialized, auto-initializing from API...")
             self.initialize()
+    
+    def get_proxy_status(self) -> Dict[str, Any]:
+        """
+        Get the current proxy status showing which streams are actively playing.
+        
+        Returns:
+            Dictionary with proxy status information including:
+            - channels: List of active channels with stream info
+            - count: Number of active channels
+        """
+        self._ensure_initialized()
+        return self._get_proxy_status()
+    
+    def get_playing_stream_ids(self) -> Set[int]:
+        """
+        Get the set of stream IDs that are currently being played.
+        
+        Returns:
+            Set of stream IDs currently active in the proxy
+        """
+        self._ensure_initialized()
+        proxy_status = self._get_proxy_status()
+        
+        playing_stream_ids = set()
+        
+        # proxy_status is a dict with channel_id -> status mapping
+        for channel_id_str, channel_data in proxy_status.items():
+            if self._is_channel_status_active(channel_data):
+                stream_id = channel_data.get('stream_id')
+                if stream_id:
+                    playing_stream_ids.add(stream_id)
+        
+        return playing_stream_ids
+    
+    def bulk_delete_streams(self, stream_ids: List[int]) -> bool:
+        """
+        Delete multiple streams from Dispatcharr by their IDs.
+        
+        Args:
+            stream_ids: List of stream IDs to delete
+            
+        Returns:
+            True if deletion successful, False otherwise
+        """
+        if not stream_ids:
+            logger.debug("No stream IDs provided for bulk delete")
+            return True
+        
+        try:
+            config = get_dispatcharr_config()
+            base_url = config.get_base_url()
+            
+            if not base_url:
+                logger.error("DISPATCHARR_BASE_URL not set, cannot delete streams")
+                return False
+            
+            url = f"{base_url}/api/channels/streams/bulk-delete/"
+            headers = _get_auth_headers()
+            payload = {"stream_ids": stream_ids}
+            
+            logger.info(f"Bulk deleting {len(stream_ids)} streams from Dispatcharr")
+            response = requests.delete(url, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 204:
+                logger.info(f"Successfully deleted {len(stream_ids)} streams from Dispatcharr")
+                # Invalidate streams cache after deletion
+                self._invalidate_streams_cache()
+                return True
+            else:
+                logger.error(f"Failed to delete streams: HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error deleting streams from Dispatcharr: {e}", exc_info=True)
+            return False
+    
+    def _invalidate_streams_cache(self) -> None:
+        """Invalidate streams cache after modification operations."""
+        with self._lock:
+            self._streams_cache = []
+            self._streams_by_id = {}
+            self._streams_by_url = {}
+            self._valid_stream_ids = set()
 
 
 # Global singleton instance

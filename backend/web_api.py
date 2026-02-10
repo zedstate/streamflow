@@ -16,6 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
+from dataclasses import asdict
 from werkzeug.utils import secure_filename
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
@@ -28,7 +29,6 @@ from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
-from match_profiles_manager import get_match_profiles_manager
 
 # Pre-compiled regex pattern for whitespace conversion (performance optimization)
 # This pattern matches one or more spaces that are NOT preceded by a backslash
@@ -812,29 +812,75 @@ def add_bulk_regex_patterns():
                 
                 channel_name = channel.get('name', f'Channel {channel_id}')
                 
-                # Get existing patterns for this channel
-                patterns = matcher.get_patterns()
-                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
-                existing_regex = existing_patterns.get('regex', [])
-                existing_m3u_accounts = existing_patterns.get('m3u_accounts')
-                
-                # Merge with new patterns (avoid duplicates)
-                merged_regex = list(existing_regex)
-                for pattern in regex_patterns:
-                    if pattern not in merged_regex:
-                        merged_regex.append(pattern)
-                
-                # Use provided m3u_accounts or keep existing
-                final_m3u_accounts = m3u_accounts if m3u_accounts is not None else existing_m3u_accounts
-                
-                # Add/update pattern
-                matcher.add_channel_pattern(
-                    str(channel_id),
-                    channel_name,
-                    merged_regex,
-                    existing_patterns.get('enabled', True),
-                    m3u_accounts=final_m3u_accounts
-                )
+                # Use lock to prevent race conditions during read-modify-write
+                with matcher.lock:
+                    # Get existing patterns for this channel
+                    patterns = matcher.get_patterns()
+                    existing_pattern_data = patterns.get('patterns', {}).get(str(channel_id), {})
+                    
+                    # Get existing regex patterns (support both new and old format)
+                    existing_regex_patterns = existing_pattern_data.get('regex_patterns')
+                    
+                    # Normalize existing patterns to list of objects
+                    normalized_existing = []
+                    if existing_regex_patterns:
+                        # New format: list of dicts
+                        for p in existing_regex_patterns:
+                            if isinstance(p, dict):
+                                normalized_existing.append(p)
+                            else:
+                                # Legacy string in new format (shouldn't happen but be safe)
+                                normalized_existing.append({
+                                    "pattern": p,
+                                    "m3u_accounts": existing_pattern_data.get('m3u_accounts'),
+                                    "priority": 0
+                                })
+                    else:
+                        # Old format: regex list
+                        old_regex = existing_pattern_data.get('regex', [])
+                        old_m3u_accounts = existing_pattern_data.get('m3u_accounts')
+                        for p in old_regex:
+                            normalized_existing.append({
+                                "pattern": p,
+                                "m3u_accounts": old_m3u_accounts,
+                                "priority": 0
+                            })
+                    
+                    # Normalize new patterns to list of objects
+                    normalized_new = []
+                    for p in regex_patterns:
+                        # Use provided m3u_accounts or None (applies to all)
+                        # For bulk add, we default priority to 0
+                        normalized_new.append({
+                            "pattern": p,
+                            "m3u_accounts": m3u_accounts,
+                            "priority": 0
+                        })
+                    
+                    # Merge patterns (avoid duplicates based on pattern string)
+                    # We prioritize existing patterns to preserve their specific settings (priority, m3u_accounts)
+                    # unless the user explicitly wants to update them (which bulk add doesn't support yet, use mass edit for that)
+                    merged_patterns = list(normalized_existing)
+                    existing_pattern_strings = {p['pattern'] for p in normalized_existing}
+                    
+                    for new_p in normalized_new:
+                        if new_p['pattern'] not in existing_pattern_strings:
+                            merged_patterns.append(new_p)
+                            existing_pattern_strings.add(new_p['pattern'])
+                    
+                    # Add/update pattern in new format
+                    # We use the internal _save_patterns method directly or pass the full object to add_channel_pattern
+                    # But add_channel_pattern expects the input format which it then normalizes
+                    # So we can pass the merged list of dicts directly
+                    matcher.add_channel_pattern(
+                        str(channel_id),
+                        channel_name,
+                        merged_patterns,
+                        existing_pattern_data.get('enabled', True),
+                        m3u_accounts=None, # Not used when passing list of dicts
+                        silent=True
+                    )
+
                 success_count += 1
             except Exception as e:
                 logger.error(f"Error adding pattern to channel {channel_id}: {e}")
@@ -1891,7 +1937,8 @@ def get_profile_channels(profile_id):
             
             # If include_snapshot is requested, merge with snapshot channels
             if include_snapshot:
-                profile_config = ProfileConfig()
+                from profile_config import get_profile_config
+                profile_config = get_profile_config()
                 snapshot = profile_config.get_snapshot(profile_id)
                 
                 if snapshot:
@@ -4081,217 +4128,648 @@ def trigger_epg_refresh():
         return jsonify({"error": str(e)}), 500
 
 
-# ============================================================================
-# Match Profiles API Endpoints
-# ============================================================================
+# ==================== Stream Monitoring Session API ====================
+# Advanced stream monitoring with live quality tracking, reliability scoring,
+# and screenshot capture for event-based stream management
 
-@app.route('/api/match-profiles', methods=['GET'])
-@log_function_call
-def list_match_profiles():
-    """Get all match profiles.
-    
-    Returns:
-        JSON array of match profiles
-    """
+from stream_session_manager import get_session_manager, REVIEW_DURATION
+from stream_monitoring_service import get_monitoring_service
+
+
+@app.route('/api/stream-sessions', methods=['GET'])
+def get_stream_sessions():
+    """Get all stream monitoring sessions or filter by status."""
     try:
-
-        manager = get_match_profiles_manager()
-        profiles = manager.list_profiles()
-        return jsonify([p.to_dict() for p in profiles]), 200
+        session_manager = get_session_manager()
+        
+        # Check for status filter
+        status = request.args.get('status', '').lower()
+        
+        if status == 'active':
+            sessions = session_manager.get_active_sessions()
+        else:
+            sessions = session_manager.get_all_sessions()
+        
+        # Convert to JSON-serializable format
+        sessions_data = []
+        for session in sessions:
+            session_dict = {
+                'session_id': session.session_id,
+                'channel_id': session.channel_id,
+                'channel_name': session.channel_name,
+                'regex_filter': session.regex_filter,
+                'created_at': session.created_at,
+                'is_active': session.is_active,
+                'pre_event_minutes': session.pre_event_minutes,
+                'stagger_ms': session.stagger_ms,
+                'timeout_ms': session.timeout_ms,
+                'probe_interval_ms': session.probe_interval_ms,
+                'screenshot_interval_seconds': session.screenshot_interval_seconds,
+                'window_size': session.window_size,
+                'stream_count': len(session.streams) if session.streams else 0,
+                'active_streams': sum(1 for s in session.streams.values() if s.status in ['stable', 'review']) if session.streams else 0,
+                'stable_count': sum(1 for s in session.streams.values() if s.status == 'stable') if session.streams else 0,
+                'review_count': sum(1 for s in session.streams.values() if s.status == 'review') if session.streams else 0,
+                'quarantined_count': sum(1 for s in session.streams.values() if s.status == 'quarantined' or s.is_quarantined) if session.streams else 0,
+                # EPG event info
+                'epg_event_id': session.epg_event_id,
+                'epg_event_title': session.epg_event_title,
+                'epg_event_start': session.epg_event_start,
+                'epg_event_end': session.epg_event_end,
+                'epg_event_description': session.epg_event_description,
+                # Channel info
+                'channel_logo_url': session.channel_logo_url,
+                'channel_tvg_id': session.channel_tvg_id,
+                # Auto-creation info
+                'auto_created': session.auto_created,
+                'auto_create_rule_id': session.auto_create_rule_id
+            }
+            sessions_data.append(session_dict)
+        
+        return jsonify(sessions_data), 200
+        
     except Exception as e:
-        logger.error(f"Error listing match profiles: {e}")
+        logger.error(f"Error getting stream sessions: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/match-profiles/<int:profile_id>', methods=['GET'])
-@log_function_call
-def get_match_profile(profile_id):
-    """Get a specific match profile.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Returns:
-        JSON object with profile data
-    """
+@app.route('/api/stream-sessions', methods=['POST'])
+def create_stream_session():
+    """Create a new stream monitoring session."""
     try:
-
-        manager = get_match_profiles_manager()
-        profile = manager.get_profile(profile_id)
+        data = request.json
         
-        if not profile:
-            return jsonify({"error": "Profile not found"}), 404
+        channel_id = data.get('channel_id')
+        if not channel_id:
+            return jsonify({"error": "channel_id is required"}), 400
         
-        return jsonify(profile.to_dict()), 200
+        # Get regex filter - if not provided, use channel's configured regex
+        regex_filter = data.get('regex_filter')
+        if not regex_filter:
+            # Try to get channel's configured regex from regex matcher
+            try:
+                regex_matcher = get_regex_matcher()
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
+                logger.info(f"Using channel's configured regex for manual session: {regex_filter}")
+            except Exception as e:
+                logger.debug(f"Could not get channel regex from matcher: {e}")
+                regex_filter = '.*'  # Default fallback
+        
+        pre_event_minutes = data.get('pre_event_minutes', 30)
+        stagger_ms = data.get('stagger_ms', 200)
+        timeout_ms = data.get('timeout_ms', 30000)
+        
+        # Extract EPG event if provided
+        epg_event = data.get('epg_event')
+        
+        # Extract auto-creation flags if provided
+        auto_created = data.get('auto_created', False)
+        auto_create_rule_id = data.get('auto_create_rule_id')
+        
+        session_manager = get_session_manager()
+        session_id = session_manager.create_session(
+            channel_id=channel_id,
+            regex_filter=regex_filter,
+            pre_event_minutes=pre_event_minutes,
+            stagger_ms=stagger_ms,
+            timeout_ms=timeout_ms,
+            epg_event=epg_event,
+            auto_created=auto_created,
+            auto_create_rule_id=auto_create_rule_id
+        )
+        
+        return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        logger.error(f"Error getting match profile {profile_id}: {e}")
+        logger.error(f"Error creating stream session: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/match-profiles', methods=['POST'])
-@log_function_call
-def create_match_profile():
-    """Create a new match profile.
-    
-    Request body:
-        {
-            "name": "Profile Name",
-            "description": "Optional description",
-            "steps": [
-                {
-                    "id": "step1",
-                    "type": "regex_name",
-                    "pattern": ".*ESPN.*",
-                    "variables": {},
-                    "enabled": true,
-                    "order": 0
+@app.route('/api/stream-sessions/group/start', methods=['POST'])
+def create_group_stream_sessions():
+    """Create and start monitoring sessions for all channels in a group."""
+    try:
+        data = request.json
+        
+        group_id = data.get('group_id')
+        if not group_id:
+            return jsonify({"error": "group_id is required"}), 400
+        
+        # Get channels in group
+        udi = get_udi_manager()
+        channels = udi.get_channels_by_group(group_id)
+        
+        if not channels:
+            return jsonify({"error": "Group not found or has no channels"}), 404
+        
+        # Refresh global stream list once before creating sessions
+        # This ensures all new streams are discovered without hammering the API in the loop
+        if udi.refresh_streams():
+            logger.info(f"Refreshed stream list before batch session creation for group {group_id}")
+        
+        # Common parameters
+        regex_filter = data.get('regex_filter')
+        pre_event_minutes = data.get('pre_event_minutes', 30)
+        stagger_ms = data.get('stagger_ms', 200)
+        timeout_ms = data.get('timeout_ms', 30000)
+        
+        session_manager = get_session_manager()
+        monitoring_service = get_monitoring_service()
+        
+        created_sessions = []
+        errors = []
+        
+        for channel in channels:
+            try:
+                channel_id = channel.get('id')
+                
+                # Determine regex for this channel
+                channel_regex = regex_filter
+                if not channel_regex:
+                    # Try to get channel's configured regex
+                    try:
+                        regex_matcher = get_regex_matcher()
+                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id))
+                    except Exception:
+                        channel_regex = '.*'
+                
+                # Create session (skip stream refresh as we did it once above)
+                session_id = session_manager.create_session(
+                    channel_id=channel_id,
+                    regex_filter=channel_regex,
+                    pre_event_minutes=pre_event_minutes,
+                    stagger_ms=stagger_ms,
+                    timeout_ms=timeout_ms,
+                    skip_stream_refresh=True
+                )
+                
+                # Start session
+                if session_manager.start_session(session_id):
+                    created_sessions.append({
+                        "session_id": session_id,
+                        "channel_id": channel_id,
+                        "channel_name": channel.get('name')
+                    })
+                else:
+                    errors.append(f"Failed to start session for channel {channel.get('name')} ({channel_id})")
+                    
+            except Exception as e:
+                errors.append(f"Error creating session for channel {channel.get('name')} ({channel_id}): {e}")
+        
+        # Ensure monitoring service is running if we started any sessions
+        if created_sessions and not monitoring_service._running:
+            monitoring_service.start()
+        
+        return jsonify({
+            "message": f"Started {len(created_sessions)} sessions from group {group_id}",
+            "sessions": created_sessions,
+            "errors": errors
+        }), 200 if created_sessions else 400
+        
+    except Exception as e:
+        logger.error(f"Error creating group stream sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>', methods=['GET'])
+def get_stream_session(session_id):
+    """Get detailed information about a specific session including all streams."""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        
+        # Build detailed session data
+        streams_data = []
+        if session.streams:
+            for stream_id, stream_info in session.streams.items():
+                stream_dict = {
+                    'stream_id': stream_info.stream_id,
+                    'url': stream_info.url,
+                    'name': stream_info.name,
+                    'channel_id': stream_info.channel_id,
+                    'width': stream_info.width,
+                    'height': stream_info.height,
+                    'fps': stream_info.fps,
+                    'bitrate': stream_info.bitrate,
+                    'm3u_account': stream_info.m3u_account,
+                    'status': stream_info.status,
+                    'is_quarantined': stream_info.is_quarantined,
+                    'reliability_score': stream_info.reliability_score,
+                    'screenshot_path': stream_info.screenshot_path,
+                    'last_screenshot_time': stream_info.last_screenshot_time,
+                    'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0,
+                    'metrics_history': [asdict(m) for m in stream_info.metrics_history] if stream_info.metrics_history else []
                 }
-            ]
+                
+                # Calculate review time remaining
+                if stream_info.status == 'review':
+                    time_in_review = time.time() - stream_info.last_status_change
+                    review_limit = session_manager.get_review_duration()
+                    remaining = max(0, review_limit - time_in_review)
+                    stream_dict['review_time_remaining'] = remaining
+                
+                streams_data.append(stream_dict)
+        
+        # Sort streams to match Dispatcharr channel order
+        # This ensures the frontend sees the exact same order as Dispatcharr
+        try:
+            from udi import get_udi_manager
+            udi = get_udi_manager()
+            channel = udi.get_channel_by_id(session.channel_id)
+            
+            if channel and 'streams' in channel:
+                # Create a map of stream_id -> index for O(1) lookup
+                order_map = {sid: i for i, sid in enumerate(channel['streams'])}
+                
+                # Sort: 
+                # 1. Streams in Dispatcharr (by index)
+                # 2. Streams not in Dispatcharr (e.g. quarantined) - put at end
+                # 3. Quarantined streams sorted by reliability score as tie breaker
+                
+                def get_sort_key(stream_data):
+                    sid = stream_data['stream_id']
+                    if sid in order_map:
+                        return (0, order_map[sid])
+                    return (1, -stream_data['reliability_score']) # Non-channel streams sorted by score desc
+                
+                streams_data.sort(key=get_sort_key)
+            else:
+                # Fallback if channel not found: sort by reliability score
+                streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+                
+        except Exception as e:
+            logger.warning(f"Failed to sort streams by channel order: {e}")
+            # Fallback
+            streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+        
+        session_dict = {
+            'session_id': session.session_id,
+            'channel_id': session.channel_id,
+            'channel_name': session.channel_name,
+            'regex_filter': session.regex_filter,
+            'created_at': session.created_at,
+            'is_active': session.is_active,
+            'pre_event_minutes': session.pre_event_minutes,
+            'stagger_ms': session.stagger_ms,
+            'timeout_ms': session.timeout_ms,
+            'probe_interval_ms': session.probe_interval_ms,
+            'screenshot_interval_seconds': session.screenshot_interval_seconds,
+            'window_size': session.window_size,
+            'streams': streams_data,
+            # EPG event info
+            'epg_event_id': session.epg_event_id,
+            'epg_event_title': session.epg_event_title,
+            'epg_event_start': session.epg_event_start,
+            'epg_event_end': session.epg_event_end,
+            'epg_event_description': session.epg_event_description,
+            # Channel info
+            'channel_logo_url': session.channel_logo_url,
+            'channel_tvg_id': session.channel_tvg_id,
+            # Auto-creation info
+            'auto_created': session.auto_created,
+            'auto_create_rule_id': session.auto_create_rule_id
         }
         
-    Returns:
-        JSON object with created profile
-    """
-    try:
-
-        data = request.get_json()
+        return jsonify(session_dict), 200
         
-        if not data or 'name' not in data:
-            return jsonify({"error": "Missing required field: name"}), 400
-        
-        manager = get_match_profiles_manager()
-        profile = manager.create_profile(
-            name=data['name'],
-            description=data.get('description'),
-            steps=data.get('steps', [])
-        )
-        
-        return jsonify(profile.to_dict()), 201
     except Exception as e:
-        logger.error(f"Error creating match profile: {e}")
+        logger.error(f"Error getting stream session {session_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/match-profiles/<int:profile_id>', methods=['PUT', 'PATCH'])
-@log_function_call
-def update_match_profile(profile_id):
-    """Update a match profile.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Request body:
-        {
-            "name": "Updated Name",
-            "description": "Updated description",
-            "steps": [...],
-            "enabled": true
-        }
-        
-    Returns:
-        JSON object with updated profile
-    """
+@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/quarantine', methods=['POST'])
+def quarantine_stream(session_id, stream_id):
+    """Quarantine a stream in a session."""
     try:
-
-        data = request.get_json()
+        session_manager = get_session_manager()
         
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
+        if not session_manager.quarantine_stream(session_id, stream_id):
+            return jsonify({"error": "Failed to quarantine stream. It may already be quarantined or session/stream not found."}), 400
+            
+        return jsonify({"success": True}), 200
         
-        manager = get_match_profiles_manager()
-        profile = manager.update_profile(
-            profile_id=profile_id,
-            name=data.get('name'),
-            description=data.get('description'),
-            steps=data.get('steps'),
-            enabled=data.get('enabled')
-        )
-        
-        if not profile:
-            return jsonify({"error": "Profile not found"}), 404
-        
-        return jsonify(profile.to_dict()), 200
     except Exception as e:
-        logger.error(f"Error updating match profile {profile_id}: {e}")
+        logger.error(f"Error quarantining stream {stream_id} in {session_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/match-profiles/<int:profile_id>', methods=['DELETE'])
-@log_function_call
-def delete_match_profile(profile_id):
-    """Delete a match profile.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Returns:
-        JSON with success message
-    """
+@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/revive', methods=['POST'])
+def revive_stream(session_id, stream_id):
+    """Revive a quarantined stream in a session"""
     try:
-
-        manager = get_match_profiles_manager()
+        session_manager = get_session_manager()
         
-        if not manager.delete_profile(profile_id):
-            return jsonify({"error": "Profile not found"}), 404
+        if not session_manager.revive_stream(session_id, stream_id):
+            return jsonify({"error": "Failed to revive stream. It may not be quarantined or session not found."}), 400
+            
+        return jsonify({"success": True}), 200
         
-        return jsonify({"message": "Profile deleted successfully"}), 200
     except Exception as e:
-        logger.error(f"Error deleting match profile {profile_id}: {e}")
+        logger.error(f"Error reviving stream {stream_id} in {session_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/match-profiles/<int:profile_id>/test', methods=['POST'])
-@log_function_call
-def test_match_profile(profile_id):
-    """Test a match profile against stream data.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Request body:
-        {
-            "stream_name": "ESPN HD",
-            "stream_url": "http://example.com/stream",
-            "stream_tvg_id": "ESPN.us",
-            "channel_name": "Sports",
-            "channel_group": "Sports Channels",
-            "m3u_account_name": "Primary Provider"
-        }
-        
-    Returns:
-        JSON with test results
-    """
+@app.route('/api/stream-sessions/<session_id>/start', methods=['POST'])
+def start_stream_session(session_id):
+    """Start monitoring for a session."""
     try:
-
-        manager = get_match_profiles_manager()
+        session_manager = get_session_manager()
         
-        profile = manager.get_profile(profile_id)
-        if not profile:
-            return jsonify({"error": "Profile not found"}), 404
+        if not session_manager.start_session(session_id):
+            return jsonify({"error": "Failed to start session"}), 400
         
-        data = request.get_json() or {}
+        # Ensure monitoring service is running
+        monitoring_service = get_monitoring_service()
+        if not monitoring_service._running:
+            monitoring_service.start()
         
-        # Apply variables if provided
-        if any(k in data for k in ['channel_name', 'channel_group', 'm3u_account_name']):
-            profile = manager.apply_profile_to_variables(
-                profile,
-                channel_name=data.get('channel_name', ''),
-                channel_group=data.get('channel_group', ''),
-                m3u_account_name=data.get('m3u_account_name', '')
-            )
+        return jsonify({"message": "Session started successfully"}), 200
         
-        # Test against stream data
-        result = manager.test_profile_against_stream(
-            profile,
-            stream_name=data.get('stream_name', ''),
-            stream_url=data.get('stream_url', ''),
-            stream_tvg_id=data.get('stream_tvg_id', '')
-        )
-        
-        return jsonify(result), 200
     except Exception as e:
-        logger.error(f"Error testing match profile {profile_id}: {e}")
+        logger.error(f"Error starting stream session {session_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>/stop', methods=['POST'])
+def stop_stream_session(session_id):
+    """Stop monitoring for a session."""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.stop_session(session_id):
+            return jsonify({"error": "Failed to stop session"}), 400
+        
+        return jsonify({"message": "Session stopped successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error stopping stream session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>', methods=['DELETE'])
+def delete_stream_session(session_id):
+    """Delete a session."""
+    try:
+        session_manager = get_session_manager()
+        
+        if not session_manager.delete_session(session_id):
+            return jsonify({"error": "Session not found"}), 404
+        
+        return jsonify({"message": "Session deleted successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting stream session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/batch/stop', methods=['POST'])
+def batch_stop_sessions():
+    """Stop multiple monitoring sessions."""
+    try:
+        data = request.json
+        session_ids = data.get('session_ids', [])
+        
+        if not session_ids:
+            return jsonify({"error": "No session_ids provided"}), 400
+            
+        session_manager = get_session_manager()
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        for session_id in session_ids:
+            if session_manager.stop_session(session_id):
+                success_count += 1
+            else:
+                failed_count += 1
+                errors.append(f"Failed to stop session {session_id}")
+        
+        return jsonify({
+            "message": f"Processed {len(session_ids)} sessions",
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in batch stop sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/batch/delete', methods=['POST'])
+def batch_delete_sessions():
+    """Delete multiple monitoring sessions."""
+    try:
+        data = request.json
+        session_ids = data.get('session_ids', [])
+        
+        if not session_ids:
+            return jsonify({"error": "No session_ids provided"}), 400
+            
+        session_manager = get_session_manager()
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        for session_id in session_ids:
+            if session_manager.delete_session(session_id):
+                success_count += 1
+            else:
+                failed_count += 1
+                errors.append(f"Failed to delete session {session_id}")
+        
+        return jsonify({
+            "message": f"Processed {len(session_ids)} sessions",
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in batch delete sessions: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/metrics', methods=['GET'])
+def get_stream_metrics(session_id, stream_id):
+    """Get historical metrics for a stream in a session."""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        
+        stream_info = session.streams.get(stream_id)
+        if not stream_info:
+            return jsonify({"error": "Stream not found in session"}), 404
+        
+        # Get metrics history
+        metrics_data = []
+        if stream_info.metrics_history:
+            for metric in stream_info.metrics_history:
+                metrics_data.append({
+                    'timestamp': metric.timestamp,
+                    'speed': metric.speed,
+                    'bitrate': metric.bitrate,
+                    'fps': metric.fps,
+                    'is_alive': metric.is_alive,
+                    'buffering': metric.buffering,
+                    'reliability_score': getattr(metric, 'reliability_score', 50.0),
+                    'status': getattr(metric, 'status', 'review'),
+                    'rank': getattr(metric, 'rank', None)
+                })
+        
+        return jsonify({
+            'stream_id': stream_id,
+            'metrics': metrics_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting stream metrics: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# Serve screenshots
+@app.route('/data/screenshots/<filename>')
+def serve_screenshot(filename):
+    """Serve screenshot files."""
+    try:
+        screenshots_dir = CONFIG_DIR / 'screenshots'
+        return send_from_directory(screenshots_dir, filename)
+    except Exception as e:
+        logger.error(f"Error serving screenshot {filename}: {e}")
+        return jsonify({"error": "Screenshot not found"}), 404
+
+
+@app.route('/api/stream-sessions/<session_id>/alive-screenshots', methods=['GET'])
+def get_alive_screenshots(session_id):
+    """Get screenshots and info for all alive (non-quarantined) streams in a session."""
+    try:
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
+        
+        # Get all alive streams with screenshots
+        screenshots_data = []
+        if session.streams:
+            for stream_id, stream_info in session.streams.items():
+                if not stream_info.is_quarantined and stream_info.screenshot_path:
+                    screenshots_data.append({
+                        'stream_id': stream_info.stream_id,
+                        'stream_name': stream_info.name,
+                        'screenshot_url': f"/data/screenshots/{Path(stream_info.screenshot_path).name}",
+                        'reliability_score': stream_info.reliability_score,
+                        'm3u_account': stream_info.m3u_account
+                    })
+        
+        # Sort by reliability score descending
+        screenshots_data.sort(key=lambda x: x['reliability_score'], reverse=True)
+        
+        return jsonify({
+            'session_id': session_id,
+            'screenshots': screenshots_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting alive screenshots for session {session_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+
+
+
+@app.route('/api/proxy/status', methods=['GET'])
+def get_proxy_status():
+    """Get current proxy status showing which streams are being played."""
+    try:
+        udi = get_udi_manager()
+        proxy_status = udi.get_proxy_status()
+        
+        return jsonify(proxy_status), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting proxy status: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/proxy/playing-streams', methods=['GET'])
+def get_playing_streams():
+    """Get list of stream IDs that are currently being played."""
+    try:
+        udi = get_udi_manager()
+        playing_stream_ids = udi.get_playing_stream_ids()
+        
+        return jsonify({
+            "playing_stream_ids": list(playing_stream_ids),
+            "count": len(playing_stream_ids)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting playing streams: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-viewer/<int:stream_id>', methods=['GET'])
+def get_stream_viewer_url(stream_id):
+    """Get the stream's direct URL for live viewing in browser."""
+    try:
+        udi = get_udi_manager()
+        stream = udi.get_stream_by_id(stream_id)
+        
+        if not stream:
+            return jsonify({
+                'success': False,
+                'error': f'Stream {stream_id} not found'
+            }), 404
+        
+        stream_url = stream.get('url', '')
+        if not stream_url:
+            return jsonify({
+                'success': False,
+                'error': f'Stream {stream_id} has no URL'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'stream_url': stream_url,
+            'stream_id': stream_id,
+            'stream_name': stream.get('name', 'Unknown')
+        })
+    except Exception as e:
+        logger.error(f"Error getting stream viewer URL for stream {stream_id}: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
+def create_session_from_event(event_id):
+    """Create a monitoring session from a scheduled event."""
+    try:
+        scheduling_service = get_scheduling_service()
+        session_id = scheduling_service.create_session_from_event(event_id)
+        
+        if not session_id:
+            return jsonify({"error": "Failed to create session from event"}), 400
+        
+        return jsonify({
+            "session_id": session_id,
+            "message": "Session created successfully from event"
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating session from event {event_id}: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 
 
 # Serve React app for all frontend routes (catch-all - must be last!)
@@ -4307,6 +4785,39 @@ def serve_frontend(path):
             return send_file(static_folder / 'index.html')
         except FileNotFoundError:
             return jsonify({"error": "Frontend not found"}), 404
+
+# ==================== Settings API ====================
+
+@app.route('/api/settings/session', methods=['GET', 'POST'])
+def handle_session_settings():
+    """Get or update session settings (like review duration)."""
+    try:
+        session_manager = get_session_manager()
+        
+        if request.method == 'GET':
+            return jsonify({
+                "review_duration": session_manager.get_review_duration()
+            })
+            
+        elif request.method == 'POST':
+            data = request.json
+            duration = data.get('review_duration')
+            if duration is not None:
+                try:
+                    val = float(duration)
+                    if val < 0:
+                        return jsonify({"error": "Duration must be positive"}), 400
+                    session_manager.set_review_duration(val)
+                    return jsonify({"message": "Settings updated", "review_duration": val})
+                except ValueError:
+                    return jsonify({"error": "Invalid duration"}), 400
+            
+            return jsonify({"error": "No settings provided"}), 400
+            
+    except Exception as e:
+        logger.error(f"Error handling session settings: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     import argparse
@@ -4393,5 +4904,13 @@ if __name__ == '__main__':
             logger.info("EPG refresh processor auto-started")
     except Exception as e:
         logger.error(f"Failed to auto-start EPG refresh processor: {e}")
+    
+    # Auto-start stream monitoring service (always starts, independent of wizard)
+    try:
+        monitoring_service = get_monitoring_service()
+        monitoring_service.start()
+        logger.info("Stream monitoring service auto-started")
+    except Exception as e:
+        logger.error(f"Failed to auto-start stream monitoring service: {e}")
     
     app.run(host=args.host, port=args.port, debug=args.debug)

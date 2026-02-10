@@ -48,7 +48,15 @@ class SchedulingService:
         self._scheduled_events = self._load_scheduled_events()
         self._auto_create_rules = self._load_auto_create_rules()
         self._executed_events = self._load_executed_events()
+        self._regex_matcher = None  # Lazy-loaded regex matcher
         logger.info("Scheduling service initialized")
+    
+    def _get_regex_matcher(self):
+        """Get or create regex matcher instance (singleton pattern)."""
+        if self._regex_matcher is None:
+            from automated_stream_manager import RegexChannelMatcher
+            self._regex_matcher = RegexChannelMatcher()
+        return self._regex_matcher
     
     def _load_config(self) -> Dict[str, Any]:
         """Load scheduling configuration from file.
@@ -318,6 +326,7 @@ class SchedulingService:
                 - program_end_time: Program end time (ISO format)
                 - program_title: Program title
                 - minutes_before: Minutes before program start to check
+                - schedule_type: Type of schedule - 'check' or 'monitoring' (default: 'check')
                 
         Returns:
             Created event dictionary
@@ -352,6 +361,11 @@ class SchedulingService:
                 if logo:
                     logo_url = logo.get('cache_url') or logo.get('url')
             
+            # Get schedule type (default to 'check' for backward compatibility)
+            schedule_type = event_data.get('schedule_type', 'check')
+            if schedule_type not in ['check', 'monitoring']:
+                schedule_type = 'check'
+            
             # Create event
             event = {
                 'id': event_id,
@@ -364,13 +378,14 @@ class SchedulingService:
                 'minutes_before': minutes_before,
                 'check_time': check_time.isoformat(),
                 'tvg_id': channel.get('tvg_id'),
+                'schedule_type': schedule_type,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self._scheduled_events.append(event)
             self._save_scheduled_events()
             
-            logger.info(f"Created scheduled event {event_id} for channel {channel.get('name')} at {check_time}")
+            logger.info(f"Created scheduled event {event_id} ({schedule_type}) for channel {channel.get('name')} at {check_time}")
             return event
     
     def delete_scheduled_event(self, event_id: str) -> bool:
@@ -417,7 +432,7 @@ class SchedulingService:
         return due_events
     
     def execute_scheduled_check(self, event_id: str, stream_checker_service) -> bool:
-        """Execute a scheduled channel check and remove the event.
+        """Execute a scheduled channel check or create monitoring session and remove the event.
         
         Args:
             event_id: Event ID to execute
@@ -442,23 +457,47 @@ class SchedulingService:
             channel_id = event.get('channel_id')
             program_title = event.get('program_title', 'Unknown Program')
             program_start_time = event.get('program_start_time')
+            schedule_type = event.get('schedule_type', 'check')  # Default to 'check' for backward compatibility
             
             # Validate required fields
             if not channel_id or not program_start_time:
                 logger.error(f"Scheduled event {event_id} missing required fields (channel_id or program_start_time)")
                 return False
         
-        # Release lock before executing the long-running channel check
-        logger.info(f"Executing scheduled check for channel {channel_id} (program: {program_title})")
+        # Release lock before executing the long-running operation
+        logger.info(f"Executing scheduled {schedule_type} for channel {channel_id} (program: {program_title})")
         
         try:
-            # Execute the check with program context (without holding the lock)
-            result = stream_checker_service.check_single_channel(
-                channel_id, 
-                program_name=program_title
-            )
+            if schedule_type == 'monitoring':
+                # Create and start monitoring session
+                session_id = self.create_session_from_event(event_id)
+                
+                if session_id:
+                    # Start the session
+                    from stream_session_manager import get_session_manager
+                    session_manager = get_session_manager()
+                    
+                    if session_manager.start_session(session_id):
+                        logger.info(f"Started monitoring session {session_id} for event {event_id}")
+                        success = True
+                    else:
+                        logger.error(f"Failed to start monitoring session {session_id} for event {event_id}")
+                        success = False
+                else:
+                    logger.error(f"Failed to create monitoring session for event {event_id}")
+                    success = False
+            else:
+                # Execute traditional stream check
+                result = stream_checker_service.check_single_channel(
+                    channel_id, 
+                    program_name=program_title
+                )
+                success = result.get('success', False)
+                
+                if not success:
+                    logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
             
-            if result.get('success'):
+            if success:
                 # Re-acquire lock only to delete the event and record execution
                 with self._lock:
                     # Remove the event and check if it was actually present
@@ -467,7 +506,7 @@ class SchedulingService:
                     
                     if len(self._scheduled_events) < initial_count:
                         self._save_scheduled_events()
-                        logger.info(f"Scheduled event {event_id} executed and removed successfully")
+                        logger.info(f"Scheduled event {event_id} ({schedule_type}) executed and removed successfully")
                     else:
                         logger.warning(f"Scheduled event {event_id} was already removed by another thread")
                     
@@ -477,12 +516,76 @@ class SchedulingService:
                 
                 return True
             else:
-                logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
                 return False
                 
         except Exception as e:
             logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
             return False
+    
+    def create_session_from_event(self, event_id: str) -> Optional[str]:
+        """Create a monitoring session from a scheduled event.
+        
+        Args:
+            event_id: Event ID to create session from
+            
+        Returns:
+            Session ID if created successfully, None otherwise
+        """
+        # Find the event
+        with self._lock:
+            event = None
+            for e in self._scheduled_events:
+                if e.get('id') == event_id:
+                    event = e
+                    break
+            
+            if not event:
+                logger.warning(f"Event {event_id} not found for session creation")
+                return None
+        
+        # Create session without holding lock
+        try:
+            from stream_session_manager import get_session_manager
+            
+            session_manager = get_session_manager()
+            
+            # Build EPG event data
+            epg_event = {
+                'id': event.get('id'),
+                'title': event.get('program_title'),
+                'start_time': event.get('program_start_time'),
+                'end_time': event.get('program_end_time'),
+                'description': event.get('program_description', '')
+            }
+            
+            # Get channel's configured regex from regex matcher
+            channel_id = event.get('channel_id')
+            regex_filter = ".*"  # Default
+            
+            # Try to get channel-specific regex from regex matcher
+            try:
+                regex_matcher = self._get_regex_matcher()
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
+                logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}")
+            except Exception as e:
+                logger.debug(f"Could not get channel regex from matcher: {e}")
+            
+            # Create session
+            session_id = session_manager.create_session(
+                channel_id=channel_id,
+                regex_filter=regex_filter,
+                pre_event_minutes=event.get('minutes_before', 30),
+                epg_event=epg_event,
+                auto_created=event.get('auto_created', False),
+                auto_create_rule_id=event.get('auto_create_rule_id')
+            )
+            
+            logger.info(f"Created monitoring session {session_id} from event {event_id}")
+            return session_id
+            
+        except Exception as e:
+            logger.error(f"Error creating session from event {event_id}: {e}", exc_info=True)
+            return None
     
     def _load_auto_create_rules(self) -> List[Dict[str, Any]]:
         """Load auto-create rules from file.
@@ -641,6 +744,7 @@ class SchedulingService:
                 - channel_id: Single channel ID for backward compatibility (optional)
                 - regex_pattern: Regex pattern to match program names
                 - minutes_before: Minutes before program start to check
+                - schedule_type: Type of schedule - 'check' or 'monitoring' (default: 'check')
                 
         Returns:
             Created rule dictionary
@@ -734,6 +838,11 @@ class SchedulingService:
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
             
+            # Get schedule type (default to 'check' for backward compatibility)
+            schedule_type = rule_data.get('schedule_type', 'check')
+            if schedule_type not in ['check', 'monitoring']:
+                schedule_type = 'check'
+            
             # Create rule
             rule = {
                 'id': rule_id,
@@ -744,6 +853,7 @@ class SchedulingService:
                 'channels_info': channels_info,  # Store full channel info for display (expanded)
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
+                'schedule_type': schedule_type,
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
@@ -756,7 +866,7 @@ class SchedulingService:
                 desc_parts.append(f"{len(channel_ids)} individual channel(s)")
             if channel_group_ids:
                 desc_parts.append(f"{len(channel_group_ids)} channel group(s)")
-            logger.info(f"Created auto-create rule {rule_id} '{rule_data['name']}' for {', '.join(desc_parts)} (total {len(channels_info)} channels)")
+            logger.info(f"Created auto-create rule {rule_id} '{rule_data['name']}' ({schedule_type}) for {', '.join(desc_parts)} (total {len(channels_info)} channels)")
             
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
@@ -1158,6 +1268,9 @@ class SchedulingService:
                         if logo:
                             logo_url = logo.get('cache_url') or logo.get('url')
                     
+                    # Get schedule type from rule (default to 'check' for backward compatibility)
+                    schedule_type = rule.get('schedule_type', 'check')
+                    
                     event_data = {
                         'id': str(uuid.uuid4()),
                         'channel_id': channel_id,
@@ -1169,6 +1282,7 @@ class SchedulingService:
                         'minutes_before': minutes_before,
                         'check_time': check_time.isoformat(),
                         'tvg_id': tvg_id,
+                        'schedule_type': schedule_type,
                         'created_at': datetime.now(timezone.utc).isoformat(),
                         'auto_created': True,
                         'auto_create_rule_id': rule.get('id'),
