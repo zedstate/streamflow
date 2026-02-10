@@ -25,6 +25,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [playingStreamIds, setPlayingStreamIds] = useState(new Set());
   const [cursorTime, setCursorTime] = useState(null); // Current timestamp of the timeline
   const [isLive, setIsLive] = useState(true); // Whether we are following the latest updates
+  const [zoomLevel, setZoomLevel] = useState(60); // Window size in seconds (default 1 minute)
   const { toast } = useToast();
 
   // Helper to find the metric closest to the cursor time
@@ -627,6 +628,8 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
             isLive={isLive}
             onLiveClick={handleLiveClick}
             events={timelineEvents}
+            zoomLevel={zoomLevel}
+            onZoomChange={setZoomLevel}
           />
         )
       }
@@ -658,7 +661,7 @@ function StatsCard({ title, value, suffix = '', icon: Icon, variant = 'default' 
 }
 
 // Streams Table Component
-function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false, cursorTime, isLive }) {
+function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false, cursorTime, isLive, zoomLevel }) {
   const formatQuality = (stream) => {
     if (!stream.width || !stream.height) return 'Unknown';
     return `${stream.width}x${stream.height}`;
@@ -778,7 +781,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
               {!showQuarantined && (
                 <TableRow>
                   <TableCell colSpan={8} className="bg-muted/30 p-2">
-                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} />
+                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
                   </TableCell>
                 </TableRow>
               )}
@@ -791,7 +794,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
 }
 
 // Speed Metrics Chart Component
-function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive }) {
+function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel }) {
   const [allMetrics, setAllMetrics] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -822,7 +825,13 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive }) {
       filteredData = allMetrics.filter(m => m.timestamp <= cursorTime);
     }
 
-    return filteredData.map((metric) => {
+    return filteredData.filter(m => {
+      // Only show metrics within the zoom window relative to cursor
+      // If live, cursorTime is effectively "now" (latest timestamp)
+      const effectiveCursor = isLive ? (filteredData[filteredData.length - 1]?.timestamp || Math.floor(Date.now() / 1000)) : cursorTime;
+      const start = effectiveCursor - zoomLevel;
+      return m.timestamp >= start && m.timestamp <= effectiveCursor;
+    }).map((metric) => {
       // Timestamp is in Unix seconds, convert to milliseconds for JavaScript Date
       const date = new Date(metric.timestamp * 1000);
       // Format as HH:MM:SS for better granularity
@@ -834,8 +843,8 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive }) {
         speed: metric.speed || 0,
         timestamp: metric.timestamp, // Keep original for reference
       };
-    }).slice(-20); // Keep last 20 data points
-  }, [allMetrics, cursorTime, isLive]);
+    });
+  }, [allMetrics, cursorTime, isLive, zoomLevel]);
 
   if (loading) {
     return (
