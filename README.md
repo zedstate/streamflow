@@ -93,14 +93,25 @@ docs/
 
 ## Documentation
 
-- [Deployment Guide](docs/DEPLOYMENT.md) - Installation and deployment instructions
-- [API Documentation](docs/API.md) - REST API endpoints and usage
-- [Features](docs/FEATURES.md) - Detailed feature descriptions
-- [Stream Monitoring](docs/STREAM_MONITORING.md) - Advanced stream quality monitoring system
+### User Guides
+- [Getting Started](docs/user-guide/01-getting-started.md) - Installation and first-time configuration
+- [Automation Profiles](docs/user-guide/02-automation-profiles.md) - M3U accounts, pipeline modes, and scheduling
+- [Channel Configuration](docs/CHANNEL_CONFIGURATION_FEATURES.md) - Channel management and regex patterns
+- [Stream Management](docs/FEATURES.md) - Stream checking and quality scoring
+- [Stream Monitoring](docs/STREAM_MONITORING.md) - Advanced stream quality monitoring
 - [Channel Profiles](docs/CHANNEL_PROFILES_FEATURE.md) - Profile management and dead stream handling
-- [Concurrent Stream Limits](docs/CONCURRENT_STREAM_LIMITS.md) - Per-account stream limiting
+
+### Technical Documentation
+- [Deployment Guide](docs/DEPLOYMENT.md) - Installation and deployment instructions
 - [Pipeline System](docs/PIPELINE_SYSTEM.md) - Automation pipeline modes
+- [Concurrent Stream Limits](docs/CONCURRENT_STREAM_LIMITS.md) - Per-account stream limiting
 - [Debug Mode Guide](docs/DEBUG_MODE.md) - Troubleshooting with enhanced logging
+
+### API Reference
+- [REST API Documentation](docs/API.md) - Complete API reference
+- [Changelog](docs/CHANGELOG.md) - Version history and updates
+
+For the full documentation index, see [docs/README.md](docs/README.md).
 
 ## Requirements
 

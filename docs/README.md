@@ -1,50 +1,62 @@
-# StreamFlow for Dispatcharr - Documentation
+# StreamFlow Documentation
 
-This directory contains detailed documentation for StreamFlow for Dispatcharr.
+Welcome to the StreamFlow documentation. This guide is organized into three main sections: **User Guides**, **Technical Documentation**, and **API Reference**.
 
-## Core Documentation
+## User Guides
 
-- **[FEATURES.md](FEATURES.md)** - Comprehensive feature descriptions and usage
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Installation and deployment instructions
-- **[API.md](API.md)** - REST API endpoints and usage examples
-- **[CHANGELOG.md](CHANGELOG.md)** - Bug fixes and improvements history
+Comprehensive guides for using StreamFlow:
 
-## Feature Guides
+1. **[Getting Started](user-guide/01-getting-started.md)** - Installation, first-time setup, and basic concepts
+2. **[Automation Profiles](user-guide/02-automation-profiles.md)** - M3U accounts, profiles, pipeline modes, and scheduling
+3. **[Channel Configuration](user-guide/03-channel-configuration.md)** - Channel management, regex patterns, and mass operations
+4. **[Stream Management](user-guide/04-stream-management.md)** - Stream checking, quality scoring, and ordering
+5. **[Monitoring](user-guide/05-monitoring.md)** - Stream monitoring system, sessions, and timeline
+6. **[Troubleshooting](user-guide/06-troubleshooting.md)** - Common issues, debug mode, and performance tips
 
-### M3U Account Management
-- **[M3U_ACCOUNTS_AND_PROFILES.md](M3U_ACCOUNTS_AND_PROFILES.md)** - Complete guide to M3U accounts, profiles, and stream limits
-- **[CONCURRENT_STREAM_LIMITS.md](CONCURRENT_STREAM_LIMITS.md)** - Concurrent stream limit implementation
+## Technical Documentation
 
-### Channel Configuration
-- **[CHANNEL_CONFIGURATION_FEATURES.md](CHANNEL_CONFIGURATION_FEATURES.md)** - Channel management, regex patterns, and ordering
-- **[MASS_REGEX_EDIT.md](MASS_REGEX_EDIT.md)** - Bulk regex pattern editing across multiple channels
-- **[MASS_REGEX_ASSIGNMENT.md](MASS_REGEX_ASSIGNMENT.md)** - Assigning patterns to multiple channels
-- **[CHANNEL_PROFILES_FEATURE.md](CHANNEL_PROFILES_FEATURE.md)** - Channel profile system
-- **[CHANNEL_GROUP_MANAGEMENT.md](CHANNEL_GROUP_MANAGEMENT.md)** - Managing channel groups
+In-depth technical documentation for developers and advanced users:
 
-### Stream Checking
-- **[STREAM_STATS_STANDARDIZATION.md](STREAM_STATS_STANDARDIZATION.md)** - Stream statistics and quality metrics
-- **[HEALTH_CHECK_BUTTONS.md](HEALTH_CHECK_BUTTONS.md)** - Health check functionality
-- **[UI_PREVIEW_HEALTH_CHECK.md](UI_PREVIEW_HEALTH_CHECK.md)** - UI preview and health checks
+- **[Architecture](technical/architecture.md)** - System components, data flow, and UDI
+- **[Automation System](technical/automation-system.md)** - Automation implementation and scheduling logic
+- **[Storage](technical/storage.md)** - File structure, JSON schemas, and data models
+- **[Performance](technical/performance.md)** - Performance considerations and optimization
 
-### Advanced Features
-- **[PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md)** - Pipeline processing system
-- **[DEBUG_MODE.md](DEBUG_MODE.md)** - Debugging tools and features
+## API Reference
 
-### Experimental Features
-- **[ACESTREAM_FEATURE_STATUS.md](ACESTREAM_FEATURE_STATUS.md)** - AceStream monitoring status
-- **[ACESTREAM_MONITORING_IMPLEMENTATION.md](ACESTREAM_MONITORING_IMPLEMENTATION.md)** - AceStream implementation guide
+API documentation and usage examples:
 
-## Implementation Documentation
-
-- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Architecture and system overview
-- **[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)** - Current implementation status
-- **[IMPLEMENTATION_CONCURRENT_LIMITS.md](IMPLEMENTATION_CONCURRENT_LIMITS.md)** - Concurrent limits implementation details
+- **[REST API](API.md)** - Complete REST API reference
+- **Examples** *(coming soon)* - API usage examples
 
 ## Quick Links
 
-For quick deployment instructions, see the main [README.md](../README.md) in the root directory.
+### Getting Started
+- [Quick Deployment](user-guide/01-getting-started.md#quick-deployment)
+- [First-Time Configuration](user-guide/01-getting-started.md#first-time-configuration)
+- [Basic Concepts](user-guide/01-getting-started.md#basic-concepts)
 
-## Overview
+### Common Tasks
+- [Configure Pipeline Mode](user-guide/02-automation-profiles.md#pipeline-modes)
+- [Set Up M3U Accounts](user-guide/02-automation-profiles.md#m3u-accounts-and-profiles)
+- [Schedule Global Actions](user-guide/02-automation-profiles.md#global-actions)
+- [EPG-Based Scheduling](user-guide/02-automation-profiles.md#epg-based-scheduling)
 
-StreamFlow for Dispatcharr is an automated stream management system for Dispatcharr IPTV services with intelligent quality checking and automatic stream reordering.
+### Advanced Features
+- [Stream Monitoring](user-guide/05-monitoring.md) - Advanced monitoring sessions
+- [Channel Configuration](user-guide/03-channel-configuration.md) - Regex patterns and groups
+- [Concurrent Stream Limits](user-guide/02-automation-profiles.md#concurrent-stream-limiting) - M3U account limits
+
+## Archive
+
+Older implementation and fix documentation has been moved to [archive/](archive/) for reference.
+
+---
+
+## Contributing
+
+Documentation improvements are welcome! Please submit pull requests or open issues for any errors, omissions, or suggestions.
+
+## License
+
+See [LICENSE](../LICENSE) for details.
