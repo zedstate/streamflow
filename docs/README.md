@@ -7,7 +7,7 @@ Welcome to the StreamFlow documentation. This guide is organized into three main
 Comprehensive guides for using StreamFlow:
 
 1. **[Getting Started](user-guide/01-getting-started.md)** - Installation, first-time setup, and basic concepts
-2. **[Automation Profiles](user-guide/02-automation-profiles.md)** - M3U accounts, profiles, pipeline modes, and scheduling
+2. **[Automation Profiles](user-guide/02-automation-profiles.md)** - M3U accounts, profiles, automation configuration, and scheduling
 3. **[Channel Configuration](user-guide/03-channel-configuration.md)** - Channel management, regex patterns, and mass operations
 4. **[Stream Management](user-guide/04-stream-management.md)** - Stream checking, quality scoring, and ordering
 5. **[Monitoring](user-guide/05-monitoring.md)** - Stream monitoring system, sessions, and timeline
@@ -37,7 +37,7 @@ API documentation and usage examples:
 - [Basic Concepts](user-guide/01-getting-started.md#basic-concepts)
 
 ### Common Tasks
-- [Configure Pipeline Mode](user-guide/02-automation-profiles.md#pipeline-modes)
+- [Configure Automation](user-guide/02-automation-profiles.md#automation-controls)
 - [Set Up M3U Accounts](user-guide/02-automation-profiles.md#m3u-accounts-and-profiles)
 - [Schedule Global Actions](user-guide/02-automation-profiles.md#global-actions)
 - [EPG-Based Scheduling](user-guide/02-automation-profiles.md#epg-based-scheduling)

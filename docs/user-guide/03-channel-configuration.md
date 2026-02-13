@@ -420,6 +420,6 @@ Efficient browsing of large channel lists:
 
 **See Also:**
 - [Getting Started](01-getting-started.md) - Basic concepts and setup
-- [Automation Profiles](02-automation-profiles.md) - Pipeline modes and automation
+- [Automation Profiles](02-automation-profiles.md) - Automation patterns and configuration
 - [Stream Management](04-stream-management.md) - Stream checking and scoring
 - [Mass Regex Assignment](../MASS_REGEX_ASSIGNMENT.md) - Detailed bulk operations guide

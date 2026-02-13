@@ -25,7 +25,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 
 ## Features
 
-- **5 Pipeline Modes**: Choose the automation level that fits your needs (from continuous checking to scheduled-only)
+- **Flexible Automation Profiles**: Fine-grained control with individual automation controls, or choose from 5 convenience presets
 - **Advanced Stream Monitoring**: Event-based quality tracking with reliability scoring and screenshot capture
 - **Browsable Timeline**: Interactive video-editor style timeline to scrub through stream history with synchronized metrics
 - **Smart Stream Protection**: Intelligent hysteresis to protect active streams while aggressively replacing idle ones
@@ -66,8 +66,8 @@ All configuration stored in JSON files in `/app/data` (Docker volume):
 - `changelog.json` - Activity history
 
 **Web UI**: Navigate to the **Configuration** page (formerly "Automation Settings") to:
-- Select your pipeline mode (determines when and how streams are checked)
-- Configure scheduled global actions (for pipelines 1.5, 2.5, and 3)
+- Configure individual automation controls or select a preset pattern (determines when and how streams are checked)
+- Configure scheduled global actions
 - Adjust update intervals and analysis settings
 
 **Stream Checker**: View real-time statistics, progress, and manually trigger global actions
@@ -95,7 +95,7 @@ docs/
 
 ### User Guides
 - [Getting Started](docs/user-guide/01-getting-started.md) - Installation and first-time configuration
-- [Automation Profiles](docs/user-guide/02-automation-profiles.md) - M3U accounts, pipeline modes, and scheduling
+- [Automation Profiles](docs/user-guide/02-automation-profiles.md) - M3U accounts, automation configuration, and scheduling
 - [Channel Configuration](docs/CHANNEL_CONFIGURATION_FEATURES.md) - Channel management and regex patterns
 - [Stream Management](docs/FEATURES.md) - Stream checking and quality scoring
 - [Stream Monitoring](docs/STREAM_MONITORING.md) - Advanced stream quality monitoring
@@ -103,7 +103,7 @@ docs/
 
 ### Technical Documentation
 - [Deployment Guide](docs/DEPLOYMENT.md) - Installation and deployment instructions
-- [Pipeline System](docs/PIPELINE_SYSTEM.md) - Automation pipeline modes
+- [Pipeline System](docs/PIPELINE_SYSTEM.md) - Automation configuration and controls
 - [Concurrent Stream Limits](docs/CONCURRENT_STREAM_LIMITS.md) - Per-account stream limiting
 - [Debug Mode Guide](docs/DEBUG_MODE.md) - Troubleshooting with enhanced logging
 

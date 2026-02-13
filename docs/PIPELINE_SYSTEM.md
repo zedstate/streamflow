@@ -132,13 +132,16 @@ StreamFlow uses individual automation controls instead of predefined pipeline mo
 
 If you were using the old `pipeline_mode` configuration, it will be automatically migrated to `automation_controls` when the system starts:
 
-| Old Pipeline Mode | New Automation Controls |
-|------------------|-------------------------|
-| `pipeline_1` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: true`, `scheduled_global_action: false` |
-| `pipeline_1_5` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: true`, `scheduled_global_action: true` |
-| `pipeline_2` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: false`, `scheduled_global_action: false` |
-| `pipeline_2_5` | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: false`, `scheduled_global_action: true` |
-| `pipeline_3` | `auto_m3u_updates: false`, `auto_stream_matching: false`, `auto_quality_checking: false`, `scheduled_global_action: true` |
+| Old Pipeline Mode | New Automation Controls                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `pipeline_1`      | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: true`, `scheduled_global_action: false`   |
+| `pipeline_1_5`    | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: true`, `scheduled_global_action: true`    |
+| `pipeline_2`      | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: false`, `scheduled_global_action: false`  |
+| `pipeline_2_5`    | `auto_m3u_updates: true`, `auto_stream_matching: true`, `auto_quality_checking: false`, `scheduled_global_action: true`   |
+| `pipeline_3`      | `auto_m3u_updates: false`, `auto_stream_matching: false`, `auto_quality_checking: false`, `scheduled_global_action: true` |
+
+> [!NOTE]
+> Pipeline modes 1-3 are still available as convenience presets in the UI, but they simply configure the underlying automation controls described above.
 
 The migration happens automatically and the old `pipeline_mode` key is removed from the configuration file.
 

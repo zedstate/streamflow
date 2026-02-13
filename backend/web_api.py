@@ -3176,7 +3176,6 @@ def create_scheduled_event():
         event = service.create_scheduled_event(event_data)
         
         # Wake up the processor to check for new events immediately
-        global scheduled_event_processor_wake
         if scheduled_event_processor_wake:
             scheduled_event_processor_wake.set()
         
@@ -3267,7 +3266,6 @@ def create_auto_create_rule():
             logger.warning(f"Failed to immediately match programs to new rule: {e}")
         
         # Wake up the processor to check for new events immediately
-        global scheduled_event_processor_wake
         if scheduled_event_processor_wake:
             scheduled_event_processor_wake.set()
         
@@ -3339,7 +3337,6 @@ def update_auto_create_rule(rule_id):
                 logger.warning(f"Failed to immediately match programs to updated rule: {e}")
             
             # Wake up the processor to check for new events immediately
-            global scheduled_event_processor_wake
             if scheduled_event_processor_wake:
                 scheduled_event_processor_wake.set()
             
@@ -3447,7 +3444,6 @@ def import_auto_create_rules():
         result = service.import_auto_create_rules(rules_data)
         
         # Wake up the processor to check for new events immediately
-        global scheduled_event_processor_wake
         if scheduled_event_processor_wake:
             scheduled_event_processor_wake.set()
         

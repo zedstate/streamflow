@@ -74,8 +74,6 @@ def _validate_token(token: str) -> bool:
     Returns:
         bool: True if token is valid, False otherwise
     """
-    global _token_validation_cache
-    
     log_function_call(logger, "_validate_token", token="<redacted>")
     base_url = _get_base_url()
     if not base_url or not token:
@@ -135,7 +133,6 @@ def _clear_token_validation_cache() -> None:
     This should be called when the token changes (e.g., after login or token refresh)
     to ensure the new token is properly validated.
     """
-    global _token_validation_cache
     _token_validation_cache.clear()
     logger.debug("Token validation cache cleared")
 

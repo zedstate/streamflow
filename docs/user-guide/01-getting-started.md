@@ -112,11 +112,8 @@ On first launch, StreamFlow presents a setup wizard to guide you through initial
    - Import regex patterns from JSON file
    - Configure channel regex patterns manually
    
-3. **Pipeline Selection**
-   - Choose automation mode (see [Pipeline System](../technical/pipeline-system.md))
-   - Pipeline 1: Continuous checking with 2-hour immunity (default)
-   - Pipeline 2: Updates and matching only, no automatic checking
-   - Pipeline 3: Scheduled operations only
+3. **Automation Configuration**
+   - Configure individual automation controls (see [Automation Profiles](02-automation-profiles.md))
    
 4. **Schedule Configuration** (if applicable)
    - Set timing for global actions
@@ -130,7 +127,7 @@ Alternatively, configure StreamFlow via the **Configuration** page after deploym
 
 - Navigate to http://localhost:5000
 - Go to **Configuration** in the navigation
-- Adjust pipeline mode, schedules, and analysis parameters
+- Adjust automation configuration, schedules, and analysis parameters
 
 ## Basic Concepts
 
@@ -158,26 +155,12 @@ StreamFlow uses **automation profiles** to control:
 
 See [Automation Profiles](02-automation-profiles.md) for details.
 
-### Pipeline Modes
-
-StreamFlow offers 5 **pipeline modes** controlling automation behavior:
-
-| Pipeline | Description                             | Best For              |
-| -------- | --------------------------------------- | --------------------- |
-| **1**    | Continuous checks with 2-hour immunity  | Balanced automation   |
-| **1.5**  | Pipeline 1 + scheduled global actions   | Enhanced automation   |
-| **2**    | Updates/matching only, no auto-checking | Minimal provider load |
-| **2.5**  | Pipeline 2 + scheduled global actions   | Controlled automation |
-| **3**    | Only scheduled operations               | Maximum control       |
-
-See [Pipeline System](../technical/pipeline-system.md) for detailed pipeline documentation.
-
 ### Data Storage
 
 All configuration is stored in JSON files in the Docker volume at `/app/data`:
 
 - `automation_config.json` - Automation settings (intervals, profiles)
-- `stream_checker_config.json` - Pipeline mode, scheduling, checking parameters
+- `stream_checker_config.json` - Automation configuration, scheduling, checking parameters
 - `channel_regex_config.json` - Regex patterns for stream assignment
 - `profile_config.json` - Channel profile configuration
 - `channel_updates.json` - Channel update tracking
@@ -198,7 +181,7 @@ The **UDI** is StreamFlow's internal cache system:
 
 1. **Set up M3U Accounts** - Configure priorities and concurrent limits in [Automation Profiles](02-automation-profiles.md)
 2. **Configure Channels** - Add regex patterns or enable TVG-ID matching in [Channel Configuration](03-channel-configuration.md)
-3. **Adjust Pipeline** - Choose the right automation mode in [Automation Profiles](02-automation-profiles.md)
+3. **Configure Automation** - Set up automation controls in [Automation Profiles](02-automation-profiles.md)
 
 ### Monitor Streams
 
@@ -235,7 +218,7 @@ See [Architecture](../technical/architecture.md) for detailed technical informat
 ---
 
 **See Also:**
-- [Automation Profiles](02-automation-profiles.md) - Profile system and pipeline modes
+- [Automation Profiles](02-automation-profiles.md) - Profile system and automation controls
 - [Channel Configuration](03-channel-configuration.md) - Regex patterns and channel settings
 - [Stream Management](04-stream-management.md) - Stream checking and quality scoring
 - [Technical Architecture](../technical/architecture.md) - System design and components

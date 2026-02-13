@@ -37,15 +37,10 @@ See [CHANNEL_PROFILES_FEATURE.md](CHANNEL_PROFILES_FEATURE.md) for detailed prof
 - **Bulk Operations**: Save all changes at once
 - **Reset Option**: Discard changes and revert to last saved order
 
-### Pipeline-Based Automation
-StreamFlow offers 5 pipeline modes to match different usage scenarios:
-- **Pipeline 1**: Continuous updates with 2-hour immunity (moderate connection usage)
-- **Pipeline 1.5**: Pipeline 1 + scheduled complete checks (balanced approach)
-- **Pipeline 2**: Updates and matching only, no automatic checking (minimal connection usage)
-- **Pipeline 2.5**: Pipeline 2 + scheduled complete checks (controlled automation)
-- **Pipeline 3**: Only scheduled operations (maximum control)
+### Automation Profiles
+StreamFlow uses Automation Profiles with individual automation controls for fine-grained configuration of the automation system.
 
-See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation.
+See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed automation configuration documentation.
 
 ### Automated M3U Playlist Management
 - Automatically refreshes playlists every 5 minutes (configurable)
@@ -409,7 +404,7 @@ Automatically create scheduled events based on program name patterns:
 
 ### Configuration Page (unified)
 - **Pipeline Selection**: Choose from 5 automation modes with visual cards and hints
-  - Descriptive hints for each pipeline mode
+  - Descriptive hints for each automation control
 - **Schedule Configuration**: Set timing for global actions (pipelines 1.5, 2.5, 3)
   - Daily or monthly frequency
   - Precise time selection (hour and minute)
@@ -445,7 +440,7 @@ Automatically create scheduled events based on program name patterns:
 - Guided initial configuration
 - Dispatcharr connection testing
 - **JSON Pattern Import**: Import channel regex patterns from JSON file
-- **Pipeline Hints**: Inline descriptions for each pipeline mode
+- **Control Hints**: Inline descriptions for each automation control
 - **Smart Navigation**: Save settings automatically when advancing
 - **Autostart Default**: Automation enabled by default
 - Configuration validation

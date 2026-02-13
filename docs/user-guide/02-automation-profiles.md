@@ -1,11 +1,10 @@
 # Automation Profiles
 
-This guide covers StreamFlow's automation system, including M3U account management, profile configuration, pipeline modes, and scheduling.
+This guide covers StreamFlow's automation system, including M3U account management, profile configuration, and scheduling.
 
 ## Table of Contents
 - [M3U Accounts and Profiles](#m3u-accounts-and-profiles)
 - [Automation Controls](#automation-controls)
-- [Pipeline Modes](#pipeline-modes)
 - [Global Actions](#global-actions)
 - [EPG-Based Scheduling](#epg-based-scheduling)
 
@@ -134,66 +133,6 @@ StreamFlow uses individual automation controls for fine-grained control over eac
 
 ---
 
-## Pipeline Modes
-
-StreamFlow offers 5 pre-configured pipeline modes as common configuration patterns:
-
-| Pipeline | Description                             | Automation Controls                                |
-| -------- | --------------------------------------- | -------------------------------------------------- |
-| **1**    | Continuous checks with 2-hour immunity  | Updates: ✓, Matching: ✓, Checking: ✓, Scheduled: ✗ |
-| **1.5**  | Pipeline 1 + scheduled global actions   | Updates: ✓, Matching: ✓, Checking: ✓, Scheduled: ✓ |
-| **2**    | Updates/matching only, no auto-checking | Updates: ✓, Matching: ✓, Checking: ✗, Scheduled: ✗ |
-| **2.5**  | Pipeline 2 + scheduled global actions   | Updates: ✓, Matching: ✓, Checking: ✗, Scheduled: ✓ |
-| **3**    | Only scheduled operations               | Updates: ✗, Matching: ✗, Checking: ✗, Scheduled: ✓ |
-
-### Pipeline 1: Continuous Automation
-
-**Use Case**: Users without connection limits who want continuous updates
-
-**Behavior**:
-- Updates M3U playlists at configured interval
-- Matches new streams to channels via regex
-- Checks channels that received new streams (respects 2-hour immunity)
-
-### Pipeline 1.5: Enhanced Automation
-
-**Use Case**: Balanced automation with periodic comprehensive checks
-
-**Behavior**:
-- Everything from Pipeline 1
-- Plus scheduled global action to check ALL channels (bypasses immunity)
-
-### Pipeline 2: Updates and Matching Only
-
-**Use Case**: Users with strict connection limits who only want stream discovery
-
-**Behavior**:
-- Updates M3U playlists at configured interval
-- Matches new streams to channels via regex
-- NO automatic stream checking
-
-### Pipeline 2.5: Controlled Automation
-
-**Use Case**: Moderate limits with scheduled maintenance
-
-**Behavior**:
-- Everything from Pipeline 2
-- Plus scheduled global action for periodic comprehensive checks
-
-### Pipeline 3: Scheduled Actions Only
-
-**Use Case**: Users who want complete control
-
-**Behavior**:
-- NO automatic updates or matching between scheduled actions
-- ONLY scheduled global action runs at specified time
-- Updates all playlists, matches all streams, checks ALL channels
-
-### Migration from Legacy Modes
-
-If using old `pipeline_mode` configuration, it is automatically migrated to `automation_controls` on startup.
-
----
 
 ## Global Actions
 
@@ -306,7 +245,7 @@ Automatically create scheduled events based on program name patterns.
 ### Via Web UI (Recommended)
 
 1. Navigate to **Configuration** page
-2. Select pipeline mode or toggle individual controls
+2. Toggle individual automation controls
 3. Configure schedules and intervals
 4. Click **Save Settings**
 
