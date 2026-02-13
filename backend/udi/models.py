@@ -33,6 +33,7 @@ class Channel:
     auto_created_by_name: Optional[str] = None
     tvc_guide_stationid: Optional[str] = None
     match_profile_id: Optional[int] = None  # Reference to assigned match profile
+    is_adult: bool = False
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Channel':
@@ -53,7 +54,8 @@ class Channel:
             auto_created_by=data.get('auto_created_by'),
             auto_created_by_name=data.get('auto_created_by_name'),
             tvc_guide_stationid=data.get('tvc_guide_stationid'),
-            match_profile_id=data.get('match_profile_id')
+            match_profile_id=data.get('match_profile_id'),
+            is_adult=data.get('is_adult', False)
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -74,7 +76,8 @@ class Channel:
             'auto_created_by': self.auto_created_by,
             'auto_created_by_name': self.auto_created_by_name,
             'tvc_guide_stationid': self.tvc_guide_stationid,
-            'match_profile_id': self.match_profile_id
+            'match_profile_id': self.match_profile_id,
+            'is_adult': self.is_adult
         }
 
 
@@ -97,6 +100,10 @@ class Stream:
     stream_hash: Optional[str] = None
     stream_stats: Optional[Dict[str, Any]] = None
     stream_stats_updated_at: Optional[str] = None
+    is_stale: bool = False
+    is_adult: bool = False
+    stream_id: Optional[int] = None  # Provider stream ID
+    stream_chno: Optional[float] = None  # Provider channel number
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Stream':
@@ -117,7 +124,11 @@ class Stream:
             channel_group=data.get('channel_group'),
             stream_hash=data.get('stream_hash'),
             stream_stats=data.get('stream_stats'),
-            stream_stats_updated_at=data.get('stream_stats_updated_at')
+            stream_stats_updated_at=data.get('stream_stats_updated_at'),
+            is_stale=data.get('is_stale', False),
+            is_adult=data.get('is_adult', False),
+            stream_id=data.get('stream_id'),
+            stream_chno=data.get('stream_chno')
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -138,7 +149,11 @@ class Stream:
             'channel_group': self.channel_group,
             'stream_hash': self.stream_hash,
             'stream_stats': self.stream_stats,
-            'stream_stats_updated_at': self.stream_stats_updated_at
+            'stream_stats_updated_at': self.stream_stats_updated_at,
+            'is_stale': self.is_stale,
+            'is_adult': self.is_adult,
+            'stream_id': self.stream_id,
+            'stream_chno': self.stream_chno
         }
 
 
@@ -295,8 +310,7 @@ class M3UAccount:
     username: Optional[str] = None
     password: Optional[str] = None
     stale_stream_days: int = 0
-    priority: int = 0
-    priority_mode: str = "disabled"  # Options: "disabled", "same_resolution", "all_streams"
+
     status: Optional[str] = None
     last_message: Optional[str] = None
     enable_vod: bool = False
@@ -338,8 +352,7 @@ class M3UAccount:
             username=data.get('username'),
             password=data.get('password'),
             stale_stream_days=data.get('stale_stream_days', 0),
-            priority=data.get('priority', 0),
-            priority_mode=data.get('priority_mode', 'disabled'),
+
             status=data.get('status'),
             last_message=data.get('last_message'),
             enable_vod=data.get('enable_vod', False),
@@ -371,8 +384,7 @@ class M3UAccount:
             'username': self.username,
             'password': self.password,
             'stale_stream_days': self.stale_stream_days,
-            'priority': self.priority,
-            'priority_mode': self.priority_mode,
+
             'status': self.status,
             'last_message': self.last_message,
             'enable_vod': self.enable_vod,

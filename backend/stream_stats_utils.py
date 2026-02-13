@@ -13,7 +13,7 @@ field names or formatting approaches.
 """
 
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 from collections import Counter
 
 
@@ -338,13 +338,13 @@ def calculate_channel_averages(streams: list, dead_stream_ids: set = None) -> Di
     }
 
 
-def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -> bool:
+def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -> Tuple[bool, str]:
     """Check if a stream should be considered dead based on its statistics.
     
     A stream is dead if:
-    - Resolution is '0x0' or contains 0 in width or height
-    - Bitrate is 0 or None
-    - Falls below configured minimum thresholds (if config provided)
+    - Resolution is '0x0' or contains 0 in width or height (Reason: 'offline')
+    - Bitrate is 0 or None (Reason: 'offline')
+    - Falls below configured minimum thresholds (Reason: 'low_quality')
     
     Args:
         stream_data: Stream data dictionary (can contain stream_stats or direct fields)
@@ -355,7 +355,8 @@ def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -
                 - min_score: Minimum score 0-100 (default: 0 = no check)
         
     Returns:
-        True if stream is dead, False otherwise
+        Tuple of (bool, str): (is_dead, reason)
+        Reasons: 'offline' (truly dead), 'low_quality' (below thresholds), 'none' (not dead)
     """
     # Extract normalized stats
     stats = extract_stream_stats(stream_data)
@@ -365,7 +366,7 @@ def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -
     if resolution and resolution != 'N/A':
         # Check if resolution is exactly 0x0
         if resolution == '0x0':
-            return True
+            return True, 'offline'
         # Check if width or height is 0 (e.g., "0x1080" or "1920x0")
         if 'x' in resolution:
             try:
@@ -373,29 +374,29 @@ def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -
                 if len(parts) == 2:
                     width, height = int(parts[0]), int(parts[1])
                     if width == 0 or height == 0:
-                        return True
+                        return True, 'offline'
                     
                     # Check against configured minimum thresholds if provided
                     if config:
                         min_width = config.get('min_resolution_width', 0)
                         min_height = config.get('min_resolution_height', 0)
                         if min_width > 0 and width < min_width:
-                            return True
+                            return True, 'low_quality'
                         if min_height > 0 and height < min_height:
-                            return True
+                            return True, 'low_quality'
             except (ValueError, IndexError):
                 pass
     
     # Check bitrate
     bitrate = stats['bitrate_kbps']
     if bitrate in [0, None] or (isinstance(bitrate, (int, float)) and bitrate == 0):
-        return True
+        return True, 'offline'
     
     # Check against configured minimum bitrate if provided
     if config and bitrate:
         min_bitrate = config.get('min_bitrate_kbps', 0)
         if min_bitrate > 0 and bitrate < min_bitrate:
-            return True
+            return True, 'low_quality'
     
     # Check against configured minimum score if provided
     if config:
@@ -404,6 +405,6 @@ def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -
             # Get score from stream_data if available
             score = stream_data.get('score', 0)
             if isinstance(score, (int, float)) and score < min_score:
-                return True
+                return True, 'low_quality'
     
-    return False
+    return False, 'none'

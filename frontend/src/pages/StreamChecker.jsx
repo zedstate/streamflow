@@ -463,10 +463,9 @@ export default function StreamChecker() {
 
               {/* Tabs for Configuration Sections */}
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
-                  <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
                 </TabsList>
 
@@ -621,190 +620,13 @@ export default function StreamChecker() {
                   </div>
                 </TabsContent>
 
-                {/* Stream Scoring Weights Tab */}
-                <TabsContent value="scoring" className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    Adjust how different quality metrics are weighted when scoring streams
-                  </p>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_bitrate">Bitrate Weight</Label>
-                      <Input
-                        id="weight_bitrate"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.bitrate || 0.40}
-                        onChange={(e) => updateConfigValue('scoring.weights.bitrate', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_resolution">Resolution Weight</Label>
-                      <Input
-                        id="weight_resolution"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.resolution || 0.35}
-                        onChange={(e) => updateConfigValue('scoring.weights.resolution', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_fps">FPS Weight</Label>
-                      <Input
-                        id="weight_fps"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.fps || 0.15}
-                        onChange={(e) => updateConfigValue('scoring.weights.fps', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_codec">Codec Weight</Label>
-                      <Input
-                        id="weight_codec"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.codec || 0.10}
-                        onChange={(e) => updateConfigValue('scoring.weights.codec', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="prefer_h265">Prefer H.265/HEVC</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Give preference to H.265 codec over H.264
-                      </p>
-                    </div>
-                    <Switch
-                      id="prefer_h265"
-                      checked={editedConfig?.scoring?.prefer_h265 !== false}
-                      onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
-                      disabled={!configEditing}
-                    />
-                  </div>
-                </TabsContent>
 
                 {/* Dead Streams Tab */}
                 <TabsContent value="dead-streams" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    View and manage streams that have been marked as dead. Dead streams are automatically removed from channels during stream checking cycles.
+                  </p>
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="dead_stream_enabled">Enable Dead Stream Removal</Label>
-                        <p className="text-sm text-muted-foreground">
-                          Automatically remove streams that are detected as dead or below quality thresholds
-                        </p>
-                      </div>
-                      <Switch
-                        id="dead_stream_enabled"
-                        checked={editedConfig?.dead_stream_handling?.enabled !== false}
-                        onCheckedChange={(checked) => updateConfigValue('dead_stream_handling.enabled', checked)}
-                        disabled={!configEditing}
-                      />
-                    </div>
-
-                    {editedConfig?.dead_stream_handling?.enabled !== false && (
-                      <>
-                        <div className="space-y-4 pt-4 border-t">
-                          <h4 className="font-medium">Quality Thresholds</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Streams below these thresholds will be considered dead and removed. Set to 0 to disable a specific threshold.
-                          </p>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label htmlFor="min_resolution_width">Minimum Width (pixels)</Label>
-                              <Input
-                                id="min_resolution_width"
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={editedConfig?.dead_stream_handling?.min_resolution_width ?? 0}
-                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_width', parseInt(e.target.value) || 0)}
-                                disabled={!configEditing}
-                              />
-                              <p className="text-sm text-muted-foreground">
-                                e.g., 1280 for 720p minimum (0 = no minimum)
-                              </p>
-                            </div>
-
-                            <div className="space-y-2">
-                              <Label htmlFor="min_resolution_height">Minimum Height (pixels)</Label>
-                              <Input
-                                id="min_resolution_height"
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={editedConfig?.dead_stream_handling?.min_resolution_height ?? 0}
-                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_height', parseInt(e.target.value) || 0)}
-                                disabled={!configEditing}
-                              />
-                              <p className="text-sm text-muted-foreground">
-                                e.g., 720 for 720p minimum (0 = no minimum)
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="min_bitrate_kbps">Minimum Bitrate (kbps)</Label>
-                            <Input
-                              id="min_bitrate_kbps"
-                              type="number"
-                              min="0"
-                              step="100"
-                              value={editedConfig?.dead_stream_handling?.min_bitrate_kbps ?? 0}
-                              onChange={(e) => updateConfigValue('dead_stream_handling.min_bitrate_kbps', parseInt(e.target.value) || 0)}
-                              disabled={!configEditing}
-                            />
-                            <p className="text-sm text-muted-foreground">
-                              e.g., 1000 for 1 Mbps minimum (0 = no minimum)
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="min_score">Minimum Quality Score</Label>
-                            <Input
-                              id="min_score"
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="1"
-                              value={editedConfig?.dead_stream_handling?.min_score ?? 0}
-                              onChange={(e) => updateConfigValue('dead_stream_handling.min_score', parseInt(e.target.value) || 0)}
-                              disabled={!configEditing}
-                            />
-                            <p className="text-sm text-muted-foreground">
-                              Overall quality score from 0-100 (0 = no minimum)
-                            </p>
-                          </div>
-                        </div>
-
-                        <Alert>
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertTitle>Important</AlertTitle>
-                          <AlertDescription>
-                            Streams with 0x0 resolution or 0 bitrate are always considered dead, regardless of these settings.
-                            These thresholds provide additional quality controls beyond basic dead stream detection.
-                          </AlertDescription>
-                        </Alert>
-                      </>
-                    )}
 
                     {/* Dead Streams List */}
                     <Separator className="my-6" />

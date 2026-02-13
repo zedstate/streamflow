@@ -146,7 +146,16 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                       <TableCell>{streamDetail.resolution || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.fps || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.bitrate || 'N/A'}</TableCell>
-                      <TableCell>{streamDetail.video_codec || 'N/A'}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span>{streamDetail.video_codec || 'N/A'}</span>
+                          {streamDetail.hdr_format && (
+                            <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs">
+                              {streamDetail.hdr_format}
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
                         <TableCell>{streamDetail.score !== undefined && streamDetail.score !== null ? streamDetail.score.toFixed(2) : 'N/A'}</TableCell>
                       )}

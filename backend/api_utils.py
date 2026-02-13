@@ -518,6 +518,16 @@ def update_channel_streams(
                 f"Successfully updated channel {channel_id} with "
                 f"{len(filtered_stream_ids)} streams"
             )
+            
+            # Refresh the channel in UDI cache to ensure fresh stream data
+            # This is critical for immediate stream checking after assignment
+            try:
+                udi = get_udi_manager()
+                udi.refresh_channel_by_id(channel_id)
+                logger.debug(f"Refreshed UDI cache for channel {channel_id} after stream update")
+            except Exception as e:
+                logger.warning(f"Failed to refresh UDI cache for channel {channel_id}: {e}")
+            
             return True
         else:
             status = response.status_code if response else 'None'
@@ -678,26 +688,19 @@ def get_dead_stream_urls() -> set:
         return set()
 
 
-def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[int, str]] = None) -> Tuple[List[int], int]:
+def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[int, str]] = None, only_offline: bool = True) -> Tuple[List[int], int]:
     """
     Filter out dead streams from a list of stream IDs.
     
-    This function removes stream IDs whose URLs are marked as dead in the
-    DeadStreamsTracker. It's used to prevent dead streams from being added
-    back to channels during update operations.
-    
-    Performance Note: When processing multiple channels, pass stream_id_to_url
-    to avoid redundant API calls. Example:
-        all_streams = get_streams(log_result=False)
-        mapping = {s['id']: s.get('url') for s in all_streams if 'id' in s}
-        for channel_id in channels:
-            filtered, count = filter_dead_streams(stream_ids, mapping)
+    By default (only_offline=True), this function only removes streams that are 
+    marked as 'offline' (truly dead). If only_offline=False, it removes ALL 
+    dead streams regardless of reason.
     
     Parameters:
         stream_ids: List of stream IDs to filter
-        stream_id_to_url: Optional mapping of stream IDs to URLs. If None,
-            will fetch from API. Pass this when filtering multiple batches
-            to optimize performance.
+        stream_id_to_url: Optional mapping of stream IDs to URLs.
+        only_offline: If True (default), only filters out truly offline streams.
+                      If False, filters out all streams in the dead tracker.
     
     Returns:
         Tuple of (filtered_stream_ids, count_filtered)
@@ -708,22 +711,39 @@ def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[i
     # Get stream ID to URL mapping if not provided
     if stream_id_to_url is None:
         all_streams = get_streams(log_result=False)
-        # Use None as default instead of empty string to distinguish missing streams
         stream_id_to_url = {s['id']: s.get('url') for s in all_streams if isinstance(s, dict) and 'id' in s}
     
-    # Get dead stream URLs (will not contain None or empty strings)
-    dead_urls = get_dead_stream_urls()
+    # Get tracker
+    try:
+        from dead_streams_tracker import DeadStreamsTracker
+        tracker = DeadStreamsTracker()
+    except Exception as e:
+        logger.warning(f"Could not load dead streams tracker in filter_dead_streams: {e}")
+        return stream_ids, 0
     
-    # Filter out streams with dead URLs
-    # Keep streams where:
-    # 1. URL is not in dead_urls (not dead)
-    # 2. URL is None (stream not found in mapping - keep for safety, will be filtered by existence check)
-    filtered_stream_ids = [
-        sid for sid in stream_ids
-        if stream_id_to_url.get(sid) not in dead_urls or stream_id_to_url.get(sid) is None
-    ]
+    filtered_stream_ids = []
+    count_filtered = 0
     
-    count_filtered = len(stream_ids) - len(filtered_stream_ids)
+    for sid in stream_ids:
+        url = stream_id_to_url.get(sid)
+        if url is None:
+            # Keep for safety, will be filtered by existence check elsewhere
+            filtered_stream_ids.append(sid)
+            continue
+            
+        is_dead = False
+        if only_offline:
+            # Only filter if truly offline
+            is_dead = tracker.is_offline(url)
+        else:
+            # Filter if dead for any reason
+            is_dead = tracker.is_dead(url)
+            
+        if is_dead:
+            count_filtered += 1
+        else:
+            filtered_stream_ids.append(sid)
+            
     return filtered_stream_ids, count_filtered
 
 def has_custom_streams() -> bool:

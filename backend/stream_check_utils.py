@@ -327,6 +327,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             'resolution': '0x0',
             'fps': 0,
             'bitrate_kbps': None,
+            'hdr_format': None,
             'status': 'Error',
             'elapsed_time': 0
         }
@@ -342,6 +343,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             'resolution': '0x0',
             'fps': 0,
             'bitrate_kbps': None,
+            'hdr_format': None,
             'status': 'Error',
             'elapsed_time': 0
         }
@@ -361,6 +363,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         'resolution': '0x0',
         'fps': 0,
         'bitrate_kbps': None,
+        'hdr_format': None,
         'status': 'OK',
         'elapsed_time': 0
     }
@@ -435,6 +438,19 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     if fps_match:
                         result_data['fps'] = round(float(fps_match.group(1)), 2)
                         logger.debug(f"  → Detected FPS: {result_data['fps']}")
+                    
+                    # Detect HDR format based on color parameters
+                    # HDR10/HDR10+: bt2020 + smpte2084 + 10-bit
+                    # HLG: bt2020 + arib-std-b67 + 10-bit
+                    # Example: yuv420p10le(tv, bt2020nc/bt2020/smpte2084), 3840x2160
+                    line_lower = line.lower()
+                    if 'bt2020' in line_lower and '10le' in line_lower:
+                        if 'smpte2084' in line_lower:
+                            result_data['hdr_format'] = 'HDR10'
+                            logger.debug(f"  → Detected HDR format: HDR10")
+                        elif 'arib-std-b67' in line_lower:
+                            result_data['hdr_format'] = 'HLG'
+                            logger.debug(f"  → Detected HDR format: HLG")
                 except (ValueError, AttributeError) as e:
                     logger.debug(f"  → Error parsing video stream line: {e}")
             
@@ -735,6 +751,7 @@ def analyze_stream(
         'resolution': '0x0',
         'fps': 0,
         'bitrate_kbps': None,
+        'hdr_format': None,
         'status': 'Error'
     }
     
@@ -773,6 +790,7 @@ def analyze_stream(
                     'resolution': result_data['resolution'],
                     'fps': result_data['fps'],
                     'bitrate_kbps': result_data['bitrate_kbps'],
+                    'hdr_format': result_data['hdr_format'],
                     'status': result_data['status']
                 }
 

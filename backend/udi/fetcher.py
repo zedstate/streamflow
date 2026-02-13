@@ -135,7 +135,7 @@ def _login() -> bool:
         return False
 
     login_url = f"{base_url}/api/accounts/token/"
-    logger.info(f"Attempting to log in to {base_url}...")
+    logger.debug(f"Attempting to log in to {base_url}...")
 
     try:
         resp = requests.post(
@@ -156,7 +156,7 @@ def _login() -> bool:
                 logger.info("Login successful. Token saved.")
             else:
                 os.environ["DISPATCHARR_TOKEN"] = token
-                logger.info("Login successful. Token stored in memory.")
+                logger.debug("Login successful. Token stored in memory.")
             return True
         else:
             logger.error("Login failed: No access token found in response.")
@@ -193,7 +193,7 @@ def _get_auth_headers() -> Dict[str, str]:
         }
     
     # Token is missing, need to login
-    logger.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
+    logger.debug("DISPATCHARR_TOKEN not found. Attempting to log in...")
     
     if _login():
         if env_path.exists():
@@ -308,7 +308,7 @@ class UDIFetcher:
         
         url = f"{self.base_url}/api/channels/channels/"
         channels = self._fetch_paginated(url)
-        logger.info(f"Fetched {len(channels)} channels")
+        logger.debug(f"Fetched {len(channels)} channels")
         return channels
     
     def fetch_channel_by_id(self, channel_id: int) -> Optional[Dict[str, Any]]:
@@ -354,7 +354,7 @@ class UDIFetcher:
         
         url = f"{self.base_url}/api/channels/streams/"
         streams = self._fetch_paginated(url)
-        logger.info(f"Fetched {len(streams)} streams")
+        logger.debug(f"Fetched {len(streams)} streams")
         return streams
     
     def fetch_stream_by_id(self, stream_id: int) -> Optional[Dict[str, Any]]:
@@ -385,7 +385,7 @@ class UDIFetcher:
         url = f"{self.base_url}/api/channels/groups/"
         groups = self._fetch_url(url)
         if isinstance(groups, list):
-            logger.info(f"Fetched {len(groups)} channel groups")
+            logger.debug(f"Fetched {len(groups)} channel groups")
             return groups
         return []
     
@@ -432,7 +432,7 @@ class UDIFetcher:
         url = f"{self.base_url}/api/m3u/accounts/"
         accounts = self._fetch_url(url)
         if isinstance(accounts, list):
-            logger.info(f"Fetched {len(accounts)} M3U accounts")
+            logger.debug(f"Fetched {len(accounts)} M3U accounts")
             return accounts
         return []
     
@@ -455,7 +455,7 @@ class UDIFetcher:
             return []
         
         if isinstance(profiles, list):
-            logger.info(f"Successfully fetched {len(profiles)} channel profiles")
+            logger.debug(f"Successfully fetched {len(profiles)} channel profiles")
             if len(profiles) > 0:
                 logger.debug(f"Sample profile: {profiles[0]}")
             return profiles
@@ -479,11 +479,12 @@ class UDIFetcher:
         url = f"{self.base_url}/api/channels/profiles/{profile_id}/"
         return self._fetch_url(url)
     
-    def fetch_profile_channels(self, profile_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+    def fetch_profile_channels(self, profile_ids: List[int], progress_callback=None) -> Dict[int, Dict[str, Any]]:
         """Fetch channel associations for multiple profiles.
         
         Args:
             profile_ids: List of profile IDs to fetch channels for
+            progress_callback: Optional function(index, total, message) for progress reporting
             
         Returns:
             Dictionary mapping profile_id to profile channel data
@@ -493,8 +494,12 @@ class UDIFetcher:
             return {}
         
         profile_channels = {}
-        for profile_id in profile_ids:
+        total = len(profile_ids)
+        for i, profile_id in enumerate(profile_ids):
             try:
+                if progress_callback:
+                    progress_callback(i, total, f"Fetching profile channels {i+1}/{total}")
+                
                 url = f"{self.base_url}/api/channels/profiles/{profile_id}/"
                 logger.debug(f"Fetching channels for profile {profile_id} from {url}")
                 profile_data = self._fetch_url(url)
@@ -522,7 +527,7 @@ class UDIFetcher:
                 logger.error(f"Error fetching channels for profile {profile_id}: {e}")
                 continue
         
-        logger.info(f"Fetched channel data for {len(profile_channels)} profiles")
+        logger.debug(f"Fetched channel data for {len(profile_channels)} profiles")
         return profile_channels
     
     def _process_channels_from_response(self, status_data: Any) -> Dict[str, Any]:

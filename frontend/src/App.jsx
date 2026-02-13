@@ -13,6 +13,7 @@ import ChannelConfiguration from '@/pages/ChannelConfiguration'
 import AutomationSettings from '@/pages/AutomationSettings'
 import Changelog from '@/pages/Changelog'
 import SetupWizard from '@/pages/SetupWizard'
+import AutomationProfileEditor from '@/pages/AutomationProfileEditor'
 import Scheduling from '@/pages/Scheduling'
 
 function App() {
@@ -86,7 +87,7 @@ function App() {
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
-      
+
       <main className="flex-1 lg:ml-64 p-6">
         <div className="max-w-7xl mx-auto pt-12 lg:pt-0">
           <Routes>
@@ -95,6 +96,7 @@ function App() {
             <Route path="/stream-monitoring" element={<StreamMonitoring />} />
             <Route path="/channels" element={<ChannelConfiguration />} />
             <Route path="/settings" element={<AutomationSettings />} />
+            <Route path="/automation/profiles/:profileId" element={<AutomationProfileEditor />} />
             <Route path="/scheduling" element={<Scheduling />} />
             <Route path="/changelog" element={<Changelog />} />
           </Routes>

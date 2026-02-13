@@ -38,9 +38,6 @@ from logging_config import setup_logging
 # Import at module level for better performance
 from dispatcharr_config import get_dispatcharr_config
 
-# Import M3U priority config for merging priority_mode
-from m3u_priority_config import get_m3u_priority_config
-
 logger = setup_logging(__name__)
 
 # Constants for channel status
@@ -89,6 +86,15 @@ class UDIManager:
         self._valid_stream_ids: Set[int] = set()
         self._profiles_by_id: Dict[int, Dict[str, Any]] = {}
         
+        # Initialization progress tracking
+        self._init_progress = {
+            'status': 'idle', # idle, in_progress, completed, failed
+            'percentage': 0,
+            'message': '',
+            'current_step': '',
+            'total_steps': 7 # channels, streams, groups, logos, m3u_accounts, profiles, profile_channels
+        }
+        
         # Proxy status cache for real-time stream viewer information
         self._proxy_status_cache: Dict[str, Any] = {}
         self._proxy_status_last_fetch: float = 0
@@ -115,14 +121,14 @@ class UDIManager:
                 logger.debug("UDI Manager already initialized")
                 return True
             
-            logger.info("Initializing UDI Manager...")
+            logger.debug("Initializing UDI Manager...")
             
             # Check if we have existing data
             if not force_refresh and self.storage.is_initialized():
-                logger.info("Loading existing data from storage...")
+                logger.debug("Loading existing data from storage...")
                 self._load_from_storage()
                 self._initialized = True
-                logger.info("UDI Manager initialized from storage")
+                logger.info(f"UDI initialized from storage: {len(self._channels_cache)} channels, {len(self._streams_cache)} streams")
                 return True
             
             # Check if Dispatcharr is configured before fetching from API
@@ -134,12 +140,12 @@ class UDIManager:
                 return False
             
             # Fetch fresh data from API
-            logger.info("Fetching fresh data from API...")
+            logger.debug("Fetching fresh data from API...")
             try:
                 success = self.refresh_all()
                 if success:
                     self._initialized = True
-                    logger.info("UDI Manager initialized with fresh data")
+                    # Success message logged in refresh_all()
                     return True
                 else:
                     logger.error("Failed to initialize UDI Manager")
@@ -199,6 +205,34 @@ class UDIManager:
     
     # === Data Access Methods ===
     
+    def get_init_progress(self) -> Dict[str, Any]:
+        """Get the current initialization progress.
+        
+        Returns:
+            Dictionary with status, percentage, and message
+        """
+        return self._init_progress.copy()
+    
+    def _update_init_progress(self, status: str = None, percentage: int = None, message: str = None, current_step: str = None):
+        """Update the initialization progress.
+        
+        Args:
+            status: New status (idle, in_progress, completed, failed)
+            percentage: Progress percentage (0-100)
+            message: Progress message
+            current_step: Name of the current step
+        """
+        if status:
+            self._init_progress['status'] = status
+        if percentage is not None:
+            self._init_progress['percentage'] = percentage
+        if message:
+            self._init_progress['message'] = message
+        if current_step:
+            self._init_progress['current_step'] = current_step
+            
+        logger.debug(f"UDI Init Progress: {self._init_progress['percentage']}% - {self._init_progress['message']}")
+
     def is_initialized(self) -> bool:
         """Check if the UDI Manager has been initialized.
         
@@ -407,16 +441,6 @@ class UDIManager:
         logger.debug(f"Returning {len(self._m3u_accounts_cache)} M3U accounts from UDI cache")
         accounts = self._m3u_accounts_cache.copy()
         
-        # Merge priority_mode from local configuration
-        try:
-            priority_config = get_m3u_priority_config()
-            for account in accounts:
-                account_id = account.get('id')
-                if account_id:
-                    account['priority_mode'] = priority_config.get_priority_mode(account_id)
-        except Exception as e:
-            logger.error(f"Error merging priority_mode: {e}")
-        
         return accounts
     
     def get_m3u_account_by_id(self, account_id: int) -> Optional[Dict[str, Any]]:
@@ -434,25 +458,12 @@ class UDIManager:
         if hasattr(self.storage, 'get_m3u_account_by_id'):
             account = self.storage.get_m3u_account_by_id(account_id)
             if account:
-                # Merge priority_mode from local configuration
-                try:
-                    priority_config = get_m3u_priority_config()
-                    account['priority_mode'] = priority_config.get_priority_mode(account_id)
-                except Exception as e:
-                    logger.error(f"Error merging priority_mode: {e}")
                 return account
         
         # Fallback to in-memory cache
         for account in self._m3u_accounts_cache:
             if account.get('id') == account_id:
-                result = account.copy()
-                # Merge priority_mode from local configuration
-                try:
-                    priority_config = get_m3u_priority_config()
-                    result['priority_mode'] = priority_config.get_priority_mode(account_id)
-                except Exception as e:
-                    logger.error(f"Error merging priority_mode: {e}")
-                return result
+                return account.copy()
         
         logger.debug(f"M3U account {account_id} not found in UDI")
         return None
@@ -507,32 +518,56 @@ class UDIManager:
         Returns:
             True if refresh successful
         """
-        logger.info("Refreshing all UDI data...")
+        logger.debug("Refreshing all UDI data...")
+        self._update_init_progress(status='in_progress', percentage=0, message='Starting refresh...', current_step='start')
         
         # Check if Dispatcharr is configured before attempting API calls
         config = get_dispatcharr_config()
         if not config.is_configured():
             logger.warning("Cannot refresh data: Dispatcharr credentials not configured")
+            self._update_init_progress(status='failed', message='Dispatcharr not configured')
             return False
         
         try:
-            data = self.fetcher.refresh_all()
+            # Step 1: Channels
+            self._update_init_progress(percentage=5, message='Fetching channels...', current_step='channels')
+            self._channels_cache = self.fetcher.fetch_channels()
             
-            # Update in-memory caches
-            self._channels_cache = data.get('channels', [])
-            self._streams_cache = data.get('streams', [])
-            self._channel_groups_cache = data.get('channel_groups', [])
-            self._logos_cache = data.get('logos', [])
-            self._m3u_accounts_cache = data.get('m3u_accounts', [])
-            self._channel_profiles_cache = data.get('channel_profiles', [])
+            # Step 2: Streams
+            self._update_init_progress(percentage=20, message='Fetching streams...', current_step='streams')
+            self._streams_cache = self.fetcher.fetch_streams()
             
-            # Fetch profile channels data for all profiles
+            # Step 3: Channel Groups
+            self._update_init_progress(percentage=40, message='Fetching groups...', current_step='groups')
+            self._channel_groups_cache = self.fetcher.fetch_channel_groups()
+            
+            # Step 4: Logos
+            self._update_init_progress(percentage=50, message='Fetching logos...', current_step='logos')
+            self._logos_cache = self.fetcher.fetch_logos()
+            
+            # Step 5: M3U Accounts
+            self._update_init_progress(percentage=60, message='Fetching M3U accounts...', current_step='m3u_accounts')
+            self._m3u_accounts_cache = self.fetcher.fetch_m3u_accounts()
+            
+            # Step 6: Channel Profiles
+            self._update_init_progress(percentage=70, message='Fetching profiles...', current_step='profiles')
+            self._channel_profiles_cache = self.fetcher.fetch_channel_profiles()
+            
+            # Step 7: Profile Channels
             profile_ids = [p.get('id') for p in self._channel_profiles_cache if p.get('id')]
             if profile_ids:
-                logger.info(f"Fetching channel data for {len(profile_ids)} profiles...")
-                self._profile_channels_cache = self.fetcher.fetch_profile_channels(profile_ids)
+                logger.debug(f"Fetching channel data for {len(profile_ids)} profiles...")
+                
+                def profile_progress(i, total, msg):
+                    # Progress between 80% and 90%
+                    percentage = 80 + int((i / total) * 10)
+                    self._update_init_progress(percentage=percentage, message=msg)
+                
+                self._profile_channels_cache = self.fetcher.fetch_profile_channels(profile_ids, progress_callback=profile_progress)
             else:
                 self._profile_channels_cache = {}
+            
+            self._update_init_progress(percentage=90, message='Building indexes and saving...', current_step='finalize')
             
             # Build index caches
             self._build_indexes()
@@ -565,11 +600,17 @@ class UDIManager:
             for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles', 'profile_channels']:
                 self.cache.mark_refreshed(entity_type, now)
             
-            logger.info("UDI data refresh complete")
+            logger.info(
+                f"UDI initialized: {len(self._channels_cache)} channels, {len(self._streams_cache)} streams, "
+                f"{len(self._channel_groups_cache)} groups, {len(self._m3u_accounts_cache)} M3U accounts, "
+                f"{len(self._channel_profiles_cache)} profiles"
+            )
+            self._update_init_progress(status='completed', percentage=100, message='Initialization complete', current_step='done')
             return True
             
         except Exception as e:
             logger.error(f"Error refreshing UDI data: {e}")
+            self._update_init_progress(status='failed', message=f'Refresh failed: {str(e)}')
             return False
     
     def refresh_channels(self) -> bool:

@@ -760,7 +760,16 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                     )}
                   </div>
                 </TableCell>
-                <TableCell>{formatQuality(stream)}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <span>{formatQuality(stream)}</span>
+                    {stream.hdr_format && (
+                      <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs">
+                        {stream.hdr_format}
+                      </Badge>
+                    )}
+                  </div>
+                </TableCell>
                 <TableCell>{stream.fps ? `${stream.fps.toFixed(1)} fps` : 'N/A'}</TableCell>
                 <TableCell>{formatBitrate(stream.bitrate)}</TableCell>
                 {!showQuarantined && (

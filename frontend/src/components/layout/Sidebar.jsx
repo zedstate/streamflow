@@ -22,7 +22,7 @@ const menuItems = [
   { text: 'Stream Monitoring', icon: Activity, path: '/stream-monitoring' },
   { text: 'Channel Configuration', icon: ListChecks, path: '/channels' },
   { text: 'Scheduling', icon: Calendar, path: '/scheduling' },
-  { text: 'Automation Settings', icon: Settings, path: '/settings' },
+  { text: 'Settings', icon: Settings, path: '/settings' },
   { text: 'Changelog', icon: History, path: '/changelog' },
 ]
 
