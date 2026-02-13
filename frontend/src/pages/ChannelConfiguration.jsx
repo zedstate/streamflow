@@ -697,183 +697,6 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
 }
 
 
-// M3U Priority Management Component
-function M3UPriorityManagement() {
-  const [accounts, setAccounts] = useState([])
-  const [globalPriorityMode, setGlobalPriorityMode] = useState('disabled')
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const { toast } = useToast()
-
-  useEffect(() => {
-    loadAccounts()
-  }, [])
-
-  const loadAccounts = async () => {
-    try {
-      setLoading(true)
-      const response = await m3uAPI.getAccounts()
-      // API returns { accounts: [], global_priority_mode: '' }
-      if (response.data && Array.isArray(response.data.accounts)) {
-        setAccounts(response.data.accounts)
-        setGlobalPriorityMode(response.data.global_priority_mode || 'disabled')
-      } else {
-        // Fallback for backwards compatibility if API returns array directly
-        setAccounts(Array.isArray(response.data) ? response.data : [])
-      }
-    } catch (err) {
-      console.error('Failed to load M3U accounts:', err)
-      toast({
-        title: "Error",
-        description: "Failed to load M3U accounts",
-        variant: "destructive"
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handlePriorityChange = async (accountId, field, value) => {
-    try {
-      setSaving(true)
-      await m3uAPI.updateAccountPriority(accountId, { [field]: value })
-
-      // Update local state
-      setAccounts(prev => prev.map(acc =>
-        acc.id === accountId ? { ...acc, [field]: value } : acc
-      ))
-
-      toast({
-        title: "Success",
-        description: "M3U account priority updated successfully"
-      })
-    } catch (err) {
-      console.error('Failed to update priority:', err)
-      toast({
-        title: "Error",
-        description: err.response?.data?.error || "Failed to update priority",
-        variant: "destructive"
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleGlobalPriorityModeChange = async (value) => {
-    try {
-      setSaving(true)
-      await m3uAPI.updateGlobalPriorityMode({ priority_mode: value })
-
-      setGlobalPriorityMode(value)
-
-      toast({
-        title: "Success",
-        description: "Global priority mode updated successfully"
-      })
-    } catch (err) {
-      console.error('Failed to update global priority mode:', err)
-      toast({
-        title: "Error",
-        description: err.response?.data?.error || "Failed to update global priority mode",
-        variant: "destructive"
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>M3U Account Priority System</CardTitle>
-        <CardDescription>
-          Configure stream selection priority for your M3U accounts. Higher priority accounts' streams will be preferred during stream matching.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {accounts.length === 0 ? (
-          <Alert>
-            <AlertDescription>
-              No enabled M3U accounts found. Add and enable M3U accounts in Dispatcharr to configure their priority.
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <>
-            {/* Global Priority Mode Selector */}
-            <div className="space-y-3 rounded-lg border p-4 bg-muted/50">
-              <Label htmlFor="global-priority-mode" className="text-base font-semibold">Global Priority Mode</Label>
-              <Select
-                value={globalPriorityMode}
-                onValueChange={handleGlobalPriorityModeChange}
-                disabled={saving}
-              >
-                <SelectTrigger id="global-priority-mode">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="disabled">Disabled</SelectItem>
-                  <SelectItem value="same_resolution">Same Resolution Only</SelectItem>
-                  <SelectItem value="all_streams">All Streams</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {globalPriorityMode === 'disabled' && 'Priority system is disabled. Streams are selected based on quality only.'}
-                {globalPriorityMode === 'same_resolution' && 'Priority applied within same resolution groups. Among streams with the same resolution, prefer streams from higher priority accounts.'}
-                {globalPriorityMode === 'all_streams' && 'Priority applied to all streams. Always prefer streams from higher priority accounts, even if lower quality.'}
-              </p>
-            </div>
-
-            {/* Account Priority Table */}
-            <div className="space-y-4">
-              <div className="rounded-lg border">
-                <div className="grid grid-cols-2 gap-4 p-4 bg-muted font-medium text-sm">
-                  <div>Account Name</div>
-                  <div>Priority (0-100)</div>
-                </div>
-                {accounts.map((account) => (
-                  <div key={account.id} className="grid grid-cols-2 gap-4 p-4 border-t items-center">
-                    <div className="font-medium">{account.name}</div>
-                    <div>
-                      <Input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={account.priority || 0}
-                        onChange={(e) => handlePriorityChange(account.id, 'priority', parseInt(e.target.value) || 0)}
-                        disabled={saving || globalPriorityMode === 'disabled'}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <Alert>
-              <AlertDescription>
-                <strong>How it works:</strong>
-                <ul className="list-disc list-inside mt-2 space-y-1">
-                  <li><strong>Disabled:</strong> Priority values are ignored, streams are selected based on quality only</li>
-                  <li><strong>Same Resolution Only:</strong> Among streams with the same resolution, prefer streams from higher priority accounts</li>
-                  <li><strong>All Streams:</strong> Always prefer streams from higher priority accounts, even if lower quality</li>
-                </ul>
-                <p className="mt-2"><strong>Note:</strong> Only enabled M3U accounts are shown in this list.</p>
-              </AlertDescription>
-            </Alert>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
 export default function ChannelConfiguration() {
   const [channels, setChannels] = useState([])
   const [patterns, setPatterns] = useState({})
@@ -900,11 +723,6 @@ export default function ChannelConfiguration() {
   const [orderCurrentPage, setOrderCurrentPage] = useState(1)
   const [orderItemsPerPage, setOrderItemsPerPage] = useState(20)
 
-  // Pagination state for Group Management
-  const [groupCurrentPage, setGroupCurrentPage] = useState(1)
-  const [groupItemsPerPage, setGroupItemsPerPage] = useState(20)
-  const [groupSearchQuery, setGroupSearchQuery] = useState('')
-
   // Channel ordering state
   const [orderedChannels, setOrderedChannels] = useState([])
   const [originalChannelOrder, setOriginalChannelOrder] = useState([])
@@ -912,7 +730,6 @@ export default function ChannelConfiguration() {
   const [savingOrder, setSavingOrder] = useState(false)
   const [sortBy, setSortBy] = useState('custom')
 
-  // Group management state
   const [groups, setGroups] = useState([])
 
   const [pendingChanges, setPendingChanges] = useState({})
@@ -2038,32 +1855,12 @@ export default function ChannelConfiguration() {
   const orderEndIndex = orderStartIndex + orderItemsPerPage
   const paginatedOrderedChannels = visibleOrderedChannels.slice(orderStartIndex, orderEndIndex)
 
-  // Filter groups for Group Management search
-  const filteredGroups = groups.filter(group => {
-    if (!groupSearchQuery.trim()) return true
-
-    const query = groupSearchQuery.toLowerCase()
-    const groupName = (group.name || '').toLowerCase()
-    const groupId = String(group.id)
-
-    return groupName.includes(query) || groupId.includes(query)
-  })
-
-  // Calculate pagination for Group Management
-  const groupTotalPages = Math.ceil(filteredGroups.length / groupItemsPerPage)
-  const groupStartIndex = (groupCurrentPage - 1) * groupItemsPerPage
-  const groupEndIndex = groupStartIndex + groupItemsPerPage
-  const paginatedGroups = filteredGroups.slice(groupStartIndex, groupEndIndex)
 
   // Reset to first page when search changes
   useEffect(() => {
     setCurrentPage(1)
   }, [searchQuery, filterByGroup, sortByGroup])
 
-  // Reset to first page when group search changes
-  useEffect(() => {
-    setGroupCurrentPage(1)
-  }, [groupSearchQuery])
 
   const clearSearch = () => {
     setSearchQuery('')
@@ -2247,11 +2044,9 @@ export default function ChannelConfiguration() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="regex">Regex Configuration</TabsTrigger>
-            <TabsTrigger value="groups">Group Management</TabsTrigger>
             <TabsTrigger value="ordering">Channel Order</TabsTrigger>
-            <TabsTrigger value="m3u-priority">M3U Priority</TabsTrigger>
           </TabsList>
 
           <TabsContent value="regex" className="space-y-6">
@@ -2671,174 +2466,6 @@ export default function ChannelConfiguration() {
                 </div>
               )}
             </div>
-          </TabsContent>
-
-          <TabsContent value="groups" className="space-y-6">
-            {/* Search Bar for Groups */}
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="text"
-                  placeholder="Search groups by name or ID..."
-                  value={groupSearchQuery}
-                  onChange={(e) => setGroupSearchQuery(e.target.value)}
-                  className="pl-10 pr-10"
-                />
-                {groupSearchQuery && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
-                    onClick={() => setGroupSearchQuery('')}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-              {groupSearchQuery && (
-                <Badge variant="secondary">
-                  {filteredGroups.length} of {groups.length} groups
-                </Badge>
-              )}
-            </div>
-
-            <Card>
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Pagination info and controls at top */}
-                {filteredGroups.length > 0 && (
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-muted-foreground">
-                      Showing {groupStartIndex + 1}-{Math.min(groupEndIndex, filteredGroups.length)} of {filteredGroups.length} groups
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor="group-items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
-                      <Select
-                        value={groupItemsPerPage.toString()}
-                        onValueChange={(value) => {
-                          setGroupItemsPerPage(Number(value))
-                          setGroupCurrentPage(1)
-                        }}
-                      >
-                        <SelectTrigger className="h-9 w-[100px]" id="group-items-per-page">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="20">20</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                )}
-
-                {filteredGroups.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    {groupSearchQuery ? `No groups found matching "${groupSearchQuery}"` : 'No channel groups available'}
-                    {groupSearchQuery && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-4"
-                        onClick={() => setGroupSearchQuery('')}
-                      >
-                        Clear search
-                      </Button>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <div className="space-y-4">
-                      {paginatedGroups.map(group => (
-                        <div key={group.id} className="p-4 border rounded-lg bg-card text-card-foreground shadow-sm">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <div className="text-lg font-semibold leading-none tracking-tight">{group.name}</div>
-                              <div className="text-sm text-muted-foreground mt-1">
-                                {channels.filter(c => c.channel_group_id === group.id).length} channels
-                              </div>
-                            </div>
-                            <Badge variant="outline">ID: {group.id}</Badge>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Pagination controls at bottom */}
-                    {groupTotalPages > 1 && (
-                      <div className="flex items-center justify-center gap-2 pt-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setGroupCurrentPage(1)}
-                          disabled={groupCurrentPage === 1}
-                        >
-                          First
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setGroupCurrentPage(groupCurrentPage - 1)}
-                          disabled={groupCurrentPage === 1}
-                        >
-                          Previous
-                        </Button>
-                        <div className="flex items-center gap-1">
-                          {Array.from({ length: Math.min(5, groupTotalPages) }, (_, i) => {
-                            let pageNum
-                            if (groupTotalPages <= 5) {
-                              pageNum = i + 1
-                            } else if (groupCurrentPage <= 3) {
-                              pageNum = i + 1
-                            } else if (groupCurrentPage >= groupTotalPages - 2) {
-                              pageNum = groupTotalPages - 4 + i
-                            } else {
-                              pageNum = groupCurrentPage - 2 + i
-                            }
-
-                            return (
-                              <Button
-                                key={pageNum}
-                                variant={groupCurrentPage === pageNum ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => setGroupCurrentPage(pageNum)}
-                                className="w-9"
-                              >
-                                {pageNum}
-                              </Button>
-                            )
-                          })}
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setGroupCurrentPage(groupCurrentPage + 1)}
-                          disabled={groupCurrentPage === groupTotalPages}
-                        >
-                          Next
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setGroupCurrentPage(groupTotalPages)}
-                          disabled={groupCurrentPage === groupTotalPages}
-                        >
-                          Last
-                        </Button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
           </TabsContent>
 
           <TabsContent value="ordering" className="space-y-6">
