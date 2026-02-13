@@ -38,7 +38,7 @@ export const automationAPI = {
   getStatus: () => api.get('/automation/status'),
   start: () => api.post('/automation/start'),
   stop: () => api.post('/automation/stop'),
-  runCycle: () => api.post('/automation/cycle'),
+  runCycle: () => api.post('/automation/trigger'),  // Trigger immediate automation cycle
   trigger: () => api.post('/automation/trigger'),
 
   // Configuration
