@@ -7,8 +7,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
-import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import { automationAPI, streamCheckerAPI, m3uAPI, dispatcharrAPI } from '@/services/api.js'
+import { PlayCircle, RefreshCw, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
@@ -59,19 +59,19 @@ export default function Dashboard() {
     }
   }
 
-  const handleRefreshPlaylist = async () => {
+  const handleReloadUDI = async () => {
     try {
-      setActionLoading('playlist')
-      await streamAPI.refreshPlaylist()
+      setActionLoading('udi')
+      await dispatcharrAPI.initializeUDI()
       toast({
         title: "Success",
-        description: "Playlist refresh initiated successfully"
+        description: "UDI reloaded successfully"
       })
       await loadStatus()
     } catch (err) {
       toast({
         title: "Error",
-        description: "Failed to refresh playlist",
+        description: err.response?.data?.error || "Failed to reload UDI",
         variant: "destructive"
       })
     } finally {
@@ -79,19 +79,19 @@ export default function Dashboard() {
     }
   }
 
-  const handleDiscoverStreams = async () => {
+  const handleRunAutomation = async () => {
     try {
-      setActionLoading('discover')
-      const response = await streamAPI.discoverStreams()
+      setActionLoading('automation')
+      await automationAPI.runCycle()
       toast({
         title: "Success",
-        description: `Stream discovery completed. ${response.data.total_assigned} streams assigned.`
+        description: "Automation cycle triggered successfully"
       })
       await loadStatus()
     } catch (err) {
       toast({
         title: "Error",
-        description: "Failed to discover streams",
+        description: err.response?.data?.error || "Failed to run automation cycle",
         variant: "destructive"
       })
     } finally {
@@ -122,12 +122,12 @@ export default function Dashboard() {
   const handleTogglePlaylist = async (playlistId, currentlyEnabled) => {
     try {
       setTogglingPlaylist(playlistId)
-      
+
       // Get current enabled accounts from status
       // Note: empty array means all accounts are enabled
       const currentEnabledAccounts = status?.config?.enabled_m3u_accounts || []
       let newEnabledAccounts
-      
+
       if (currentEnabledAccounts.length === 0) {
         // Currently all are enabled (empty array)
         if (currentlyEnabled) {
@@ -153,14 +153,14 @@ export default function Dashboard() {
           }
         }
       }
-      
+
       await automationAPI.updateConfig({ enabled_m3u_accounts: newEnabledAccounts })
-      
+
       toast({
         title: "Success",
         description: `Playlist ${currentlyEnabled ? 'disabled' : 'enabled'} successfully`
       })
-      
+
       await loadStatus()
     } catch (err) {
       toast({
@@ -187,10 +187,10 @@ export default function Dashboard() {
   const completed = streamCheckerStatus?.queue?.completed || 0
   const inProgress = streamCheckerStatus?.queue?.in_progress || 0
   const totalProcessed = completed; // Define totalProcessed based on completed streams
-  
+
   // Calculate progress for the current batch
   const batchTotal = completed + inProgress + queueSize
-  const queueProgress = batchTotal > 0 
+  const queueProgress = batchTotal > 0
     ? (completed / batchTotal) * 100
     : 0
 
@@ -318,20 +318,20 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent className="flex flex-wrap gap-4">
           <Button
-            onClick={handleRefreshPlaylist}
+            onClick={handleReloadUDI}
             disabled={shouldDisableActions}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
-            {actionLoading === 'playlist' ? 'Refreshing...' : 'Refresh Playlist'}
+            {actionLoading === 'udi' ? 'Reloading...' : 'Reload UDI'}
           </Button>
 
           <Button
-            onClick={handleDiscoverStreams}
+            onClick={handleRunAutomation}
             disabled={shouldDisableActions}
             variant="outline"
           >
-            <Search className="mr-2 h-4 w-4" />
-            {actionLoading === 'discover' ? 'Discovering...' : 'Discover Streams'}
+            <PlayCircle className="mr-2 h-4 w-4" />
+            {actionLoading === 'automation' ? 'Running...' : 'Run Automation'}
           </Button>
 
           <Button
@@ -339,8 +339,8 @@ export default function Dashboard() {
             disabled={shouldDisableActions}
             variant="outline"
           >
-            <PlayCircle className="mr-2 h-4 w-4" />
-            {actionLoading === 'global' ? 'Triggering...' : 'Trigger Global Action'}
+            <Activity className="mr-2 h-4 w-4" />
+            {actionLoading === 'global' ? 'Triggering...' : 'Global Action'}
           </Button>
         </CardContent>
       </Card>
@@ -430,7 +430,7 @@ export default function Dashboard() {
               {playlists.map((playlist) => {
                 const enabledAccounts = status?.config?.enabled_m3u_accounts || []
                 const isEnabled = enabledAccounts.length === 0 || enabledAccounts.includes(playlist.id)
-                
+
                 return (
                   <div key={playlist.id} className="flex items-center justify-between p-3 border rounded-lg">
                     <div className="flex-1">

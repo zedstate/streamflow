@@ -29,6 +29,16 @@ class AutomationConfigManager:
     """
     
     def __init__(self):
+        # Check and migrate legacy configuration before initializing
+        try:
+            from config_migrator import check_and_migrate_legacy_config
+            if check_and_migrate_legacy_config():
+                logger.info("Legacy configuration migrated to new profile-based system")
+        except ImportError:
+            logger.warning("config_migrator not available - skipping migration check")
+        except Exception as e:
+            logger.error(f"Error during migration check: {e}", exc_info=True)
+        
         self._lock = RLock()
         self._config = {
             "regular_automation_enabled": False,

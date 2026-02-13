@@ -3647,12 +3647,8 @@ class StreamCheckerService:
             
             logger.info(f"✓ Single channel check completed for {channel_name} in {duration_str}")
             
-            # Trigger channel re-enabling first to give channels a second chance
-            self._trigger_channel_re_enabling()
-            
-            # Trigger empty channel disabling if configured
-            # This ensures that if this channel became empty after checking, it gets disabled
-            self._trigger_empty_channel_disabling()
+            # Note: _trigger_channel_re_enabling and _trigger_empty_channel_disabling
+            # have been deprecated as they relied on obsolete Dispatcharr features
             
             return {
                 'success': True,
