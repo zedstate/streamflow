@@ -214,6 +214,127 @@ def _sanitize_codec_name(codec: str) -> str:
     return normalized
 
 
+def _get_hdr_metadata(url: str, timeout: int = 10, user_agent: str = 'VLC/3.0.14') -> Optional[Dict[str, str]]:
+    """
+    Get HDR metadata from a stream using ffprobe with JSON output.
+    
+    This function extracts color metadata fields that are essential for HDR detection:
+    - color_transfer: Transfer characteristics (e.g., smpte2084 for HDR10, arib-std-b67 for HLG)
+    - color_primaries: Color gamut (e.g., bt2020 for HDR)
+    - color_space: Color space (e.g., bt2020nc)
+    - pix_fmt: Pixel format (e.g., yuv420p10le for 10-bit)
+    - profile: Codec profile (e.g., Main 10)
+    
+    Args:
+        url: Stream URL to analyze
+        timeout: Timeout in seconds for the ffprobe operation
+        user_agent: User agent string to use for HTTP requests
+    
+    Returns:
+        Dictionary with HDR metadata fields, or None if extraction fails
+    """
+    logger.debug(f"Extracting HDR metadata with ffprobe for: {url[:50]}...")
+    command = [
+        'ffprobe',
+        '-user_agent', user_agent,
+        '-v', 'quiet',
+        '-show_entries', 'stream=color_space,color_primaries,color_transfer,pix_fmt,profile',
+        '-of', 'json',
+        url
+    ]
+    
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            text=True
+        )
+        
+        if result.stdout:
+            data = json.loads(result.stdout)
+            streams = data.get('streams', [])
+            
+            # Look for the first video stream with HDR metadata
+            for stream in streams:
+                # Check if this is a video stream (has pix_fmt or profile)
+                if stream.get('pix_fmt') or stream.get('profile'):
+                    logger.debug(f"  → Found video stream with metadata: {stream}")
+                    return {
+                        'color_transfer': stream.get('color_transfer'),
+                        'color_primaries': stream.get('color_primaries'),
+                        'color_space': stream.get('color_space'),
+                        'pix_fmt': stream.get('pix_fmt'),
+                        'profile': stream.get('profile')
+                    }
+            
+            logger.debug("  → No video stream with HDR metadata found")
+            return None
+        
+        logger.debug("ffprobe returned empty output")
+        return None
+    
+    except subprocess.TimeoutExpired:
+        logger.debug(f"Timeout ({timeout}s) while fetching HDR metadata")
+        return None
+    except json.JSONDecodeError as e:
+        logger.debug(f"Failed to decode JSON from ffprobe: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"HDR metadata extraction failed: {e}")
+        return None
+
+
+def _detect_hdr_format(metadata: Optional[Dict[str, str]]) -> Optional[str]:
+    """
+    Detect HDR format from color metadata.
+    
+    HDR formats are identified by specific combinations of color parameters:
+    - HDR10: BT.2020 color primaries + SMPTE ST 2084 (PQ) transfer + 10-bit
+    - HLG: BT.2020 color primaries + ARIB STD-B67 transfer + 10-bit
+    - Dolby Vision: Specific profiles (dvhe, dvh1)
+    
+    Args:
+        metadata: Dictionary with color metadata from ffprobe
+    
+    Returns:
+        HDR format string ('HDR10', 'HLG', 'Dolby Vision') or None for SDR
+    """
+    if not metadata:
+        return None
+    
+    color_transfer = (metadata.get('color_transfer') or '').lower()
+    color_primaries = (metadata.get('color_primaries') or '').lower()
+    pix_fmt = (metadata.get('pix_fmt') or '').lower()
+    profile = (metadata.get('profile') or '').lower()
+    
+    # Check for 10-bit or higher (required for all HDR formats)
+    is_10bit_or_higher = '10' in pix_fmt or '12' in pix_fmt or '16' in pix_fmt
+    
+    # Check for BT.2020 color primaries (required for HDR10 and HLG)
+    is_bt2020 = 'bt2020' in color_primaries
+    
+    # Dolby Vision detection (check profile first as it's most specific)
+    if 'dv' in profile or 'dolby' in profile:
+        logger.debug(f"  → Detected Dolby Vision (profile: {metadata.get('profile')})")
+        return 'Dolby Vision'
+    
+    # HDR10 detection: BT.2020 + SMPTE ST 2084 (PQ) + 10-bit
+    if is_bt2020 and is_10bit_or_higher and 'smpte2084' in color_transfer:
+        logger.debug(f"  → Detected HDR10 (transfer: {metadata.get('color_transfer')})")
+        return 'HDR10'
+    
+    # HLG detection: BT.2020 + ARIB STD-B67 + 10-bit
+    if is_bt2020 and is_10bit_or_higher and 'arib-std-b67' in color_transfer:
+        logger.debug(f"  → Detected HLG (transfer: {metadata.get('color_transfer')})")
+        return 'HLG'
+    
+    # No HDR format detected
+    logger.debug(f"  → No HDR format detected (transfer: {color_transfer}, primaries: {color_primaries}, pix_fmt: {pix_fmt})")
+    return None
+
+
 def check_ffmpeg_installed() -> bool:
     """
     Check if ffmpeg and ffprobe are installed and available.
@@ -439,18 +560,52 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                         result_data['fps'] = round(float(fps_match.group(1)), 2)
                         logger.debug(f"  → Detected FPS: {result_data['fps']}")
                     
-                    # Detect HDR format based on color parameters
-                    # HDR10/HDR10+: bt2020 + smpte2084 + 10-bit
-                    # HLG: bt2020 + arib-std-b67 + 10-bit
-                    # Example: yuv420p10le(tv, bt2020nc/bt2020/smpte2084), 3840x2160
-                    line_lower = line.lower()
-                    if 'bt2020' in line_lower and '10le' in line_lower:
-                        if 'smpte2084' in line_lower:
-                            result_data['hdr_format'] = 'HDR10'
-                            logger.debug(f"  → Detected HDR format: HDR10")
-                        elif 'arib-std-b67' in line_lower:
-                            result_data['hdr_format'] = 'HLG'
-                            logger.debug(f"  → Detected HDR format: HLG")
+                    # Extract HDR metadata from color information in pixel format
+                    # Pattern: yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67)
+                    # This extracts: pix_fmt, color_space, color_primaries, color_transfer
+                    if not result_data['hdr_format']:
+                        # Extract pixel format and color info using regex
+                        # Matches: yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67)
+                        color_match = re.search(
+                            r'(yuv\w+?p?\d{1,2}le)[^,]*,\s*([^,)]+)',
+                            line,
+                            re.IGNORECASE
+                        )
+                        
+                        if color_match:
+                            pix_fmt = color_match.group(1).lower()
+                            color_info = color_match.group(2).lower()
+                            
+                            logger.debug(f"  → Extracted color info: pix_fmt={pix_fmt}, color_info={color_info}")
+                            
+                            # Parse color info which can be in formats like:
+                            # - "bt2020nc/bt2020/arib-std-b67"
+                            # - "bt2020/arib-std-b67"
+                            # - "tv, bt2020nc/bt2020/arib-std-b67"
+                            color_parts = color_info.replace('tv,', '').strip().split('/')
+                            
+                            # Extract color primaries and transfer function
+                            color_primaries = None
+                            color_transfer = None
+                            
+                            for part in color_parts:
+                                part = part.strip()
+                                if 'bt2020' in part and not color_primaries:
+                                    color_primaries = 'bt2020'
+                                elif 'smpte2084' in part or 'arib-std-b67' in part:
+                                    color_transfer = part
+                            
+                            # Check for 10-bit or higher (required for HDR)
+                            is_10bit_or_higher = '10' in pix_fmt or '12' in pix_fmt or '16' in pix_fmt
+                            
+                            # Detect HDR format using extracted metadata
+                            if color_primaries == 'bt2020' and is_10bit_or_higher:
+                                if color_transfer and 'smpte2084' in color_transfer:
+                                    result_data['hdr_format'] = 'HDR10'
+                                    logger.debug(f"  → Detected HDR format: HDR10")
+                                elif color_transfer and 'arib-std-b67' in color_transfer:
+                                    result_data['hdr_format'] = 'HLG'
+                                    logger.debug(f"  → Detected HDR format: HLG")
                 except (ValueError, AttributeError) as e:
                     logger.debug(f"  → Error parsing video stream line: {e}")
             
