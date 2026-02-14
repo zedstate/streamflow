@@ -105,15 +105,17 @@ export default function Scheduling() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [eventsResponse, channelsResponse, channelGroupsResponse] = await Promise.all([
+      const [eventsResponse, channelsResponse, channelGroupsResponse, rulesResponse] = await Promise.all([
         schedulingAPI.getEvents(),
         channelsAPI.getChannels(),
-        channelsAPI.getGroups()
+        channelsAPI.getGroups(),
+        schedulingAPI.getAutoCreateRules()
       ])
 
       setEvents(eventsResponse.data || [])
       setChannels(channelsResponse.data || [])
       setChannelGroups(channelGroupsResponse.data || [])
+      setAutoCreateRules(rulesResponse.data || [])
     } catch (err) {
       console.error('Failed to load scheduling data:', err)
       toast({
