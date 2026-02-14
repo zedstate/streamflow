@@ -4052,17 +4052,29 @@ def create_stream_session():
         if not channel_id:
             return jsonify({"error": "channel_id is required"}), 400
         
-        # Get regex filter - if not provided, use channel's configured regex
+        # Determine regex and matching config for this channel
         regex_filter = data.get('regex_filter')
+        match_by_tvg_id = False
+        
         if not regex_filter:
-            # Try to get channel's configured regex from regex matcher
+            # Try to get channel's configured regex and match settings
             try:
                 regex_matcher = get_regex_matcher()
-                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
-                logger.info(f"Using channel's configured regex for manual session: {regex_filter}")
+                
+                # Get match config to check for match_by_tvg_id
+                match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+                
+                # Get regex filter
+                # If match_by_tvg_id is enabled, we allow regex to be None (don't default to .*)
+                # This allows ONLY matching by TVG-ID if no regex patterns are set
+                default_regex = None if match_by_tvg_id else ".*"
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                
+                logger.info(f"Using channel config for manual session: regex='{regex_filter}', match_by_tvg_id={match_by_tvg_id}")
             except Exception as e:
-                logger.debug(f"Could not get channel regex from matcher: {e}")
-                regex_filter = '.*'  # Default fallback
+                logger.debug(f"Could not get channel match config: {e}")
+                regex_filter = '.*'  # Default fallback if error
         
         pre_event_minutes = data.get('pre_event_minutes', 30)
         stagger_ms = data.get('stagger_ms', 200)
@@ -4084,7 +4096,8 @@ def create_stream_session():
             timeout_ms=timeout_ms,
             epg_event=epg_event,
             auto_created=auto_created,
-            auto_create_rule_id=auto_create_rule_id
+            auto_create_rule_id=auto_create_rule_id,
+            match_by_tvg_id=match_by_tvg_id
         )
         
         return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
@@ -4134,13 +4147,22 @@ def create_group_stream_sessions():
             try:
                 channel_id = channel.get('id')
                 
-                # Determine regex for this channel
+                # Determine regex and match config for this channel
                 channel_regex = regex_filter
+                match_by_tvg_id = False
+                
                 if not channel_regex:
-                    # Try to get channel's configured regex
+                    # Try to get channel's configured regex and match settings
                     try:
                         regex_matcher = get_regex_matcher()
-                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id))
+                        
+                        # Get match config
+                        match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                        match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+                        
+                        # Get regex filter with appropriate default
+                        default_regex = None if match_by_tvg_id else ".*"
+                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
                     except Exception:
                         channel_regex = '.*'
                 
@@ -4151,7 +4173,8 @@ def create_group_stream_sessions():
                     pre_event_minutes=pre_event_minutes,
                     stagger_ms=stagger_ms,
                     timeout_ms=timeout_ms,
-                    skip_stream_refresh=True
+                    skip_stream_refresh=True,
+                    match_by_tvg_id=match_by_tvg_id
                 )
                 
                 # Start session

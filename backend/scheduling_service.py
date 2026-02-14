@@ -561,12 +561,21 @@ class SchedulingService:
             # Get channel's configured regex from regex matcher
             channel_id = event.get('channel_id')
             regex_filter = ".*"  # Default
+            match_by_tvg_id = False
             
-            # Try to get channel-specific regex from regex matcher
+            # Try to get channel-specific regex and match settings from regex matcher
             try:
                 regex_matcher = self._get_regex_matcher()
-                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
-                logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}")
+                
+                # Get match config
+                match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+                
+                # Get regex filter with appropriate default
+                default_regex = None if match_by_tvg_id else ".*"
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                
+                logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}, match_by_tvg_id={match_by_tvg_id}")
             except Exception as e:
                 logger.debug(f"Could not get channel regex from matcher: {e}")
             
@@ -577,7 +586,8 @@ class SchedulingService:
                 pre_event_minutes=event.get('minutes_before', 30),
                 epg_event=epg_event,
                 auto_created=event.get('auto_created', False),
-                auto_create_rule_id=event.get('auto_create_rule_id')
+                auto_create_rule_id=event.get('auto_create_rule_id'),
+                match_by_tvg_id=match_by_tvg_id
             )
             
             logger.info(f"Created monitoring session {session_id} from event {event_id}")

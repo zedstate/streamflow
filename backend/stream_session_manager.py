@@ -149,6 +149,9 @@ class SessionInfo:
     enforce_sync_interval_ms: int = 1000  # Default 1 second
     last_sync_time: float = 0.0
     
+    # Matching configuration
+    match_by_tvg_id: bool = False
+    
     def __post_init__(self):
         if self.streams is None:
             self.streams = {}
@@ -377,18 +380,20 @@ class StreamSessionManager:
                       allow_duplicate_channel: bool = False,
                       skip_stream_refresh: bool = False,
                       evaluation_interval_ms: int = DEFAULT_EVALUATION_INTERVAL_MS,
+                      match_by_tvg_id: bool = False,
                       **kwargs) -> str:
         """
         Create a new monitoring session.
         
         Args:
             channel_id: Dispatcharr channel ID to monitor
-            regex_filter: Regex pattern to filter streams
+            regex_filter: Regex pattern to filter streams (optional if match_by_tvg_id is True)
             pre_event_minutes: Minutes before event to start monitoring
             epg_event: Optional EPG event to attach to this session
             allow_duplicate_channel: Allow creating a session if one already exists for this channel
             skip_stream_refresh: Skip refreshing global stream list (useful for batch operations)
             evaluation_interval_ms: Interval for stream evaluation in milliseconds
+            match_by_tvg_id: Whether to match streams by TVG-ID
             **kwargs: Additional session parameters (auto_created, auto_create_rule_id, etc.)
             
         Returns:
@@ -468,6 +473,7 @@ class StreamSessionManager:
             epg_event_description=epg_event_description,
             channel_logo_url=channel_logo_url,
             channel_tvg_id=channel_tvg_id,
+            match_by_tvg_id=match_by_tvg_id,
             **kwargs
         )
         
@@ -597,49 +603,70 @@ class StreamSessionManager:
         # Get all streams
         all_streams = udi.get_streams()
         
-        # Filter by regex with safety measures
-        try:
-            # Validate regex complexity (basic check)
-            regex_pattern = session.regex_filter or '.*'
-            if len(regex_pattern) > 500:
-                logger.error(f"Regex pattern too long ({len(regex_pattern)} chars), max 500")
-                return
-            
-            # Substitute CHANNEL_NAME variable if present (consistent with channel matcher)
-            channel_name = session.channel_name or f"Channel {session.channel_id}"
-            escaped_channel_name = re.escape(channel_name)
-            regex_pattern = regex_pattern.replace('CHANNEL_NAME', escaped_channel_name)
-            
-            # Convert literal spaces in pattern to flexible whitespace regex (\s+)
-            # This matches behavior in RegexChannelMatcher
-            regex_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', regex_pattern)
-            
-            # Compile with timeout protection
-            regex = re.compile(regex_pattern, re.IGNORECASE)
-            
-            # Test regex with empty string to catch catastrophic backtracking
+        regex = None
+        if session.regex_filter:
+            # Filter by regex with safety measures
             try:
-                regex.search('')
-            except Exception as e:
-                logger.error(f"Regex pattern failed safety test: {e}")
-                return
+                # Validate regex complexity (basic check)
+                regex_pattern = session.regex_filter
+                if len(regex_pattern) > 500:
+                    logger.error(f"Regex pattern too long ({len(regex_pattern)} chars), max 500")
+                    return
                 
-        except re.error as e:
-            logger.error(f"Invalid regex filter: {e}")
-            return
-        except Exception as e:
-            logger.error(f"Unexpected error compiling regex: {e}")
-            return
+                # Substitute CHANNEL_NAME variable if present (consistent with channel matcher)
+                channel_name = session.channel_name or f"Channel {session.channel_id}"
+                escaped_channel_name = re.escape(channel_name)
+                regex_pattern = regex_pattern.replace('CHANNEL_NAME', escaped_channel_name)
+                
+                # Convert literal spaces in pattern to flexible whitespace regex (\s+)
+                # This matches behavior in RegexChannelMatcher
+                regex_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', regex_pattern)
+                
+                # Compile with timeout protection
+                regex = re.compile(regex_pattern, re.IGNORECASE)
+                
+                # Test regex with empty string to catch catastrophic backtracking
+                try:
+                    regex.search('')
+                except Exception as e:
+                    logger.error(f"Regex pattern failed safety test: {e}")
+                    return
+                    
+            except re.error as e:
+                logger.error(f"Invalid regex filter: {e}")
+                return
+            except Exception as e:
+                logger.error(f"Unexpected error compiling regex: {e}")
+                return
         
-        # Find matching streams with timeout protection
+        # Find matching streams
         matching_streams = []
+        
+        # Pre-calculate session TVG-ID if needed
+        session_tvg_id = session.channel_tvg_id
+        
         for s in all_streams:
             try:
-                # Use search with a reasonable timeout approach
-                # Python regex doesn't have direct timeout, but we can limit input size
-                stream_name = s.get('name', '')[:1000]  # Limit input size
-                if regex.search(stream_name):
+                matched = False
+                
+                # Check 1: TVG-ID Match
+                if session.match_by_tvg_id and session_tvg_id:
+                    stream_tvg_id = s.get('tvg_id')
+                    if stream_tvg_id == session_tvg_id:
+                        matched = True
+                
+                # Check 2: Regex Match (if not already matched by TVG-ID or if we want cumulative)
+                # Currently implementing OR logic: if matches TVG-ID OR Regex, include it.
+                if not matched and regex:
+                    # Use search with a reasonable timeout approach
+                    # Python regex doesn't have direct timeout, but we can limit input size
+                    stream_name = s.get('name', '')[:1000]  # Limit input size
+                    if regex.search(stream_name):
+                        matched = True
+                
+                if matched:
                     matching_streams.append(s)
+                    
             except Exception as e:
                 logger.warning(f"Error matching stream {s.get('id')}: {e}")
                 continue
