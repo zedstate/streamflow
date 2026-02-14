@@ -641,6 +641,15 @@ class RegexChannelMatcher:
                                     # Stream's M3U account is not in the allowed list, skip this pattern
                                     continue
                             
+                            # SAFETY CHECK: If match_by_tvg_id is enabled, IGNORE catch-all regexes
+                            # This prevents the issue where a lingering ".*" causes unwanted matches
+                            # despite the user enabling TVG matching.
+                            if config.get("match_by_tvg_id", False):
+                                is_catch_all = pattern == ".*" or pattern == "^.*$" or pattern == ".+" or pattern == "^.+$"
+                                if is_catch_all:
+                                    # logger.debug(f"Ignoring catch-all regex '{pattern}' for channel {channel_id} because match_by_tvg_id is enabled")
+                                    continue
+
                             # Substitute channel name variable if present
                             substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
                             
@@ -759,6 +768,12 @@ class RegexChannelMatcher:
                                     # Stream's M3U account is not in the allowed list, skip this pattern
                                     continue
                             
+                            # SAFETY CHECK: If match_by_tvg_id is enabled, IGNORE catch-all regexes
+                            if config.get("match_by_tvg_id", False):
+                                is_catch_all = pattern == ".*" or pattern == "^.*$" or pattern == ".+" or pattern == "^.+$"
+                                if is_catch_all:
+                                    continue
+
                             # Substitute channel name variable if present
                             substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
                             
