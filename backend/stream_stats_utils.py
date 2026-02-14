@@ -198,7 +198,8 @@ def extract_stream_stats(stream_data: Dict[str, Any]) -> Dict[str, Any]:
         'fps': None,
         'bitrate_kbps': None,
         'video_codec': 'N/A',
-        'audio_codec': 'N/A'
+        'audio_codec': 'N/A',
+        'hdr_format': None
     }
     
     # Try to get stream_stats from various locations
@@ -235,6 +236,9 @@ def extract_stream_stats(stream_data: Dict[str, Any]) -> Dict[str, Any]:
         # Codecs
         result['video_codec'] = stream_stats.get('video_codec', 'N/A') or 'N/A'
         result['audio_codec'] = stream_stats.get('audio_codec', 'N/A') or 'N/A'
+        
+        # HDR Format
+        result['hdr_format'] = stream_stats.get('hdr_format')
     
     # Fallback: check if fields are directly on stream_data (e.g., from analyze_stream)
     if result['resolution'] == 'N/A' and 'resolution' in stream_data:
@@ -251,6 +255,9 @@ def extract_stream_stats(stream_data: Dict[str, Any]) -> Dict[str, Any]:
     
     if result['audio_codec'] == 'N/A' and 'audio_codec' in stream_data:
         result['audio_codec'] = stream_data.get('audio_codec', 'N/A') or 'N/A'
+        
+    if result['hdr_format'] is None and 'hdr_format' in stream_data:
+        result['hdr_format'] = stream_data.get('hdr_format')
     
     return result
 

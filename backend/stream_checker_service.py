@@ -2929,7 +2929,8 @@ class StreamCheckerService:
                             'video_codec': formatted_stats['video_codec'],
                             'audio_codec': formatted_stats['audio_codec'],
                             'bitrate': formatted_stats['bitrate'],
-                            'm3u_account': m3u_account_name
+                            'm3u_account': m3u_account_name,
+                            'hdr_format': extracted_stats.get('hdr_format')
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
@@ -3600,7 +3601,8 @@ class StreamCheckerService:
                     'video_codec': formatted_stats['video_codec'],
                     'fps': formatted_stats['fps'],
                     'score': score,
-                    'm3u_account': m3u_account_name
+                    'm3u_account': m3u_account_name,
+                    'hdr_format': extracted_stats.get('hdr_format')
                 })
             
             # Calculate duration
