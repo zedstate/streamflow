@@ -4206,6 +4206,7 @@ def get_stream_session(session_id):
                     'fps': stream_info.fps,
                     'bitrate': stream_info.bitrate,
                     'm3u_account': stream_info.m3u_account,
+                    'hdr_format': stream_info.hdr_format,
                     'status': stream_info.status,
                     'is_quarantined': stream_info.is_quarantined,
                     'reliability_score': stream_info.reliability_score,
