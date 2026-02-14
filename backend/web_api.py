@@ -4066,9 +4066,10 @@ def create_stream_session():
                 match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                 
                 # Get regex filter
-                # If match_by_tvg_id is enabled, we allow regex to be None (don't default to .*)
-                # This allows ONLY matching by TVG-ID if no regex patterns are set
-                default_regex = None if match_by_tvg_id else ".*"
+                # We default to None if no regex is configured.
+                # This ensures that if match_by_tvg_id is False AND no regex is set, we match NOTHING.
+                # Previously we defaulted to ".*" which matched EVERYTHING.
+                default_regex = None
                 regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
                 
                 logger.info(f"Using channel config for manual session: regex='{regex_filter}', match_by_tvg_id={match_by_tvg_id}")
@@ -4161,10 +4162,11 @@ def create_group_stream_sessions():
                         match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                         
                         # Get regex filter with appropriate default
-                        default_regex = None if match_by_tvg_id else ".*"
+                        # Default to None so we don't match everything by default if no rules exist
+                        default_regex = None
                         channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
                     except Exception:
-                        channel_regex = '.*'
+                        channel_regex = None
                 
                 # Create session (skip stream refresh as we did it once above)
                 session_id = session_manager.create_session(

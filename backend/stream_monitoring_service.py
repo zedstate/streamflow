@@ -396,10 +396,10 @@ class StreamMonitoringService:
                 if stream_info.width and stream_info.height:
                     stats['resolution'] = f"{stream_info.width}x{stream_info.height}"
                 
-                # FPS
                 if stream_info.fps:
                     try:
-                        stats['source_fps'] = float(stream_info.fps)
+                        # Round to nearest integer (standard FPS e.g. 23.97 -> 24, 29.97 -> 30)
+                        stats['source_fps'] = int(round(float(stream_info.fps)))
                     except (ValueError, TypeError):
                         pass
                 

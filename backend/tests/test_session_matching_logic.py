@@ -127,17 +127,17 @@ class TestSessionMatchingtLogic(unittest.TestCase):
         self.assertNotIn('s2', matched_ids)
         self.assertEqual(len(matched_ids), 3)
 
-    def test_default_match_all(self):
-        """Test default behavior (regex='.*', match_by_tvg_id=False)"""
+    def test_no_rules_match_nothing(self):
+        """Test behavior when no rules are present (regex=None, match_by_tvg_id=False)"""
         session = SessionInfo(
             session_id='test_session',
             channel_id=4,
             channel_name='Test Channel 4',
             created_at=datetime.now().isoformat(),
             is_active=True,
-            regex_filter='.*',
+            regex_filter=None,  # No regex rules
             channel_tvg_id='channel4.tv',
-            match_by_tvg_id=False
+            match_by_tvg_id=False # No TVG-ID matching
         )
         self.session_manager.sessions['test_session'] = session
         
@@ -147,8 +147,9 @@ class TestSessionMatchingtLogic(unittest.TestCase):
         # Verify streams
         matched_streams = list(self.session_manager.sessions['test_session'].streams.values())
         
-        # Should match everything
-        self.assertEqual(len(matched_streams), 4)
+        # Should match NOTHING because there are no rules
+        # (Previously matched everything with '.*')
+        self.assertEqual(len(matched_streams), 0)
 
 if __name__ == '__main__':
     unittest.main()

@@ -572,7 +572,8 @@ class SchedulingService:
                 match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                 
                 # Get regex filter with appropriate default
-                default_regex = None if match_by_tvg_id else ".*"
+                # Default to None so we don't match everything by default if no rules exist
+                default_regex = None
                 regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
                 
                 logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}, match_by_tvg_id={match_by_tvg_id}")
