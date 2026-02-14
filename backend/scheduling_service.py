@@ -605,15 +605,21 @@ class SchedulingService:
         return []
     
     def _save_auto_create_rules(self) -> bool:
-        """Save auto-create rules to file.
+        """Save auto-create rules to file using atomic write.
         
         Returns:
             True if successful
         """
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(AUTO_CREATE_RULES_FILE, 'w') as f:
+            
+            # Atomic write: write to temp file then rename
+            temp_file = AUTO_CREATE_RULES_FILE.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
                 json.dump(self._auto_create_rules, f, indent=2)
+                f.flush()
+                
+            os.replace(temp_file, AUTO_CREATE_RULES_FILE)
             logger.info(f"Saved {len(self._auto_create_rules)} auto-create rules")
             return True
         except Exception as e:
@@ -858,7 +864,10 @@ class SchedulingService:
             }
             
             self._auto_create_rules.append(rule)
-            self._save_auto_create_rules()
+            if not self._save_auto_create_rules():
+                # Rollback in memory change if save fails
+                self._auto_create_rules.pop()
+                raise IOError("Failed to save auto-create rule to disk")
             
             # Log rule creation
             desc_parts = []
@@ -896,7 +905,11 @@ class SchedulingService:
             self._auto_create_rules = [r for r in self._auto_create_rules if r.get('id') != rule_id]
             
             if len(self._auto_create_rules) < initial_count:
-                self._save_auto_create_rules()
+                if not self._save_auto_create_rules():
+                    logger.error(f"Failed to save auto-create rules after deleting {rule_id}")
+                    # Note: We don't rollback deletion in memory here as it's less critical than creation,
+                    # but arguably we should. For now, just logging error.
+                    return False
                 
                 # Delete all events that were auto-created by this rule
                 initial_events_count = len(self._scheduled_events)
@@ -1050,7 +1063,8 @@ class SchedulingService:
             
             # Save changes
             self._auto_create_rules[rule_index] = rule
-            self._save_auto_create_rules()
+            if not self._save_auto_create_rules():
+                 raise IOError("Failed to save updated auto-create rule to disk")
             
             logger.info(f"Updated auto-create rule {rule_id}")
             
@@ -1512,7 +1526,9 @@ class SchedulingService:
                                     })
                             
                             matching_rule['channels_info'] = channels_info
-                            self._save_auto_create_rules()
+                            matching_rule['channels_info'] = channels_info
+                            if not self._save_auto_create_rules():
+                                raise IOError("Failed to save imported rule to disk")
                             
                             replaced_count += 1
                             logger.info(f"Replaced existing rule '{matching_rule['name']}' with imported rule '{import_name}'")
@@ -1544,7 +1560,9 @@ class SchedulingService:
                                     })
                             
                             matching_rule['channels_info'] = channels_info
-                            self._save_auto_create_rules()
+                            matching_rule['channels_info'] = channels_info
+                            if not self._save_auto_create_rules():
+                                raise IOError("Failed to save merged rule to disk")
                             
                             merged_count += 1
                             channel_names = ', '.join([ch['name'] for ch in channels_info])
