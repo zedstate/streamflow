@@ -78,6 +78,11 @@ The Advanced Stream Monitoring System provides event-based quality tracking and 
 - **Dispatcharr Integration**: Real-time checking of what users are actually watching
 - **Automatic Fallback**: Smart handling of empty channels and dead streams
 
+### 9. Exclusive Ownership & Sync Enforcement
+- **Exclusive Channel Locking**: Active sessions claim exclusive ownership of their channel.
+- **Consistency Check**: Configurable interval (default 1s) to verify Dispatcharr state matches session state.
+- **Auto-Correction**: Automatically reverts any external changes to the channel's stream list, removing "alien" streams.
+
 ## Architecture
 
 ### Backend Components
@@ -468,6 +473,7 @@ Alternatively, create sessions from scheduled events:
 | `stagger_ms`                  | 200     | Milliseconds between starting stream monitors |
 | `timeout_ms`                  | 30000   | Stream timeout before quarantine (ms)         |
 | `probe_interval_ms`           | 300000  | Interval for stream list refresh (ms)         |
+| `enforce_sync_interval_ms`    | 1000    | Interval for sync enforcement (ms)            |
 | `screenshot_interval_seconds` | 60      | Seconds between screenshot captures           |
 | `window_size`                 | 100     | Size of sliding window for scoring            |
 

@@ -145,6 +145,10 @@ class SessionInfo:
     # Track quarantined stream IDs to prevent re-addition
     quarantined_stream_ids: Set[int] = None
     
+    # Synchronization enforcement
+    enforce_sync_interval_ms: int = 1000  # Default 1 second
+    last_sync_time: float = 0.0
+    
     def __post_init__(self):
         if self.streams is None:
             self.streams = {}
@@ -241,6 +245,7 @@ class StreamSessionManager:
         self.sessions: Dict[str, SessionInfo] = {}
         self.session_locks: Dict[str, threading.Lock] = {}
         self.scoring_windows: Dict[str, Dict[int, CappedSlidingWindow]] = {}  # session_id -> stream_id -> window
+        self.channel_ownership: Dict[int, str] = {}  # channel_id -> session_id
         
         # Ensure config directory exists
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -501,7 +506,17 @@ class StreamSessionManager:
             return False
         
         with self.session_locks[session_id]:
+            # Check for exclusive channel ownership
+            current_owner = self.get_session_owner(session.channel_id)
+            if current_owner and current_owner != session_id:
+                logger.error(f"Cannot start session {session_id}: Channel {session.channel_id} is already owned by active session {current_owner}")
+                return False
+            
+            # Claim ownership
+            self.channel_ownership[session.channel_id] = session_id
+            
             session.is_active = True
+            session.last_sync_time = 0.0  # Reset sync time
             
             # Discover streams
             self._discover_streams(session_id)
@@ -550,6 +565,11 @@ class StreamSessionManager:
         
         with self.session_locks[session_id]:
             session.is_active = False
+            # Release ownership
+            if self.channel_ownership.get(session.channel_id) == session_id:
+                del self.channel_ownership[session.channel_id]
+                logger.debug(f"Released ownership of channel {session.channel_id} from session {session_id}")
+            
             self._save_sessions()
         
         # Explicitly stop all FFmpeg monitors for this session
@@ -721,6 +741,17 @@ class StreamSessionManager:
             if session.is_active:
                 channels.add(session.channel_id)
         return channels
+    
+    def get_session_owner(self, channel_id: int) -> Optional[str]:
+        """Get the session ID that currently owns the channel.
+        
+        Args:
+            channel_id: Channel ID to check
+            
+        Returns:
+            Session ID if owned, None otherwise
+        """
+        return self.channel_ownership.get(channel_id)
     
     def add_stream_to_session(self, session_id: str, stream_id: int) -> bool:
         """Add a newly discovered stream to an active session.

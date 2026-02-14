@@ -255,7 +255,42 @@ class StreamMonitoringService:
         if updates_needed:
             self.session_manager._save_sessions()
             
+        if updates_needed:
+            self.session_manager._save_sessions()
+            
         return transitioned_to_stable
+    
+    def _check_sync_enforcement(self, session) -> bool:
+        """
+        Check if we need to enforce synchronization for this session.
+        
+        This ensures that the Dispatcharr channel state matches the session state,
+        reverting any external changes (manual edits, other apps) and enforcing
+        exclusive ownership.
+        
+        Returns:
+            bool: True if sync enforcement was triggered
+        """
+        current_time = time.time()
+        
+        # Check if ownership is lost (shouldn't happen if locking logic works, but good for safety)
+        owner = self.session_manager.get_session_owner(session.channel_id)
+        if owner and owner != session.session_id:
+            logger.warning(f"Session {session.session_id} lost ownership of channel {session.channel_id} to {owner}")
+            return False
+            
+        # Check if it's time to enforce sync
+        # Default 1000ms (1s) interval
+        interval = getattr(session, 'enforce_sync_interval_ms', 1000) / 1000.0
+        last_sync = getattr(session, 'last_sync_time', 0.0)
+        
+        if current_time - last_sync >= interval:
+            # Trigger evaluation with force_update=True to enforce state
+            self._evaluate_session_streams(session.session_id, force_update=True)
+            session.last_sync_time = current_time
+            return True
+            
+        return False
     
     def _monitor_worker(self):
         """Worker thread for monitoring streams"""
@@ -273,6 +308,10 @@ class StreamMonitoringService:
                     # Check lifecycle updates
                     became_stable = self._manage_quarantine_lifecycle(session)
                     
+                    # Enforce synchronization (exclusive ownership)
+                    # This runs frequently (e.g. 1s) to revert external changes
+                    sync_triggered = self._check_sync_enforcement(session)
+                    
                     # Always monitor (collect stats) - this is fast and non-blocking usually
                     self._monitor_session(session.session_id)
                     
@@ -281,7 +320,8 @@ class StreamMonitoringService:
                     eval_interval_sec = getattr(session, 'evaluation_interval_ms', 1000) / 1000.0
                     
                     # Force update if a stream just became stable, OR if interval passed
-                    if became_stable or (current_time - last_eval >= eval_interval_sec):
+                    # Note: if sync_triggered is True, we already evaluated, so skip to avoid double work
+                    if not sync_triggered and (became_stable or (current_time - last_eval >= eval_interval_sec)):
                         self._evaluate_session_streams(session.session_id, force_update=became_stable)
                         self.last_evaluation_times[session.session_id] = current_time
                 
@@ -800,8 +840,12 @@ class StreamMonitoringService:
                      # If we are in "Stable Only" mode, exclude review streams from tail too
                      continue
 
-                # Append at the end
-                new_order_ids.append(sid)
+                # Append at the end (ONLY if in session or explicit ownership not enforced)
+                # Ensure exclusive ownership: Drop "alien" streams that are not in our session
+                if known_stream:
+                    new_order_ids.append(sid)
+                else:
+                    logger.debug(f"Dropping alien stream {sid} from channel {session.channel_id} (Exclusive Ownership)")
 
         # Check if order changed
         # If force_update is True, we proceed even if order looks same (to handle desync or status updates)

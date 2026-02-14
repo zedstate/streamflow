@@ -21,6 +21,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
     group_id: '',
     stagger_ms: 1000,
     evaluation_interval_ms: 1000,
+    enforce_sync_interval_ms: 1000,
     timeout_ms: 30000,
     autoStart: true
   });
@@ -170,6 +171,19 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
                   max="5000"
                   value={formData.stagger_ms}
                   onChange={(e) => handleChange('stagger_ms', parseInt(e.target.value))}
+                  className="text-sm"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="sync_interval" className="text-xs">Sync Interval (ms)</Label>
+                <Input
+                  id="sync_interval"
+                  type="number"
+                  min="500"
+                  max="10000"
+                  value={formData.enforce_sync_interval_ms}
+                  onChange={(e) => handleChange('enforce_sync_interval_ms', parseInt(e.target.value))}
                   className="text-sm"
                 />
               </div>

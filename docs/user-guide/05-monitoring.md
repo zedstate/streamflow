@@ -24,6 +24,8 @@ The Stream Monitoring system provides event-based quality tracking and reliabili
 - **Active Stream Detection** - See which streams are being played
 - **Browsable Timeline** - Video-editor style timeline for history
 - **Smart Stream Protection** - Conditional hysteresis based on user activity
+- **Exclusive Ownership** - Prevents conflicting monitoring sessions
+- **Sync Enforcement** - Guarantees Dispatcharr channel state consistency
 
 ---
 
@@ -43,6 +45,13 @@ The Stream Monitoring system provides event-based quality tracking and reliabili
    - **Auto-Start** - Toggle to start immediately
    - **EPG Event** (optional) - Attach EPG event information
 4. Click **Create Session**
+
+### Exclusive Ownership & Synchronization
+
+When a session is active, it claims **exclusive ownership** of the channel.
+- No other session can monitor the same channel.
+- The system checks every second (configurable via `Sync Interval`) to ensure the channel's streams in Dispatcharr match the session's stream list.
+- **Alien Stream Removal**: Any streams added to the channel externally (e.g., manually) will be automatically removed to maintain consistency.
 
 ### Automatic Session Creation
 
@@ -67,6 +76,7 @@ See [Automation Profiles](02-automation-profiles.md#epg-based-scheduling) for au
 | `timeout_ms`                  | 30000   | Stream timeout before quarantine (ms)  |
 | `probe_interval_ms`           | 300000  | Interval for stream list refresh (ms)  |
 | `screenshot_interval_seconds` | 60      | Seconds between screenshots            |
+| `enforce_sync_interval_ms`    | 1000    | Interval for sync enforcement (ms)     |
 | `window_size`                 | 100     | Size of sliding window for scoring     |
 
 ---
