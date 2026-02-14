@@ -2246,6 +2246,7 @@ class StreamCheckerService:
                     analyzed_streams.extend(cached_analyzed_streams)
                     logger.info(f"Merged {len(cached_analyzed_streams)} cached streams with {len(results)} new results. Total candidates: {len(analyzed_streams)}")
 
+                if batch_enabled and batch_stats_list:
                     logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
                     successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
                     logger.info(f"Batch update complete: {successful} successful, {failed} failed")
@@ -2972,7 +2973,7 @@ class StreamCheckerService:
                             'avg_bitrate': averages['avg_bitrate'],
                             'avg_fps': averages['avg_fps'],
                             'success': True,
-                            'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
+                            'stream_details': stream_stats[:10]  # Limit to top 10 for brevity
                         })
                         logger.info(f"Added channel {channel_name} to batch changelog")
                 except Exception as e:
