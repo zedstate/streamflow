@@ -764,7 +764,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                   <div className="flex items-center gap-2">
                     <span>{formatQuality(stream)}</span>
                     {stream.hdr_format && (
-                      <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs">
+                      <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs px-2 py-0 h-5">
                         {stream.hdr_format}
                       </Badge>
                     )}

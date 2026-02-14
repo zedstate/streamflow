@@ -15,12 +15,12 @@ function formatTimestamp(timestamp) {
   const diffMins = Math.floor(diffMs / 60000)
   const diffHours = Math.floor(diffMs / 3600000)
   const diffDays = Math.floor(diffMs / 86400000)
-  
+
   if (diffMins < 1) return 'Just now'
   if (diffMins < 60) return `${diffMins}m ago`
   if (diffHours < 24) return `${diffHours}h ago`
   if (diffDays < 7) return `${diffDays}d ago`
-  
+
   return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
@@ -78,18 +78,18 @@ function getActionColor(action) {
 function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
   const [logoError, setLogoError] = useState(false)
   const channelLabel = item.channel_name
-  const channelStats = groupType === 'check' && item.stats ? 
+  const channelStats = groupType === 'check' && item.stats ?
     `Avg ${item.stats.avg_resolution || 'N/A'}, ${item.stats.avg_bitrate || 'N/A'}` :
     null
-  
+
   return (
     <AccordionItem key={itemIndex} value={`channel-${groupIndex}-${itemIndex}`}>
       <AccordionTrigger className="hover:no-underline py-2">
         <div className="flex items-center gap-2">
           {/* Channel Logo */}
           {item.logo_url && !logoError && (
-            <img 
-              src={item.logo_url} 
+            <img
+              src={item.logo_url}
               alt={channelLabel}
               className="w-6 h-6 object-contain"
               onError={() => setLogoError(true)}
@@ -113,11 +113,11 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
               ))}
             </ul>
           )}
-          
+
           {/* Stream details for check */}
           {groupType === 'check' && item.stats && item.stats.stream_details && item.stats.stream_details.length > 0 && (
             <div className="rounded-md border mt-2">
-               <Table>
+              <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Stream Name</TableHead>
@@ -140,27 +140,27 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                       return scoreB - scoreA
                     })
                     .map((streamDetail, idx) => (
-                    <TableRow key={streamDetail.stream_id || `detail-${idx}`}>
-                      <TableCell className="font-medium">{streamDetail.stream_name || 'Unknown'}</TableCell>
-                      <TableCell>{streamDetail.m3u_account || 'N/A'}</TableCell>
-                      <TableCell>{streamDetail.resolution || 'N/A'}</TableCell>
-                      <TableCell>{streamDetail.fps || 'N/A'}</TableCell>
-                      <TableCell>{streamDetail.bitrate || 'N/A'}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <span>{streamDetail.video_codec || 'N/A'}</span>
-                          {streamDetail.hdr_format && (
-                            <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs">
-                              {streamDetail.hdr_format}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
-                        <TableCell>{streamDetail.score !== undefined && streamDetail.score !== null ? streamDetail.score.toFixed(2) : 'N/A'}</TableCell>
-                      )}
-                    </TableRow>
-                  ))}
+                      <TableRow key={streamDetail.stream_id || `detail-${idx}`}>
+                        <TableCell className="font-medium">{streamDetail.stream_name || 'Unknown'}</TableCell>
+                        <TableCell>{streamDetail.m3u_account || 'N/A'}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span>{streamDetail.resolution || 'N/A'}</span>
+                            {streamDetail.hdr_format && (
+                              <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs px-2 py-0 h-5">
+                                {streamDetail.hdr_format}
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{streamDetail.fps || 'N/A'}</TableCell>
+                        <TableCell>{streamDetail.bitrate || 'N/A'}</TableCell>
+                        <TableCell>{streamDetail.video_codec || 'N/A'}</TableCell>
+                        {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
+                          <TableCell>{streamDetail.score !== undefined && streamDetail.score !== null ? streamDetail.score.toFixed(2) : 'N/A'}</TableCell>
+                        )}
+                      </TableRow>
+                    ))}
                 </TableBody>
               </Table>
             </div>
@@ -174,7 +174,7 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
 function ChangelogEntry({ entry }) {
   const { timestamp, action, details, subentries } = entry
   const hasSubentries = subentries && subentries.length > 0
-  
+
   return (
     <Card className="overflow-hidden">
       <CardHeader className="pb-3">
@@ -187,7 +187,7 @@ function ChangelogEntry({ entry }) {
           </div>
           <span className="text-sm text-muted-foreground">{formatTimestamp(timestamp)}</span>
         </div>
-        
+
         {/* Global Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 pt-3 border-t">
           {details.total_channels !== undefined && (
@@ -277,7 +277,7 @@ function ChangelogEntry({ entry }) {
           )}
         </div>
       </CardHeader>
-      
+
       {/* Streams Assigned Details */}
       {action === 'streams_assigned' && details.assignments && details.assignments.length > 0 && (
         <CardContent className="pt-0">
@@ -296,8 +296,8 @@ function ChangelogEntry({ entry }) {
                       <AccordionTrigger className="hover:no-underline py-2">
                         <div className="flex items-center gap-2">
                           {assignment.logo_url && (
-                            <img 
-                              src={assignment.logo_url} 
+                            <img
+                              src={assignment.logo_url}
                               alt={assignment.channel_name}
                               className="w-6 h-6 object-contain"
                               onError={(e) => e.target.style.display = 'none'}
@@ -340,7 +340,7 @@ function ChangelogEntry({ entry }) {
           </Accordion>
         </CardContent>
       )}
-      
+
       {/* Subentries */}
       {hasSubentries && (
         <CardContent className="pt-0">
@@ -367,7 +367,7 @@ function ChangelogEntry({ entry }) {
                         return sum + (item.stats?.total_streams || 0)
                       }
                     }, 0)
-                    
+
                     return (
                       <AccordionItem key={groupIndex} value={`group-${groupIndex}`}>
                         <AccordionTrigger className="hover:no-underline">
@@ -381,7 +381,7 @@ function ChangelogEntry({ entry }) {
                           {/* Nested accordion for channels */}
                           <Accordion type="multiple" className="w-full pl-4">
                             {items.map((item, itemIndex) => (
-                              <ChannelItem 
+                              <ChannelItem
                                 key={itemIndex}
                                 item={item}
                                 groupType={groupType}
@@ -434,8 +434,8 @@ export default function Changelog() {
 
   // Filter entries based on action type (memoized to avoid re-computation on every render)
   const filteredEntries = useMemo(() => {
-    return actionFilter === 'all' 
-      ? entries 
+    return actionFilter === 'all'
+      ? entries
       : entries.filter(entry => entry.action === actionFilter)
   }, [entries, actionFilter])
 
@@ -448,7 +448,7 @@ export default function Changelog() {
             View activity history and system events
           </p>
         </div>
-        
+
         <div className="flex gap-3">
           <Select value={actionFilter} onValueChange={setActionFilter}>
             <SelectTrigger className="w-[200px]">
@@ -465,7 +465,7 @@ export default function Changelog() {
               <SelectItem value="stream_check">Stream Check</SelectItem>
             </SelectContent>
           </Select>
-          
+
           <Select value={days.toString()} onValueChange={(value) => setDays(Number(value))}>
             <SelectTrigger className="w-[150px]">
               <SelectValue />
@@ -491,8 +491,8 @@ export default function Changelog() {
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Activity className="h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-muted-foreground">
-              {actionFilter === 'all' 
-                ? 'No changelog entries found for the selected period' 
+              {actionFilter === 'all'
+                ? 'No changelog entries found for the selected period'
                 : `No ${getActionLabel(actionFilter)} entries found for the selected period`}
             </p>
           </CardContent>

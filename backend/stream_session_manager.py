@@ -77,6 +77,7 @@ class StreamInfo:
     fps: Optional[float] = None
     bitrate: Optional[int] = None
     m3u_account: Optional[str] = None
+    hdr_format: Optional[str] = None
     status: str = 'review'  # 'stable', 'review', 'quarantined'
     last_status_change: float = 0.0
     failure_count: int = 0
@@ -670,6 +671,7 @@ class StreamSessionManager:
                     fps=stats.get('fps') or stream_data.get('fps'),
                     bitrate=bitrate,
                     m3u_account=stream_data.get('m3u_account'),
+                    hdr_format=stats.get('hdr_format') or stream_data.get('hdr_format'),
                     status='review',
                     last_status_change=time.time()
                 )
@@ -791,6 +793,7 @@ class StreamSessionManager:
                 name=stream.get('name', ''),
                 channel_id=session.channel_id,
                 m3u_account=stream.get('m3u_account'),
+                hdr_format=stream.get('stream_stats', {}).get('hdr_format') if isinstance(stream.get('stream_stats'), dict) else None,
                 status='review',
                 last_status_change=time.time()
             )
