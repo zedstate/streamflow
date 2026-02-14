@@ -977,7 +977,8 @@ def analyze_stream(
                     if result['status'] == "OK":
                         # Success: one line with key metrics
                         bitrate_str = f"{result['bitrate_kbps']:.2f} kbps" if result['bitrate_kbps'] is not None else "N/A"
-                        logger.info(f"  ✓ {stream_name}: {result['resolution']}, {result['fps']} FPS, {bitrate_str}, {result['video_codec']}/{result['audio_codec']} ({result_data['elapsed_time']:.2f}s)")
+                        hdr_str = f", {result['hdr_format']}" if result.get('hdr_format') else ""
+                        logger.info(f"  ✓ {stream_name}: {result['resolution']}, {result['fps']} FPS, {bitrate_str}, {result['video_codec']}/{result['audio_codec']}{hdr_str} ({result_data['elapsed_time']:.2f}s)")
                     else:
                         # Failure: one-liner with status and elapsed time
                         logger.warning(f"  ✗ {stream_name}: Check failed - {result['status']} ({result_data['elapsed_time']:.2f}s)")

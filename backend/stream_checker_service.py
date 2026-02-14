@@ -2211,8 +2211,10 @@ class StreamCheckerService:
                         stream_id = stream['id']
                         # Reconstruct a minimal 'analyzed' object from stored stats
                         # This allows standard scoring and sorting logic to work
-                        stream_stats = stream.get('stream_stats', {})
-                        if isinstance(stream_stats, str):
+                        stream_stats = stream.get('stream_stats')
+                        if stream_stats is None:
+                            stream_stats = {}
+                        elif isinstance(stream_stats, str):
                             try:
                                 stream_stats = json.loads(stream_stats)
                             except:
