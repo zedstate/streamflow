@@ -132,12 +132,27 @@ class StreamScreenshotService:
                             pass
                             
                     # 3. FPS
-                    fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', stderr)
-                    if fps_match:
-                        try:
                             stats['fps'] = float(fps_match.group(1))
                         except ValueError:
                             pass
+                            
+                    # 4. HDR Detection
+                    # Extract pixel format and color info (e.g., yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67))
+                    color_match = re.search(r'(yuv\w+?p?\d{1,2}le)[^,]*,\s*([^,)]+)', stderr, re.IGNORECASE)
+                    if color_match:
+                        pix_fmt = color_match.group(1).lower()
+                        color_info = color_match.group(2).lower()
+                        
+                        # Check for 10-bit or higher
+                        is_10bit_or_higher = '10' in pix_fmt or '12' in pix_fmt or '16' in pix_fmt
+                        
+                        if is_10bit_or_higher and 'bt2020' in color_info:
+                            if 'smpte2084' in color_info:
+                                stats['hdr_format'] = 'HDR10'
+                            elif 'arib-std-b67' in color_info:
+                                stats['hdr_format'] = 'HLG'
+                            elif 'dolby' in stderr.lower() or 'dvhe' in stderr.lower():
+                                stats['hdr_format'] = 'Dolby Vision'
                             
                     if stats:
                         logger.info(f"Extracted stats from screenshot probe for stream {stream_id}: {stats}")

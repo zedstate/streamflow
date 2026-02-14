@@ -901,9 +901,11 @@ class StreamMonitoringService:
                     stream_info.width = stats['width']
                     stream_info.height = stats['height']
                     updated_fields.append('resolution')
-                if 'fps' in stats:
                     stream_info.fps = stats['fps']
                     updated_fields.append('fps')
+                if 'hdr_format' in stats:
+                    stream_info.hdr_format = stats['hdr_format']
+                    updated_fields.append('hdr_format')
                 
                 if updated_fields:
                     logger.info(f"Updated stream {stream_id} stats from screenshot probe: {', '.join(updated_fields)}")
