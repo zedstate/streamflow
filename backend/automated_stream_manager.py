@@ -1624,7 +1624,13 @@ class AutomatedStreamManager:
                 profile = automation_config.get_effective_profile(channel_id, channel.get('group_id'))
                 
                 # Check if stream matching is enabled
-                if profile and profile.get('stream_matching', {}).get('enabled', False):
+                matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
+                
+                # Global Action Override: Include if global action affected is True and force is True
+                if force and profile and profile.get('global_action', {}).get('affected', False):
+                    matching_enabled = True
+                
+                if matching_enabled:
                     matching_enabled_channel_ids.append(channel_id)
                     # Store playlist filter for this channel
                     channel_to_allowed_playlists[str(channel_id)] = profile.get('stream_matching', {}).get('playlists', [])
@@ -2017,7 +2023,13 @@ class AutomatedStreamManager:
                 profile = automation_config.get_effective_profile(channel_id, channel_group_id)
                 
                 # Check if stream matching is enabled in the profile
-                if profile and profile.get('stream_matching', {}).get('enabled', False):
+                matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
+                
+                # Global Action Override: Include if global action affected is True and force is True
+                if force and profile and profile.get('global_action', {}).get('affected', False):
+                    matching_enabled = True
+                    
+                if matching_enabled:
                     matching_enabled_channel_ids.append(channel_id)
             
             # Exclude channels in active monitoring sessions (coordination with monitoring system)

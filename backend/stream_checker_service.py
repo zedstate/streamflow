@@ -1270,7 +1270,7 @@ class StreamCheckerService:
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
-                update_success = automation_manager.refresh_playlists()
+                update_success = automation_manager.refresh_playlists(force=True)
                 if update_success:
                     logger.info("✓ M3U playlists updated successfully")
                 else:
@@ -1283,7 +1283,7 @@ class StreamCheckerService:
             try:
                 if automation_manager is not None:
                     # Respect automation_controls.remove_non_matching_streams setting
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams(force=True)
                     if validation_results.get("streams_removed", 0) > 0:
                         logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
                     else:
@@ -1297,7 +1297,7 @@ class StreamCheckerService:
             logger.info("Step 5/6: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
-                    assignments = automation_manager.discover_and_assign_streams()
+                    assignments = automation_manager.discover_and_assign_streams(force=True)
                     if assignments:
                         logger.info(f"✓ Assigned streams to {len(assignments)} channels")
                     else:
