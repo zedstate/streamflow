@@ -4235,6 +4235,7 @@ def get_stream_session(session_id):
                     'status': stream_info.status,
                     'is_quarantined': stream_info.is_quarantined,
                     'reliability_score': stream_info.reliability_score,
+                    'rank': stream_info.rank,
                     'screenshot_path': stream_info.screenshot_path,
                     'last_screenshot_time': stream_info.last_screenshot_time,
                     'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0,
@@ -4273,6 +4274,10 @@ def get_stream_session(session_id):
                     return (1, -stream_data['reliability_score']) # Non-channel streams sorted by score desc
                 
                 streams_data.sort(key=get_sort_key)
+                
+                # Update rank in the return data based on final sorted order for UI consistency
+                for i, sdata in enumerate(streams_data, start=1):
+                    sdata['rank'] = i
             else:
                 # Fallback if channel not found: sort by reliability score
                 streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)

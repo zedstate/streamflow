@@ -83,6 +83,7 @@ class StreamInfo:
     failure_count: int = 0
     reliability_score: float = 50.0  # Start at middle score
     metrics_history: List[StreamMetrics] = None
+    rank: Optional[int] = None
     last_screenshot_time: float = 0
     screenshot_path: Optional[str] = None
     # Low speed tracking for auto-quarantine

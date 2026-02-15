@@ -255,9 +255,6 @@ class StreamMonitoringService:
         if updates_needed:
             self.session_manager._save_sessions()
             
-        if updates_needed:
-            self.session_manager._save_sessions()
-            
         return transitioned_to_stable
     
     def _check_sync_enforcement(self, session) -> bool:
@@ -808,6 +805,9 @@ class StreamMonitoringService:
         # 3.5 Update StreamMetrics with Rank
         # -------------------------------------------------------------------------
         for rank, stream_info in enumerate(final_sorted_streams, start=1):
+            # Update top-level rank for API/UI
+            stream_info.rank = rank
+            
             if stream_info.metrics_history:
                 # Update the most recent metric
                 stream_info.metrics_history[-1].rank = rank
