@@ -2004,6 +2004,12 @@ class StreamCheckerService:
             # Check if this is a force check (bypasses 2-hour immunity)
             force_check = self.update_tracker.should_force_check(channel_id)
             
+            # Global Action / Force Check overrides profile settings
+            if force_check:
+                if not allow_revive:
+                    logger.info(f"Force check enabled for channel {channel_name}: Overriding Profile 'allow_revive' to True")
+                    allow_revive = True
+            
             # Get list of already checked streams to avoid re-analyzing
             checked_stream_info = self.update_tracker.updates.get('channels', {}).get(str(channel_id), {})
             checked_stream_ids = checked_stream_info.get('checked_stream_ids', [])
@@ -2024,13 +2030,7 @@ class StreamCheckerService:
             
             # Identify which streams need analysis (new or unchecked)
             
-            # Check if we should downgrade force_check due to grace period
-            # This handles the "Allow automatic revive" + "Respect 2h grace period" coexistence
-            if force_check and grace_period and not immunity_expired:
-                logger.info(f"Grace period active and immunity not expired - downgrading force check to normal check for {channel_name}")
-                force_check = False
-                # Clear the force check flag since we've processed the request (by deciding to skip it)
-                self.update_tracker.clear_force_check(channel_id)
+
             
             # FORCE check or expired immunity triggers full analysis
             if force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
@@ -2571,6 +2571,12 @@ class StreamCheckerService:
             # Check if this is a force check (bypasses 2-hour immunity)
             force_check = self.update_tracker.should_force_check(channel_id)
             
+            # Global Action / Force Check overrides profile settings
+            if force_check:
+                if not allow_revive:
+                    logger.info(f"Force check enabled for channel {channel_name}: Overriding Profile 'allow_revive' to True")
+                    allow_revive = True
+            
             # Get list of already checked streams to avoid re-analyzing
             checked_stream_info = self.update_tracker.updates.get('channels', {}).get(str(channel_id), {})
             checked_stream_ids = checked_stream_info.get('checked_stream_ids', [])
@@ -2591,13 +2597,7 @@ class StreamCheckerService:
             
             # Identify which streams need analysis (new or unchecked)
             
-            # Check if we should downgrade force_check due to grace period
-            # This handles the "Allow automatic revive" + "Respect 2h grace period" coexistence
-            if force_check and grace_period and not immunity_expired:
-                logger.info(f"Grace period active and immunity not expired - downgrading force check to normal check for {channel_name}")
-                force_check = False
-                # Clear the force check flag since we've processed the request (by deciding to skip it)
-                self.update_tracker.clear_force_check(channel_id)
+
             
             # FORCE check or expired immunity triggers full analysis
             if force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
