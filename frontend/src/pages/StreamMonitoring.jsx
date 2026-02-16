@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, Square, Trash2, Plus, Activity, AlertCircle } from 'lucide-react';
+import { Play, Square, Trash2, Plus, Activity, AlertCircle, LayoutGrid, List, MoreVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,7 @@ function StreamMonitoring() {
   const [selectedSessionId, setSelectedSessionId] = useState(null);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [viewMode, setViewMode] = useState('grid');
 
   const [selectedSessions, setSelectedSessions] = useState(new Set());
 
@@ -313,26 +314,41 @@ function StreamMonitoring() {
                 </TabsTrigger>
               </TabsList>
 
-              {/* Select All Button */}
-              {((sessions.length > 0)) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    // Logic depends on active tab, but for simplicity we can just clear if any selected,
-                    // or maybe disabled this button. 
-                    // Better approach: Let individual tabs render select all logic or handle it generically?
-                    // Let's keep it simple: Select All is contextual?
-                    // Actually, simpler implementation: Just clear selection if any.
-                    if (selectedSessions.size > 0) {
-                      setSelectedSessions(new Set());
-                    }
-                  }}
-                  disabled={selectedSessions.size === 0}
-                >
-                  {selectedSessions.size > 0 ? `Deselect All (${selectedSessions.size})` : 'Select Items'}
-                </Button>
-              )}
+              <div className="flex items-center gap-2">
+                <div className="flex border rounded-md mr-2">
+                  <Button
+                    variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className="h-8 w-8 p-0 rounded-r-none"
+                    onClick={() => setViewMode('grid')}
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className="h-8 w-8 p-0 rounded-l-none"
+                    onClick={() => setViewMode('list')}
+                  >
+                    <List className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {((sessions.length > 0)) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (selectedSessions.size > 0) {
+                        setSelectedSessions(new Set());
+                      }
+                    }}
+                    disabled={selectedSessions.size === 0}
+                  >
+                    {selectedSessions.size > 0 ? `Deselect (${selectedSessions.size})` : 'Select Items'}
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* Active Sessions Tab */}
@@ -365,19 +381,32 @@ function StreamMonitoring() {
                       {selectedSessions.size === activeSessions.length && activeSessions.length > 0 ? 'Deselect All' : 'Select All Active'}
                     </Button>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {activeSessions.map((session) => (
-                      <SessionCard
-                        key={session.session_id}
-                        session={session}
-                        onView={handleViewSession}
-                        onStop={handleStopSession}
-                        onDelete={handleDeleteSession}
-                        selected={selectedSessions.has(session.session_id)}
-                        onToggleSelection={toggleSelection}
-                      />
-                    ))}
-                  </div>
+                  {viewMode === 'grid' ? (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {activeSessions.map((session) => (
+                        <SessionCard
+                          key={session.session_id}
+                          session={session}
+                          onView={handleViewSession}
+                          onStop={handleStopSession}
+                          onDelete={handleDeleteSession}
+                          selected={selectedSessions.has(session.session_id)}
+                          onToggleSelection={toggleSelection}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <SessionTable
+                      sessions={activeSessions}
+                      onView={handleViewSession}
+                      onStop={handleStopSession}
+                      onDelete={handleDeleteSession}
+                      onStart={handleStartSession}
+                      selectedSessions={selectedSessions}
+                      onToggleSelection={toggleSelection}
+                      onToggleSelectAll={() => toggleSelectAll(activeSessions)}
+                    />
+                  )}
                 </>
               )}
             </TabsContent>
@@ -412,20 +441,33 @@ function StreamMonitoring() {
                       {selectedSessions.size === sessions.length && sessions.length > 0 ? 'Deselect All' : 'Select All'}
                     </Button>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {sessions.map((session) => (
-                      <SessionCard
-                        key={session.session_id}
-                        session={session}
-                        onView={handleViewSession}
-                        onStart={handleStartSession}
-                        onStop={handleStopSession}
-                        onDelete={handleDeleteSession}
-                        selected={selectedSessions.has(session.session_id)}
-                        onToggleSelection={toggleSelection}
-                      />
-                    ))}
-                  </div>
+                  {viewMode === 'grid' ? (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {sessions.map((session) => (
+                        <SessionCard
+                          key={session.session_id}
+                          session={session}
+                          onView={handleViewSession}
+                          onStart={handleStartSession}
+                          onStop={handleStopSession}
+                          onDelete={handleDeleteSession}
+                          selected={selectedSessions.has(session.session_id)}
+                          onToggleSelection={toggleSelection}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <SessionTable
+                      sessions={sessions}
+                      onView={handleViewSession}
+                      onStop={handleStopSession}
+                      onDelete={handleDeleteSession}
+                      onStart={handleStartSession}
+                      selectedSessions={selectedSessions}
+                      onToggleSelection={toggleSelection}
+                      onToggleSelectAll={() => toggleSelectAll(sessions)}
+                    />
+                  )}
                 </>
               )}
             </TabsContent>
@@ -586,6 +628,140 @@ function SessionCard({ session, onView, onStart, onStop, onDelete, selected, onT
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// Session Table Component
+function SessionTable({
+  sessions,
+  onView,
+  onStart,
+  onStop,
+  onDelete,
+  selectedSessions,
+  onToggleSelection,
+  onToggleSelectAll
+}) {
+  const formatDate = (timestamp) => {
+    return new Date(timestamp * 1000).toLocaleString();
+  };
+
+  const allSelected = sessions.length > 0 && sessions.every(s => selectedSessions.has(s.session_id));
+
+  return (
+    <div className="rounded-md border bg-card">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b bg-muted/50">
+            <tr>
+              <th className="h-10 w-[40px] px-4 text-left align-middle font-medium">
+                <div
+                  className={`h-4 w-4 rounded border flex items-center justify-center cursor-pointer transition-colors ${allSelected ? 'bg-primary border-primary text-primary-foreground' : 'bg-background border-input hover:bg-accent'}`}
+                  onClick={onToggleSelectAll}
+                >
+                  {allSelected && <div className="h-2 w-2 rounded-sm bg-current" />}
+                </div>
+              </th>
+              <th className="h-10 px-4 text-left align-middle font-medium">Channel</th>
+              <th className="h-10 px-4 text-left align-middle font-medium hidden md:table-cell">Status</th>
+              <th className="h-10 px-4 text-center align-middle font-medium hidden sm:table-cell">Streams</th>
+              <th className="h-10 px-4 text-left align-middle font-medium hidden lg:table-cell">Created</th>
+              <th className="h-10 px-4 text-right align-middle font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {sessions.map((session) => {
+              const isSelected = selectedSessions.has(session.session_id);
+              return (
+                <tr
+                  key={session.session_id}
+                  className={`group transition-colors hover:bg-muted/50 cursor-pointer ${isSelected ? 'bg-muted/30' : ''}`}
+                  onClick={() => onView(session.session_id)}
+                >
+                  <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <div
+                      className={`h-4 w-4 rounded border flex items-center justify-center cursor-pointer transition-colors ${isSelected ? 'bg-primary border-primary text-primary-foreground' : 'bg-background border-input hover:bg-accent'}`}
+                      onClick={() => onToggleSelection(session.session_id)}
+                    >
+                      {isSelected && <div className="h-2 w-2 rounded-sm bg-current" />}
+                    </div>
+                  </td>
+                  <td className="p-4 align-middle">
+                    <div className="flex items-center gap-3">
+                      {session.channel_logo_url && (
+                        <img
+                          src={session.channel_logo_url}
+                          alt=""
+                          className="h-8 w-8 object-contain rounded bg-white/5 p-0.5"
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                      )}
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{session.channel_name}</p>
+                        {session.epg_event_title && (
+                          <p className="text-xs text-muted-foreground truncate" title={session.epg_event_title}>
+                            {session.epg_event_title}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-4 align-middle hidden md:table-cell">
+                    <Badge variant={session.is_active ? 'default' : 'secondary'}>
+                      {session.is_active ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </td>
+                  <td className="p-4 align-middle hidden sm:table-cell">
+                    <div className="flex justify-center gap-2">
+                      <span className="text-green-500 font-bold" title="Stable">{session.stable_count || 0}</span>
+                      <span className="text-blue-500 font-bold" title="Review">{session.review_count || 0}</span>
+                      <span className="text-amber-500 font-bold" title="Quarantined">{session.quarantined_count || 0}</span>
+                    </div>
+                  </td>
+                  <td className="p-4 align-middle text-muted-foreground hidden lg:table-cell">
+                    {formatDate(session.created_at)}
+                  </td>
+                  <td className="p-4 align-middle text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1">
+                      {session.is_active ? (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => onStop(session.session_id)}
+                          title="Stop"
+                        >
+                          <Square className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => onStart(session.session_id)}
+                          title="Start"
+                        >
+                          <Play className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => onDelete(session.session_id)}
+                        title="Delete"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

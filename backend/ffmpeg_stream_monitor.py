@@ -284,7 +284,7 @@ class FFmpegStreamMonitor:
             # Extract FPS from metadata line
             fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', output)
             if fps_match:
-                self.stats.fps = float(fps_match.group(1))
+                self.stats.fps = round(float(fps_match.group(1)), 0)
     
     def _parse_stats(self, output: str):
         """Parse real-time statistics from FFmpeg output"""
@@ -340,10 +340,10 @@ class FFmpegStreamMonitor:
             
             # Calculate actual FPS: actual_fps = ffmpeg_fps / speed
             if self.stats.speed > 0:
-                self.stats.fps = ffmpeg_fps / self.stats.speed
+                self.stats.fps = round(ffmpeg_fps / self.stats.speed, 0)
             elif ffmpeg_fps > 0:
                 # Fallback if speed not available yet
-                self.stats.fps = ffmpeg_fps
+                self.stats.fps = round(ffmpeg_fps, 0)
         
         # Time (e.g., "time=00:01:23.45")
         time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2}\.\d{2})', output)

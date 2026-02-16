@@ -770,7 +770,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                     )}
                   </div>
                 </TableCell>
-                <TableCell>{stream.fps ? `${stream.fps.toFixed(1)} fps` : 'N/A'}</TableCell>
+                <TableCell>{stream.fps ? `${stream.fps.toFixed(0)} fps` : 'N/A'}</TableCell>
                 <TableCell>{formatBitrate(stream.bitrate)}</TableCell>
                 {!showQuarantined && (
                   <>

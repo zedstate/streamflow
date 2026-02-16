@@ -67,5 +67,19 @@ class TestFPSStability(unittest.TestCase):
         self.assertEqual(key1, key2)
         self.assertEqual(key1[3], 25.0)
 
+    def test_monitor_fps_rounding(self):
+        from ffmpeg_stream_monitor import FFmpegStreamMonitor
+        monitor = FFmpegStreamMonitor("http://url")
+        
+        # Test metadata line parsing
+        monitor._parse_metadata("  Stream #0:0: Video: h264, 1920x1080, 24.8 fps")
+        self.assertEqual(monitor.stats.fps, 25.0)
+        
+        # Test real-time stats parsing (speed compensated)
+        monitor.stats.speed = 1.02
+        monitor._parse_stats("frame=  100 fps= 25.4 q=28.0 size=    1152kB time=00:00:04.00 bitrate=2359.3kbits/s speed=1.02x")
+        # 25.4 / 1.02 = 24.901 -> 25.0
+        self.assertEqual(monitor.stats.fps, 25.0)
+
 if __name__ == '__main__':
     unittest.main()
