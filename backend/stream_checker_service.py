@@ -1834,42 +1834,7 @@ class StreamCheckerService:
             except: pass
         return 0
 
-    def _refine_sorted_streams(self, streams: List[Dict]) -> List[Dict]:
-        """Refine sorted streams to prioritize resolution when scores are close.
-        
-        This prevents lower resolution streams with high priority from displacing
-        higher resolution streams, unless the quality difference is significant.
-        """
-        if not streams:
-            return []
-            
-        # Tolerance for treating scores as "equal enough" to look at resolution
-        # 0.15 allows a stream to be boosted by priority (up to ~7 levels) without jumping a resolution tier
-        # unless the base quality difference is also large.
-        SCORE_TOLERANCE = 0.15 
-        
-        refined = []
-        remaining = streams.copy()
-        
-        while remaining:
-            current = remaining.pop(0)
-            tier = [current]
-            
-            i = 0
-            while i < len(remaining):
-                # Since list is sorted descending, diff is positive
-                diff = current.get('score', 0) - remaining[i].get('score', 0)
-                if diff <= SCORE_TOLERANCE:
-                    tier.append(remaining.pop(i))
-                else:
-                    break
-            
-            # Sort tier by resolution product (descending)
-            # This ensures higher resolution streams float to the top within the tolerance group
-            tier.sort(key=self._get_resolution_product, reverse=True)
-            refined.extend(tier)
-            
-        return refined
+    # Removed _refine_sorted_streams in favor of lexicographical Sort Keys.
     
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
@@ -2263,11 +2228,11 @@ class StreamCheckerService:
                 step='Calculating scores',
                 step_detail='Sorting streams by quality score'
             )
-            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
-            
-            # Refine sort order to respect resolution for close scores
-            # This handles priority boosts correctly without jumping resolution tiers
-            analyzed_streams = self._refine_sorted_streams(analyzed_streams)
+            # Sort streams using tiered sort keys (lexicographical ranking)
+            for analyzed in analyzed_streams:
+                analyzed['sort_key'] = self._generate_stream_sort_key(analyzed, priority_m3u_ids, priority_mode)
+                
+            analyzed_streams.sort(key=lambda x: x['sort_key'])
             
             # Apply stream limit if configured in profile
             if stream_limit > 0 and len(analyzed_streams) > stream_limit:
@@ -2823,11 +2788,11 @@ class StreamCheckerService:
                 step='Calculating scores',
                 step_detail='Sorting streams by quality score'
             )
-            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
-            
-            # Refine sort order to respect resolution for close scores
-            # This handles priority boosts correctly without jumping resolution tiers
-            analyzed_streams = self._refine_sorted_streams(analyzed_streams)
+            # Sort streams using tiered sort keys (lexicographical ranking)
+            for analyzed in analyzed_streams:
+                analyzed['sort_key'] = self._generate_stream_sort_key(analyzed, priority_m3u_ids, priority_mode)
+                
+            analyzed_streams.sort(key=lambda x: x['sort_key'])
             
             # Apply stream limit if configured in profile
             if stream_limit > 0 and len(analyzed_streams) > stream_limit:
@@ -3120,16 +3085,6 @@ class StreamCheckerService:
         hdr_score = 1.0 if hdr_format in ['HDR10', 'HLG'] else 0.0
         score += hdr_score * weights.get('hdr', 0.10)
         
-        # Apply M3U account priority bonus if enabled
-        stream_id = stream_data.get('stream_id')
-        if stream_id:
-            priority_boost = self._get_priority_boost(stream_id, stream_data, priority_m3u_ids, priority_mode)
-            score += priority_boost
-            
-            # Apply regex pattern priority boost
-            regex_priority_boost = self._get_regex_priority_boost(stream_id, stream_data)
-            score += regex_priority_boost
-        
         return round(score, 2)
     
     def _get_priority_boost(self, stream_id: int, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute') -> float:
@@ -3233,16 +3188,97 @@ class StreamCheckerService:
                 if str(match.get('channel_id')) == str(channel_id):
                     priority = match.get('priority', 0)
                     if priority > 0:
-                        # Each priority point adds 0.1 to the score
-                        # This is smaller than M3U priority boost (0.5) but still significant
-                        boost = priority * 0.1
-                        logger.debug(f"Applying regex priority boost of {boost} to stream {stream_id} in channel {channel_id} (priority: {priority})")
+                        # TVG match (priority 1000) gets a strong but limited boost
+                        # This avoids overriding M3U priority in 'Absolute' mode which adds 10+
+                        if priority >= 1000:
+                            boost = 5.0
+                        else:
+                            # Regex priority: Each point adds 0.05 to the score
+                            # This acts as a tie-breaker within account tiers (tier gap is 1.0)
+                            boost = round(priority * 0.05, 2)
+                        
+                        logger.debug(f"Applying regex priority boost of {boost} to stream {stream_id} in channel {channel_id} (input priority: {priority})")
                         return boost
             
             return 0.0
         except Exception as e:
             logger.error(f"Error calculating regex priority boost for stream {stream_id}: {e}")
             return 0.0
+
+    def _get_resolution_tier(self, resolution: str) -> int:
+        """Map resolution string to a numeric tier (0-5, lower is better)."""
+        if not resolution or 'x' not in str(resolution):
+            return 5 # Unknown/N/A
+            
+        try:
+            # Handle list/tuple format if resolution was already parsed elsewhere
+            if isinstance(resolution, (list, tuple)):
+                height = int(resolution[1])
+            else:
+                width, height = map(int, str(resolution).split('x'))
+                
+            if height >= 2160: return 0 # 4K
+            if height >= 1080: return 1 # 1080p
+            if height >= 720:  return 2 # 720p
+            if height >= 576:  return 3 # 576p/SD
+            return 4 # Low resolution
+        except (ValueError, AttributeError, IndexError):
+            return 5
+
+    def _generate_stream_sort_key(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute') -> Tuple:
+        """Generate a lexicographical sort key for a stream based on priority tiers.
+        
+        The sort key is a tuple used for ascending sort (lower is better).
+        
+        Tiers (for 'absolute' mode):
+        (AccountRank, ResolutionTier, MatchRank, QualityScore)
+        
+        Tiers (for 'same_resolution' mode):
+        (ResolutionTier, AccountRank, MatchRank, QualityScore)
+        """
+        # 1. Account Rank (0 = highest)
+        account_rank = 100
+        stream_id = stream_data.get('stream_id')
+        if priority_m3u_ids and stream_id:
+            udi = get_udi_manager()
+            stream = udi.get_stream_by_id(stream_id)
+            if stream:
+                m3u_id = stream.get('m3u_account')
+                if m3u_id in priority_m3u_ids:
+                    account_rank = priority_m3u_ids.index(m3u_id)
+        
+        # 2. Resolution Tier (0 = highest)
+        res_tier = self._get_resolution_tier(stream_data.get('resolution'))
+        
+        # 3. Match Rank (0 = highest)
+        match_rank = 1000
+        if stream_id:
+            from web_api import get_regex_matcher
+            regex_matcher = get_regex_matcher()
+            udi = get_udi_manager()
+            stream = udi.get_stream_by_id(stream_id)
+            if stream:
+                matches = regex_matcher.match_stream_to_channels_with_priority(
+                    stream.get('name', ''), 
+                    stream.get('m3u_account')
+                )
+                channel_id = stream_data.get('channel_id')
+                for m in matches:
+                    if str(m.get('channel_id')) == str(channel_id):
+                        priority = m.get('priority', 0)
+                        match_rank = 1000 - priority # Convert 1000 to 0 rank
+                        break
+        
+        # 4. Quality Score (lower is better, so negate the 0-1 scale)
+        quality_score = -stream_data.get('score', 0.0)
+        
+        if priority_mode == 'same_resolution':
+            return (res_tier, account_rank, match_rank, quality_score)
+        elif priority_mode == 'equal':
+            # In 'equal' mode, only quality matters
+            return (quality_score,)
+        else: # 'absolute' mode
+            return (account_rank, res_tier, match_rank, quality_score)
     
     def get_status(self) -> Dict:
         """Get current service status."""

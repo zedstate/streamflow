@@ -718,8 +718,8 @@ class RegexChannelMatcher:
                                 matched = True
                                 match_source = "tvg_id"
                                 # Assign priority based on order preference
-                                # If TVG is the preferred method (first in order), give it high priority
-                                # If TVG is secondary (second in order), give it low priority (fallback)
+                                # TVG-ID matches get a very high internal priority (1000)
+                                # This is normalized in stream_checker_service's scoring logic
                                 if priority_order[0] == 'tvg':
                                     priority = 1000
                                 else:
@@ -794,6 +794,7 @@ class RegexChannelMatcher:
                         if regex_matched:
                             matched = True
                             match_source = "regex"
+                            # Regex priorities are typically 0-50 and scale separately from TVG matches
                             priority = best_regex_priority
                             break
 
