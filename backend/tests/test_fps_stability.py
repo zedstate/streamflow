@@ -17,22 +17,22 @@ class TestFPSStability(unittest.TestCase):
         # Mock subprocess.run to return fluctuating FPS in stderr
         mock_result = MagicMock()
         # Must include "Input #" to trigger parsing in get_stream_info_and_bitrate
-        mock_result.stderr = "Input #0, hls, from 'http://dummy.ts':\n  Stream #0:0: Video: h264, 1920x1080, 24.98 fps\n"
+        mock_result.stderr = "Input #0, hls, from 'http://dummy.ts':\n  Stream #0:0: Video: h264, 1920x1080, 24.8 fps\n"
         mock_result.returncode = 0
         
         with patch('subprocess.run', return_value=mock_result):
             with patch('stream_check_utils._get_ffmpeg_extra_args', return_value=[]):
                 # Analyze a dummy URL
                 result = get_stream_info_and_bitrate("http://dummy.ts", duration=1)
-                # 24.98 should round to 25.0 (1 decimal)
+                # 24.8 should round to 25.0 (0 decimals)
                 self.assertEqual(result['fps'], 25.0)
 
         # Test another fluctuation
-        mock_result.stderr = "Input #0, hls, from 'http://dummy.ts':\n  Stream #0:0: Video: h264, 1920x1080, 25.04 fps\n"
+        mock_result.stderr = "Input #0, hls, from 'http://dummy.ts':\n  Stream #0:0: Video: h264, 1920x1080, 25.2 fps\n"
         with patch('subprocess.run', return_value=mock_result):
             with patch('stream_check_utils._get_ffmpeg_extra_args', return_value=[]):
                 result = get_stream_info_and_bitrate("http://dummy.ts", duration=1)
-                # 25.04 should also round to 25.0
+                # 25.2 should also round to 25.0
                 self.assertEqual(result['fps'], 25.0)
 
     def test_monitoring_sort_stability(self):
@@ -42,12 +42,12 @@ class TestFPSStability(unittest.TestCase):
         info1 = StreamInfo(url="url1", stream_id=1, name="s1", channel_id=1)
         info1.width = 1920
         info1.height = 1080
-        info1.fps = 24.98
+        info1.fps = 24.8
         
         info2 = StreamInfo(url="url2", stream_id=2, name="s2", channel_id=1)
         info2.width = 1920
         info2.height = 1080
-        info2.fps = 25.02
+        info2.fps = 25.2
         
         # Mock dependencies
         with patch('stream_monitoring_service.get_udi_manager'):

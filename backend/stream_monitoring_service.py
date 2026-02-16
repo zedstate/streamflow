@@ -396,7 +396,7 @@ class StreamMonitoringService:
                 if stream_info.fps:
                     try:
                         # Round to nearest integer (standard FPS e.g. 23.97 -> 24, 29.97 -> 30)
-                        stats['source_fps'] = round(float(stream_info.fps), 1)
+                        stats['source_fps'] = round(float(stream_info.fps), 0)
                     except (ValueError, TypeError):
                         pass
                 
@@ -872,8 +872,8 @@ class StreamMonitoringService:
         # Resolution Score
         res_score = (info.width or 0) * (info.height or 0)
         
-        # FPS rounded to 1 decimal to prevent flapping due to micro-fluctuations
-        fps = round(float(info.fps or 0), 1)
+        # FPS rounded to integer to prevent flapping due to micro-fluctuations
+        fps = round(float(info.fps or 0), 0)
         
         return (status_priority, score, res_score, fps)
 
