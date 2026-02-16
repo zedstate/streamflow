@@ -396,7 +396,7 @@ class StreamMonitoringService:
                 if stream_info.fps:
                     try:
                         # Round to nearest integer (standard FPS e.g. 23.97 -> 24, 29.97 -> 30)
-                        stats['source_fps'] = int(round(float(stream_info.fps)))
+                        stats['source_fps'] = round(float(stream_info.fps), 1)
                     except (ValueError, TypeError):
                         pass
                 
@@ -680,23 +680,8 @@ class StreamMonitoringService:
         # C. Resolution: Higher is better (width * height)
         # -------------------------------------------------------------------------
         
-        def calculate_sort_key(info):
-            # Status Priority: Stable (2) > Review (1) > Quarantined (0)
-            status_priority = 2 if info.status == 'stable' else 1
-            
-            # Score
-            score = info.reliability_score
-            
-            # Resolution Score
-            res_score = (info.width or 0) * (info.height or 0)
-            
-            # FPS
-            fps = info.fps or 0
-            
-            return (status_priority, score, res_score, fps)
-
         # Initial sort by Status and Score and Resolution and FPS (unique stable sort)
-        candidates.sort(key=calculate_sort_key, reverse=True)
+        candidates.sort(key=lambda info: self._calculate_monitoring_sort_key(info), reverse=True)
         
         # -------------------------------------------------------------------------
         # 2. Refine Sort with Resolution Tiers (within same Status)
@@ -876,6 +861,22 @@ class StreamMonitoringService:
             else:
                 logger.error(f"Failed to update stream order for channel {session.channel_id}")
     
+    def _calculate_monitoring_sort_key(self, info):
+        """Calculate sort key for stream monitoring ranking."""
+        # Status Priority: Stable (2) > Review (1) > Quarantined (0)
+        status_priority = 2 if info.status == 'stable' else 1
+        
+        # Score
+        score = info.reliability_score
+        
+        # Resolution Score
+        res_score = (info.width or 0) * (info.height or 0)
+        
+        # FPS rounded to 1 decimal to prevent flapping due to micro-fluctuations
+        fps = round(float(info.fps or 0), 1)
+        
+        return (status_priority, score, res_score, fps)
+
     def _refresh_session_streams(self, session_id: str):
         """Refresh the list of streams for a session"""
         # Re-discover streams (will add new ones if they appear)

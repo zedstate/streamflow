@@ -557,7 +557,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     # Extract FPS
                     fps_match = re.search(r'(\d+\.?\d*)\s*fps', line)
                     if fps_match:
-                        result_data['fps'] = round(float(fps_match.group(1)), 2)
+                        result_data['fps'] = round(float(fps_match.group(1)), 1)
                         logger.debug(f"  → Detected FPS: {result_data['fps']}")
                     
                     # Extract HDR metadata from color information in pixel format
