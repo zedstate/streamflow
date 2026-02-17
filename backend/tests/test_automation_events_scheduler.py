@@ -44,17 +44,16 @@ def test_calculate_upcoming_events():
             assert profile_id is not None, "Failed to create profile"
             print(f"✓ Created profile: {profile_id}")
             
-            # Create period with interval schedule
+            # Create period with interval schedule (no profile_id in period)
             period1_id = manager.create_period({
                 "name": "Hourly Period",
-                "schedule": {"type": "interval", "value": 60},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 60}
             })
             assert period1_id is not None, "Failed to create period 1"
             print(f"✓ Created interval period: {period1_id}")
             
-            # Assign period to channels
-            manager.assign_period_to_channels(period1_id, [1, 2, 3])
+            # Assign period to channels WITH profile_id
+            manager.assign_period_to_channels(period1_id, [1, 2, 3], profile_id)
             print("✓ Assigned period to 3 channels")
             
             # Calculate upcoming events for 24 hours
@@ -63,12 +62,12 @@ def test_calculate_upcoming_events():
             assert len(events) <= 24, f"Should have at most 24 events for hourly schedule, got {len(events)}"
             print(f"✓ Calculated {len(events)} events")
             
-            # Verify event structure
+            # Verify event structure (profile_name changed to profile_display)
             first_event = events[0]
             assert 'time' in first_event, "Event should have time field"
             assert 'period_id' in first_event, "Event should have period_id"
             assert 'period_name' in first_event, "Event should have period_name"
-            assert 'profile_name' in first_event, "Event should have profile_name"
+            assert 'profile_display' in first_event, "Event should have profile_display"
             assert 'channel_count' in first_event, "Event should have channel_count"
             assert first_event['channel_count'] == 3, "Channel count should be 3"
             assert first_event['period_name'] == "Hourly Period", "Period name mismatch"
@@ -113,14 +112,13 @@ def test_event_caching():
             manager = AutomationConfigManager()
             scheduler = AutomationEventsScheduler()
             
-            # Create profile and period
+            # Create profile and period (no profile_id in period)
             profile_id = manager.create_profile({"name": "Test Profile"})
             period_id = manager.create_period({
                 "name": "Test Period",
-                "schedule": {"type": "interval", "value": 30},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 30}
             })
-            manager.assign_period_to_channels(period_id, [1])
+            manager.assign_period_to_channels(period_id, [1], profile_id)
             print("✓ Created test data")
             
             # Get cached events (should calculate)
@@ -177,78 +175,53 @@ def test_multiple_periods():
         try:
             from automation_config_manager import AutomationConfigManager
             from automation_events_scheduler import AutomationEventsScheduler
+            import automation_config_manager
+            
+            # Reset the singleton to ensure it uses our test config
+            automation_config_manager._automation_config_manager = None
             
             manager = AutomationConfigManager()
             scheduler = AutomationEventsScheduler()
             
-            # Create profile
+            # Create profiles
             profile_id = manager.create_profile({"name": "Test Profile"})
             
-            # Create multiple periods with different schedules
+            # Create multiple periods with different schedules (no profile_id in periods)
             period1_id = manager.create_period({
                 "name": "Period 1",
-                "schedule": {"type": "interval", "value": 60},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 60}
             })
             period2_id = manager.create_period({
                 "name": "Period 2",
-                "schedule": {"type": "interval", "value": 120},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 120}
             })
             
-            manager.assign_period_to_channels(period1_id, [1, 2])
-            manager.assign_period_to_channels(period2_id, [3, 4, 5])
+            manager.assign_period_to_channels(period1_id, [1, 2], profile_id)
+            manager.assign_period_to_channels(period2_id, [3, 4, 5], profile_id)
             print("✓ Created 2 periods with different schedules")
+            
+            # Create a NEW scheduler to ensure it loads the latest config
+            scheduler = AutomationEventsScheduler()
             
             # Verify periods were created by reloading config
             all_periods = manager.get_all_periods()
             assert len(all_periods) == 2, f"Should have 2 periods, got {len(all_periods)}"
             
-            # Calculate events directly using the manager we have
-            events = []
+            # Debug: Check assignments
             for period in all_periods:
-                period_id = period.get('id')
-                period_name = period.get('name', 'Unknown')
-                profile_id = period.get('profile_id')
-                
-                # Get profile name
-                profile = manager.get_profile(profile_id)
-                profile_name = profile.get('name', 'Unknown') if profile else 'Unknown'
-                
-                # Get channels
-                channels = manager.get_period_channels(period_id)
-                channel_count = len(channels)
-                
-                schedule = period.get('schedule', {})
-                schedule_type = schedule.get('type', 'interval')
-                schedule_value = schedule.get('value')
-                
-                # Generate some sample events
-                from datetime import datetime, timedelta
-                current_time = datetime.now()
-                end_time = current_time + timedelta(hours=24)
-                
-                if schedule_type == 'interval':
-                    minutes = int(schedule_value)
-                    temp_time = current_time
-                    while temp_time < end_time:
-                        temp_time = temp_time + timedelta(minutes=minutes)
-                        if temp_time <= end_time:
-                            events.append({
-                                'time': temp_time.isoformat(),
-                                'period_id': period_id,
-                                'period_name': period_name,
-                                'profile_id': profile_id,
-                                'profile_name': profile_name,
-                                'channel_count': channel_count
-                            })
+                pid = period['id']
+                channels = manager.get_period_channels(pid)
+                print(f"Debug: Period {period['name']} has {len(channels)} channels: {channels}")
             
-            events.sort(key=lambda x: x['time'])
+            # Calculate events using the scheduler (which handles the new data model)
+            events = scheduler.calculate_upcoming_events(hours_ahead=24, max_events=100)
             print(f"✓ Generated {len(events)} total events")
             
             # Should have events from both periods
             period1_events = [e for e in events if e['period_id'] == period1_id]
             period2_events = [e for e in events if e['period_id'] == period2_id]
+            
+            print(f"Debug: Period 1 events: {len(period1_events)}, Period 2 events: {len(period2_events)}")
             
             assert len(period1_events) > 0, "Should have events from period 1"
             assert len(period2_events) > 0, "Should have events from period 2"

@@ -44,11 +44,10 @@ def test_automation_periods_creation():
             assert profile_id is not None, "Failed to create profile"
             print(f"✓ Created profile: {profile_id}")
             
-            # Create an automation period
+            # Create an automation period (no profile_id - profiles are per-channel now)
             period_data = {
                 "name": "Test Period",
-                "schedule": {"type": "interval", "value": 60},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 60}
             }
             period_id = manager.create_period(period_data)
             assert period_id is not None, "Failed to create period"
@@ -60,7 +59,7 @@ def test_automation_periods_creation():
             assert period['name'] == "Test Period", "Period name mismatch"
             assert period['schedule']['type'] == "interval", "Schedule type mismatch"
             assert period['schedule']['value'] == 60, "Schedule value mismatch"
-            assert period['profile_id'] == profile_id, "Profile ID mismatch"
+            assert 'profile_id' not in period, "Period should not have profile_id (profiles are per-channel now)"
             print("✓ Period details verified")
             
             # List all periods
@@ -90,26 +89,27 @@ def test_automation_periods_channel_assignment():
         try:
             manager = AutomationConfigManager()
             
-            # Create profile and period
+            # Create profile and period (no profile_id in period)
             profile_id = manager.create_profile({"name": "Test Profile"})
             period_id = manager.create_period({
                 "name": "Test Period",
-                "schedule": {"type": "interval", "value": 30},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 30}
             })
             print(f"✓ Created period: {period_id}")
             
-            # Assign period to channels
+            # Assign period to channels WITH profile_id (new model)
             channel_ids = [1, 2, 3]
-            result = manager.assign_period_to_channels(period_id, channel_ids, replace=False)
+            result = manager.assign_period_to_channels(period_id, channel_ids, profile_id, replace=False)
             assert result is True, "Failed to assign period to channels"
-            print(f"✓ Assigned period to {len(channel_ids)} channels")
+            print(f"✓ Assigned period with profile to {len(channel_ids)} channels")
             
-            # Verify assignments
+            # Verify assignments (now returns dict of period_id -> profile_id)
             for cid in channel_ids:
-                periods = manager.get_channel_periods(cid)
-                assert period_id in periods, f"Period not assigned to channel {cid}"
-            print("✓ Verified all channel assignments")
+                period_assignments = manager.get_channel_periods(cid)
+                assert isinstance(period_assignments, dict), f"Expected dict for channel {cid}"
+                assert period_id in period_assignments, f"Period not assigned to channel {cid}"
+                assert period_assignments[period_id] == profile_id, f"Profile mismatch for channel {cid}"
+            print("✓ Verified all channel assignments with correct profiles")
             
             # Get channels for period
             assigned_channels = manager.get_period_channels(period_id)
@@ -146,16 +146,15 @@ def test_automation_periods_update_delete():
         try:
             manager = AutomationConfigManager()
             
-            # Create profile and period
+            # Create profile and period (no profile_id in period)
             profile_id = manager.create_profile({"name": "Test Profile"})
             period_id = manager.create_period({
                 "name": "Original Name",
-                "schedule": {"type": "interval", "value": 45},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 45}
             })
             print(f"✓ Created period: {period_id}")
             
-            # Update period
+            # Update period (no profile_id to update)
             result = manager.update_period(period_id, {
                 "name": "Updated Name",
                 "schedule": {"type": "cron", "value": "*/30 * * * *"}
@@ -169,8 +168,8 @@ def test_automation_periods_update_delete():
             assert period['schedule']['value'] == "*/30 * * * *", "Schedule value not updated"
             print("✓ Period updated successfully")
             
-            # Assign to channels
-            manager.assign_period_to_channels(period_id, [1, 2])
+            # Assign to channels (with profile_id)
+            manager.assign_period_to_channels(period_id, [1, 2], profile_id)
             print("✓ Assigned period to channels")
             
             # Delete period
@@ -209,15 +208,14 @@ def test_effective_configuration():
         try:
             manager = AutomationConfigManager()
             
-            # Create profile and period
+            # Create profile and period (no profile_id in period)
             profile_id = manager.create_profile({
                 "name": "Test Profile",
                 "stream_matching": {"enabled": True}
             })
             period_id = manager.create_period({
                 "name": "Test Period",
-                "schedule": {"type": "interval", "value": 60},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 60}
             })
             
             # Channel without period - should return None
@@ -225,8 +223,8 @@ def test_effective_configuration():
             assert config is None, "Expected None for channel without periods"
             print("✓ Returns None for channel without periods")
             
-            # Assign period to channel
-            manager.assign_period_to_channels(period_id, [100])
+            # Assign period to channel (with profile_id)
+            manager.assign_period_to_channels(period_id, [100], profile_id)
             
             # Channel with period - should return configuration
             config = manager.get_effective_configuration(100)
@@ -258,38 +256,41 @@ def test_multiple_periods_per_channel():
         try:
             manager = AutomationConfigManager()
             
-            # Create profile
-            profile_id = manager.create_profile({"name": "Test Profile"})
+            # Create profiles (we'll use different profiles for each period)
+            profile1_id = manager.create_profile({"name": "Profile 1"})
+            profile2_id = manager.create_profile({"name": "Profile 2"})
+            profile3_id = manager.create_profile({"name": "Profile 3"})
             
-            # Create multiple periods
+            # Create multiple periods (no profile_id in periods)
             period1_id = manager.create_period({
                 "name": "Period 1",
-                "schedule": {"type": "interval", "value": 30},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 30}
             })
             period2_id = manager.create_period({
                 "name": "Period 2",
-                "schedule": {"type": "interval", "value": 60},
-                "profile_id": profile_id
+                "schedule": {"type": "interval", "value": 60}
             })
             period3_id = manager.create_period({
                 "name": "Period 3",
-                "schedule": {"type": "cron", "value": "0 * * * *"},
-                "profile_id": profile_id
+                "schedule": {"type": "cron", "value": "0 * * * *"}
             })
             print(f"✓ Created 3 periods")
             
-            # Assign all periods to same channel
+            # Assign all periods to same channel WITH DIFFERENT PROFILES (new feature!)
             channel_id = 42
-            manager.assign_period_to_channels(period1_id, [channel_id])
-            manager.assign_period_to_channels(period2_id, [channel_id])
-            manager.assign_period_to_channels(period3_id, [channel_id])
+            manager.assign_period_to_channels(period1_id, [channel_id], profile1_id)
+            manager.assign_period_to_channels(period2_id, [channel_id], profile2_id)
+            manager.assign_period_to_channels(period3_id, [channel_id], profile3_id)
             
-            # Verify all periods are assigned
-            channel_periods = manager.get_channel_periods(channel_id)
-            assert len(channel_periods) == 3, f"Expected 3 periods, got {len(channel_periods)}"
-            assert set(channel_periods) == {period1_id, period2_id, period3_id}, "Period IDs mismatch"
-            print(f"✓ Channel has {len(channel_periods)} periods assigned")
+            # Verify all periods are assigned (now returns dict)
+            channel_period_assignments = manager.get_channel_periods(channel_id)
+            assert isinstance(channel_period_assignments, dict), "Should return dict"
+            assert len(channel_period_assignments) == 3, f"Expected 3 periods, got {len(channel_period_assignments)}"
+            assert set(channel_period_assignments.keys()) == {period1_id, period2_id, period3_id}, "Period IDs mismatch"
+            assert channel_period_assignments[period1_id] == profile1_id, "Profile 1 mismatch"
+            assert channel_period_assignments[period2_id] == profile2_id, "Profile 2 mismatch"
+            assert channel_period_assignments[period3_id] == profile3_id, "Profile 3 mismatch"
+            print(f"✓ Channel has {len(channel_period_assignments)} periods with different profiles assigned")
             
             # Get active periods (should return all since we don't have real time checking)
             active_periods = manager.get_active_periods_for_channel(channel_id)
