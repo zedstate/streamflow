@@ -1196,6 +1196,58 @@ class StreamCheckerService:
         logger.info(f"Converted legacy schedule to cron: {cron_expression}")
         return cron_expression
     
+    def _perform_global_action(self):
+        """Perform a global action: Update M3U playlists, match streams, and queue all channels for checking.
+        
+        This method orchestrates the three main steps of a global automation cycle:
+        1. Update M3U playlists (if auto_m3u_updates is enabled)
+        2. Discover and assign streams (run automation manager)
+        3. Queue all channels for checking (force check to bypass immunity)
+        """
+        logger.info("Starting global action (Update + Match + Check all channels)")
+        self.global_action_in_progress = True
+        
+        try:
+            # Step 1: Update M3U playlists if enabled
+            if self.config.get('automation_controls', {}).get('auto_m3u_updates', True):
+                logger.info("Step 1/3: Updating M3U playlists...")
+                try:
+                    from api_utils import refresh_m3u_playlists
+                    refresh_m3u_playlists()
+                    logger.info("✓ M3U playlists updated")
+                except Exception as e:
+                    logger.error(f"✗ Failed to update M3U playlists: {e}")
+            else:
+                logger.info("Step 1/3: Skipping M3U update (auto_m3u_updates disabled)")
+            
+            # Step 2: Discover and assign streams (run automation manager)
+            logger.info("Step 2/3: Discovering and assigning streams...")
+            try:
+                from automated_stream_manager import AutomatedStreamManager
+                automation_manager = AutomatedStreamManager()
+                assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
+                if assignments:
+                    logger.info(f"✓ Stream matching completed with {len(assignments)} assignments")
+                else:
+                    logger.info("✓ Stream matching completed (no new assignments)")
+            except Exception as e:
+                logger.error(f"✗ Failed to match streams: {e}")
+            
+            # Step 3: Queue all channels for checking with force check enabled
+            logger.info("Step 3/3: Queueing all channels for checking...")
+            try:
+                self._queue_all_channels(force_check=True)
+                logger.info("✓ All channels queued for checking")
+            except Exception as e:
+                logger.error(f"✗ Failed to queue channels: {e}")
+            
+            logger.info("Global action completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Error during global action: {e}", exc_info=True)
+        finally:
+            self.global_action_in_progress = False
+    
     def _queue_all_channels(self, force_check: bool = False):
         """Queue all channels for checking (global check).
         
