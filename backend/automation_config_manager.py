@@ -554,6 +554,42 @@ class AutomationConfigManager:
             
             return active_periods
 
+    def get_effective_configuration(self, channel_id: int, group_id: Optional[int] = None) -> Optional[Dict]:
+        """Get the effective automation configuration for a channel.
+        
+        This method considers both automation periods (new system) and legacy profile assignments.
+        Priority:
+        1. If channel has automation periods assigned -> use the first active period's profile
+        2. Otherwise, fall back to legacy profile assignment (channel -> group -> None)
+        
+        Returns:
+            Dict with 'source' ('period' or 'legacy') and 'profile' (the profile dict), or None
+        """
+        with self._lock:
+            # Check for automation periods first (new system takes precedence)
+            active_periods = self.get_active_periods_for_channel(channel_id)
+            if active_periods:
+                # Use the first active period's profile
+                period = active_periods[0]
+                profile = period.get('profile')
+                if profile:
+                    return {
+                        'source': 'period',
+                        'period_id': period.get('id'),
+                        'period_name': period.get('name'),
+                        'profile': profile
+                    }
+            
+            # Fall back to legacy profile assignment
+            profile = self.get_effective_profile(channel_id, group_id)
+            if profile:
+                return {
+                    'source': 'legacy',
+                    'profile': profile
+                }
+            
+            return None
+
 # Singleton instance
 _automation_config_manager = None
 _manager_lock = threading.Lock()

@@ -1604,8 +1604,9 @@ class AutomatedStreamManager:
                 if channel_tvg_id:
                     channel_tvg_map[str(channel_id)] = channel_tvg_id
                 
-                # Get effective profile
-                profile = automation_config.get_effective_profile(channel_id, channel.get('group_id'))
+                # Get effective configuration (supports both periods and legacy profiles)
+                config = automation_config.get_effective_configuration(channel_id, channel.get('group_id'))
+                profile = config.get('profile') if config else None
                 
                 # Check if stream matching is enabled
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
@@ -2003,8 +2004,9 @@ class AutomatedStreamManager:
                 channel_id = channel.get('id')
                 channel_group_id = channel.get('channel_group_id') # Ensure we use correct key for group ID from UDI
                 
-                # Get effective profile
-                profile = automation_config.get_effective_profile(channel_id, channel_group_id)
+                # Get effective configuration (supports both periods and legacy profiles)
+                config = automation_config.get_effective_configuration(channel_id, channel_group_id)
+                profile = config.get('profile') if config else None
                 
                 # Check if stream matching is enabled in the profile
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
@@ -2219,15 +2221,18 @@ class AutomatedStreamManager:
         
         try:
             # 2. Determine which playlists to update based on ACTIVE profiles
-            # Iterate through all channels to find active profiles
+            # Support both automation periods (new system) and legacy profile assignments
             udi = get_udi_manager()
             channels = udi.get_channels()
             active_profile_ids = set()
             
             for channel in channels:
-                p_id = automation_config.get_effective_profile_id(channel.get('id'), channel.get('group_id'))
-                if p_id:
-                    active_profile_ids.add(p_id)
+                # Try new automation periods system first
+                config = automation_config.get_effective_configuration(channel.get('id'), channel.get('group_id'))
+                if config:
+                    profile = config.get('profile')
+                    if profile and profile.get('id'):
+                        active_profile_ids.add(profile['id'])
             
             if not active_profile_ids:
                 logger.info("No active automation profiles found among channels. Skipping cycle.")
