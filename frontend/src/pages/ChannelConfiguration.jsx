@@ -78,6 +78,9 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
   const [expanded, setExpanded] = useState(false)
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
+  const [automationPeriods, setAutomationPeriods] = useState([])
+  const [loadingPeriods, setLoadingPeriods] = useState(false)
+  const [assignPeriodsDialogOpen, setAssignPeriodsDialogOpen] = useState(false)
   const { toast } = useToast()
 
   const matchingMode = channelSettings?.matching_mode || 'enabled'
@@ -154,6 +157,25 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
     }
     loadLogo()
   }, [channel.id, channel.logo_id])
+
+  // Load automation periods when expanded
+  useEffect(() => {
+    if (expanded) {
+      loadAutomationPeriods()
+    }
+  }, [expanded, channel.id])
+
+  const loadAutomationPeriods = async () => {
+    try {
+      setLoadingPeriods(true)
+      const response = await automationAPI.getChannelPeriods(channel.id)
+      setAutomationPeriods(response.data)
+    } catch (err) {
+      console.error('Failed to load automation periods:', err)
+    } finally {
+      setLoadingPeriods(false)
+    }
+  }
 
   const loadStats = async () => {
     try {
@@ -317,6 +339,91 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
               </div>
             </div>
 
+            {/* Automation Periods */}
+            <div className="space-y-3 pb-4 border-b">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h4 className="font-medium text-sm">Automation Periods</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Assigned automation periods for this channel
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAssignPeriodsDialogOpen(true)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Assign Periods
+                </Button>
+              </div>
+
+              {loadingPeriods ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : automationPeriods.length > 0 ? (
+                <div className="space-y-2">
+                  {automationPeriods.map((period) => (
+                    <div key={period.id} className="flex items-center justify-between p-2 bg-background rounded-md border">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{period.name}</span>
+                          <Badge variant="secondary" className="text-xs">
+                            {period.profile_name || 'Unknown Profile'}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {period.schedule?.type === 'interval' 
+                            ? `Every ${period.schedule.value} minutes`
+                            : `Cron: ${period.schedule?.value || 'Not configured'}`
+                          }
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={async () => {
+                          try {
+                            await automationAPI.removePeriodFromChannels(period.id, [channel.id])
+                            toast({
+                              title: "Success",
+                              description: "Period removed from channel"
+                            })
+                            loadAutomationPeriods()
+                          } catch (err) {
+                            toast({
+                              title: "Error",
+                              description: "Failed to remove period",
+                              variant: "destructive"
+                            })
+                          }
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6 border rounded-lg bg-muted/50">
+                  <Activity className="h-8 w-8 mx-auto mb-2 opacity-50 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground mb-2">No automation periods assigned</p>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    This channel will not participate in automation
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAssignPeriodsDialogOpen(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Assign Periods
+                  </Button>
+                </div>
+              )}
+            </div>
+
             {/* Regex Patterns */}
             <div>
               <div className="flex justify-between items-center mb-3">
@@ -365,7 +472,167 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
           </div>
         )}
       </CardContent>
+
+      {/* Assign Periods Dialog */}
+      <AssignPeriodsDialog
+        open={assignPeriodsDialogOpen}
+        onOpenChange={setAssignPeriodsDialogOpen}
+        channelId={channel.id}
+        channelName={channel.name}
+        onSuccess={loadAutomationPeriods}
+      />
     </Card>
+  )
+}
+
+// Helper component for assigning periods dialog
+function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuccess }) {
+  const [allPeriods, setAllPeriods] = useState([])
+  const [selectedPeriods, setSelectedPeriods] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    if (open) {
+      loadData()
+    }
+  }, [open, channelId])
+
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const [periodsResponse, assignedResponse] = await Promise.all([
+        automationAPI.getPeriods(),
+        automationAPI.getChannelPeriods(channelId)
+      ])
+      setAllPeriods(periodsResponse.data)
+      setSelectedPeriods(assignedResponse.data.map(p => p.id))
+    } catch (err) {
+      console.error('Failed to load periods:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load periods",
+        variant: "destructive"
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    try {
+      setSaving(true)
+      
+      // Get currently assigned periods
+      const currentResponse = await automationAPI.getChannelPeriods(channelId)
+      const currentPeriods = currentResponse.data.map(p => p.id)
+      
+      // Determine which periods to add and remove
+      const toAdd = selectedPeriods.filter(p => !currentPeriods.includes(p))
+      const toRemove = currentPeriods.filter(p => !selectedPeriods.includes(p))
+      
+      // Add new periods
+      for (const periodId of toAdd) {
+        await automationAPI.assignPeriodToChannels(periodId, [channelId], false)
+      }
+      
+      // Remove unselected periods
+      for (const periodId of toRemove) {
+        await automationAPI.removePeriodFromChannels(periodId, [channelId])
+      }
+      
+      toast({
+        title: "Success",
+        description: "Automation periods updated"
+      })
+      
+      onOpenChange(false)
+      if (onSuccess) onSuccess()
+    } catch (err) {
+      console.error('Failed to save periods:', err)
+      toast({
+        title: "Error",
+        description: "Failed to save periods",
+        variant: "destructive"
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const togglePeriod = (periodId) => {
+    setSelectedPeriods(prev => 
+      prev.includes(periodId)
+        ? prev.filter(id => id !== periodId)
+        : [...prev, periodId]
+    )
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Assign Automation Periods</DialogTitle>
+          <DialogDescription>
+            Select which automation periods should apply to {channelName}
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : allPeriods.length === 0 ? (
+          <div className="text-center py-8">
+            <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50 text-muted-foreground" />
+            <p className="text-muted-foreground mb-4">No automation periods available</p>
+            <p className="text-sm text-muted-foreground">
+              Create automation periods in Settings &gt; Automation &gt; Periods first
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[400px] overflow-y-auto">
+            {allPeriods.map((period) => (
+              <div
+                key={period.id}
+                className="flex items-start gap-3 p-3 border rounded-lg hover:bg-accent/50 cursor-pointer transition-colors"
+                onClick={() => togglePeriod(period.id)}
+              >
+                <Checkbox
+                  checked={selectedPeriods.includes(period.id)}
+                  onCheckedChange={() => togglePeriod(period.id)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-medium">{period.name}</span>
+                    <Badge variant="outline" className="text-xs">
+                      {period.channel_count || 0} channel{period.channel_count !== 1 ? 's' : ''}
+                    </Badge>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {period.schedule?.type === 'interval'
+                      ? `Every ${period.schedule.value} minutes`
+                      : `Cron: ${period.schedule?.value || 'Not configured'}`}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving || loading || allPeriods.length === 0}>
+            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
