@@ -3049,8 +3049,10 @@ class StreamCheckerService:
             try:
                 width, height = map(int, resolution.split('x'))
                 # Score based on vertical resolution
-                if height >= 1080:
+                if height >= 2160:
                     resolution_score = 1.0
+                elif height >= 1080:
+                    resolution_score = 0.85
                 elif height >= 720:
                     resolution_score = 0.7
                 elif height >= 576:
@@ -3275,8 +3277,8 @@ class StreamCheckerService:
         if priority_mode == 'same_resolution':
             return (res_tier, account_rank, match_rank, quality_score)
         elif priority_mode == 'equal':
-            # In 'equal' mode, only quality matters
-            return (quality_score,)
+            # In 'equal' mode, resolution and quality matter, but not M3U account priority
+            return (res_tier, match_rank, quality_score)
         else: # 'absolute' mode
             return (account_rank, res_tier, match_rank, quality_score)
     
