@@ -1604,8 +1604,14 @@ class AutomatedStreamManager:
                 if channel_tvg_id:
                     channel_tvg_map[str(channel_id)] = channel_tvg_id
                 
-                # Get effective profile
-                profile = automation_config.get_effective_profile(channel_id, channel.get('group_id'))
+                # Get effective configuration - only channels with automation periods participate
+                config = automation_config.get_effective_configuration(channel_id, channel.get('group_id'))
+                
+                # Skip channels without automation periods assigned
+                if not config:
+                    continue
+                    
+                profile = config.get('profile')
                 
                 # Check if stream matching is enabled
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
@@ -1631,7 +1637,7 @@ class AutomatedStreamManager:
             
             excluded_count = len(all_channels) - len(filtered_channels)
             if excluded_count > 0:
-                logger.info(f"Excluding {excluded_count} channel(s) with matching disabled (channel or group level) from stream assignment")
+                logger.info(f"Excluding {excluded_count} channel(s) without automation periods or with matching disabled from stream assignment")
             
             # Use filtered channels for the rest of the logic
             all_channels = filtered_channels
@@ -2003,8 +2009,14 @@ class AutomatedStreamManager:
                 channel_id = channel.get('id')
                 channel_group_id = channel.get('channel_group_id') # Ensure we use correct key for group ID from UDI
                 
-                # Get effective profile
-                profile = automation_config.get_effective_profile(channel_id, channel_group_id)
+                # Get effective configuration - only channels with automation periods participate
+                config = automation_config.get_effective_configuration(channel_id, channel_group_id)
+                
+                # Skip channels without automation periods assigned
+                if not config:
+                    continue
+                    
+                profile = config.get('profile')
                 
                 # Check if stream matching is enabled in the profile
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
@@ -2218,21 +2230,34 @@ class AutomatedStreamManager:
         logger.info("Starting automation cycle...")
         
         try:
-            # 2. Determine which playlists to update based on ACTIVE profiles
-            # Iterate through all channels to find active profiles
+            # 2. Determine which playlists to update based on channels with automation periods assigned
+            # Only channels with automation periods participate in automation
             udi = get_udi_manager()
             channels = udi.get_channels()
             active_profile_ids = set()
+            channels_with_periods = 0
+            channels_without_periods = 0
             
             for channel in channels:
-                p_id = automation_config.get_effective_profile_id(channel.get('id'), channel.get('group_id'))
-                if p_id:
-                    active_profile_ids.add(p_id)
+                # Only process channels with automation periods assigned
+                config = automation_config.get_effective_configuration(channel.get('id'), channel.get('group_id'))
+                if config:
+                    profile = config.get('profile')
+                    if profile and profile.get('id'):
+                        active_profile_ids.add(profile['id'])
+                        channels_with_periods += 1
+                else:
+                    channels_without_periods += 1
+            
+            if channels_without_periods > 0:
+                logger.info(f"{channels_without_periods} channel(s) without automation periods assigned - will be skipped")
             
             if not active_profile_ids:
-                logger.info("No active automation profiles found among channels. Skipping cycle.")
+                logger.info("No channels with active automation periods found. Skipping cycle.")
                 self.last_playlist_update = datetime.now()
                 return
+            
+            logger.info(f"Processing {channels_with_periods} channel(s) with automation periods assigned")
             
             # Determine playlists to update
             playlists_to_update = set()

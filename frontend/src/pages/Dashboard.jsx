@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamCheckerAPI, m3uAPI, dispatcharrAPI } from '@/services/api.js'
 import { PlayCircle, RefreshCw, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import UpcomingAutomationEvents from '@/components/Dashboard/UpcomingAutomationEvents.jsx'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
@@ -381,6 +382,9 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Upcoming Automation Events */}
+      <UpcomingAutomationEvents />
 
       {/* Available Playlists */}
       <Card>

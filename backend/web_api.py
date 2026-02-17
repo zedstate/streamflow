@@ -3937,6 +3937,312 @@ def assign_automation_profile_group():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== Automation Periods API ====================
+# Manage automation periods - multiple scheduled automation configurations per channel
+
+@app.route('/api/automation/periods', methods=['GET', 'POST'])
+@log_function_call
+def handle_automation_periods():
+    """Get all automation periods or create a new period."""
+    try:
+        automation_config = get_automation_config_manager()
+        
+        if request.method == 'GET':
+            periods = automation_config.get_all_periods()
+            # Add channel count to each period
+            for period in periods:
+                channels = automation_config.get_period_channels(period['id'])
+                period['channel_count'] = len(channels)
+            return jsonify(periods), 200
+            
+        elif request.method == 'POST':
+            data = request.json
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+                
+            # Validate required fields (profile_id is no longer required here)
+            if 'name' not in data:
+                return jsonify({"error": "Period name is required"}), 400
+            if 'schedule' not in data:
+                return jsonify({"error": "Schedule is required"}), 400
+                
+            period_id = automation_config.create_period(data)
+            if period_id:
+                period = automation_config.get_period(period_id)
+                return jsonify(period), 201
+            else:
+                return jsonify({"error": "Failed to create period"}), 500
+                
+    except Exception as e:
+        logger.error(f"Error handling automation periods: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>', methods=['GET', 'PUT', 'DELETE'])
+@log_function_call
+def handle_automation_period(period_id):
+    """Get, update, or delete a specific automation period."""
+    try:
+        automation_config = get_automation_config_manager()
+        
+        if request.method == 'GET':
+            period = automation_config.get_period(period_id)
+            if period:
+                # Add channel list
+                channels = automation_config.get_period_channels(period_id)
+                period['channels'] = channels
+                return jsonify(period), 200
+            else:
+                return jsonify({"error": "Period not found"}), 404
+                
+        elif request.method == 'PUT':
+            data = request.json
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+                
+            if automation_config.update_period(period_id, data):
+                period = automation_config.get_period(period_id)
+                return jsonify(period), 200
+            else:
+                return jsonify({"error": "Period not found or update failed"}), 404
+                
+        elif request.method == 'DELETE':
+            if automation_config.delete_period(period_id):
+                return jsonify({"message": "Period deleted"}), 200
+            else:
+                return jsonify({"error": "Period not found or delete failed"}), 404
+                
+    except Exception as e:
+        logger.error(f"Error handling automation period {period_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/assign-channels', methods=['POST'])
+@log_function_call
+def assign_period_to_channels(period_id):
+    """Assign an automation period to multiple channels with a profile."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_ids = data.get('channel_ids')
+        profile_id = data.get('profile_id')  # Now required
+        replace = data.get('replace', False)  # If True, replace existing periods
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+        if not profile_id:
+            return jsonify({"error": "profile_id is required"}), 400
+            
+        if automation_config.assign_period_to_channels(period_id, channel_ids, profile_id, replace):
+            return jsonify({
+                "message": f"Period {period_id} with profile {profile_id} assigned to {len(channel_ids)} channels",
+                "channel_ids": channel_ids
+            }), 200
+        else:
+            return jsonify({"error": "Failed to assign period to channels"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error assigning period to channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/remove-channels', methods=['POST'])
+@log_function_call
+def remove_period_from_channels(period_id):
+    """Remove an automation period from specific channels."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_ids = data.get('channel_ids')
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+            
+        if automation_config.remove_period_from_channels(period_id, channel_ids):
+            return jsonify({
+                "message": f"Period {period_id} removed from {len(channel_ids)} channels"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to remove period from channels"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error removing period from channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/channels', methods=['GET'])
+@log_function_call
+def get_period_channels(period_id):
+    """Get all channels assigned to a period."""
+    try:
+        automation_config = get_automation_config_manager()
+        period = automation_config.get_period(period_id)
+        
+        if not period:
+            return jsonify({"error": "Period not found"}), 404
+            
+        channel_ids = automation_config.get_period_channels(period_id)
+        
+        # Get channel details from UDI if possible
+        try:
+            udi = get_udi_manager()
+            channels = []
+            for cid in channel_ids:
+                channel = udi.get_channel(cid)
+                if channel:
+                    channels.append({
+                        "id": cid,
+                        "number": channel.get('number'),
+                        "name": channel.get('name')
+                    })
+                else:
+                    channels.append({"id": cid})
+            return jsonify(channels), 200
+        except:
+            # If UDI fails, just return IDs
+            return jsonify([{"id": cid} for cid in channel_ids]), 200
+            
+    except Exception as e:
+        logger.error(f"Error getting channels for period {period_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/channels/<int:channel_id>/automation-periods', methods=['GET'])
+@log_function_call
+def get_channel_automation_periods(channel_id):
+    """Get all automation periods assigned to a channel."""
+    try:
+        automation_config = get_automation_config_manager()
+        period_ids = automation_config.get_channel_periods(channel_id)
+        
+        periods = []
+        for pid in period_ids:
+            period = automation_config.get_period(pid)
+            if period:
+                # Include profile name
+                profile = automation_config.get_profile(period.get('profile_id'))
+                if profile:
+                    period['profile_name'] = profile.get('name')
+                periods.append(period)
+        
+        return jsonify(periods), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting automation periods for channel {channel_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/channels/batch/assign-periods', methods=['POST'])
+@log_function_call
+def batch_assign_periods_to_channels():
+    """Batch assign automation periods to multiple channels with profiles.
+    
+    Expects format:
+    {
+        "channel_ids": [1, 2, 3],
+        "period_assignments": [
+            {"period_id": "period1", "profile_id": "profile1"},
+            {"period_id": "period2", "profile_id": "profile2"}
+        ],
+        "replace": false
+    }
+    """
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_ids = data.get('channel_ids')
+        period_assignments = data.get('period_assignments')
+        replace = data.get('replace', False)
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+        if not period_assignments or not isinstance(period_assignments, list):
+            return jsonify({"error": "period_assignments list is required"}), 400
+        
+        # Validate period_assignments format
+        for assignment in period_assignments:
+            if 'period_id' not in assignment or 'profile_id' not in assignment:
+                return jsonify({"error": "Each period assignment must have period_id and profile_id"}), 400
+        
+        # Assign each period-profile pair to all channels
+        is_first = True
+        for assignment in period_assignments:
+            pid = assignment['period_id']
+            profile_id = assignment['profile_id']
+            # Only the first period should replace if replace=True
+            automation_config.assign_period_to_channels(pid, channel_ids, profile_id, replace and is_first)
+            is_first = False
+        
+        return jsonify({
+            "message": f"Assigned {len(period_assignments)} period-profile pairs to {len(channel_ids)} channels"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error batch assigning periods: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ==================== Automation Events API ====================
+# Calculate and retrieve upcoming automation events based on periods
+
+from automation_events_scheduler import get_events_scheduler
+
+
+@app.route('/api/automation/events/upcoming', methods=['GET'])
+@log_function_call
+def get_upcoming_automation_events():
+    """Get upcoming automation events based on configured periods.
+    
+    Query parameters:
+    - hours: Number of hours ahead to calculate (default: 24, max: 168)
+    - max_events: Maximum number of events to return (default: 100, max: 500)
+    - period_id: Filter by specific period ID
+    - force_refresh: Force cache refresh (true/false)
+    """
+    try:
+        events_scheduler = get_events_scheduler()
+        
+        # Parse query parameters
+        hours_ahead = min(int(request.args.get('hours', 24)), 168)  # Max 1 week
+        max_events = min(int(request.args.get('max_events', 100)), 500)
+        period_id_filter = request.args.get('period_id')
+        force_refresh = request.args.get('force_refresh', '').lower() == 'true'
+        
+        # Get cached or fresh events
+        result = events_scheduler.get_cached_events(hours_ahead, max_events, force_refresh)
+        
+        # Filter by period if requested
+        if period_id_filter:
+            result['events'] = [e for e in result['events'] if e.get('period_id') == period_id_filter]
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting upcoming automation events: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/events/invalidate-cache', methods=['POST'])
+@log_function_call
+def invalidate_automation_events_cache():
+    """Invalidate the automation events cache.
+    
+    This should be called whenever automation periods are modified.
+    """
+    try:
+        events_scheduler = get_events_scheduler()
+        events_scheduler.invalidate_cache()
+        
+        return jsonify({"message": "Cache invalidated successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error invalidating cache: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ==================== Stream Monitoring Session API ====================
 # Advanced stream monitoring with live quality tracking, reliability scoring,
 # and screenshot capture for event-based stream management
