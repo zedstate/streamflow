@@ -18,6 +18,10 @@ from automation_config_manager import get_automation_config_manager
 
 logger = setup_logging(__name__)
 
+# Cache configuration constants
+CACHE_VALIDITY_SECONDS = 300  # 5 minutes
+CACHE_STALENESS_THRESHOLD_SECONDS = 3600  # 1 hour
+
 # Try to import croniter for cron expression support
 try:
     from croniter import croniter
@@ -209,12 +213,12 @@ class AutomationEventsScheduler:
         with self._lock:
             current_time = datetime.now()
             
-            # Check if cache is valid (less than 5 minutes old)
+            # Check if cache is valid (less than CACHE_VALIDITY_SECONDS old)
             cache_valid = (
                 not force_refresh
                 and self._cache is not None
                 and self._cache_timestamp is not None
-                and (current_time - self._cache_timestamp).total_seconds() < 300  # 5 minutes
+                and (current_time - self._cache_timestamp).total_seconds() < CACHE_VALIDITY_SECONDS
             )
             
             if cache_valid:
@@ -292,9 +296,9 @@ class AutomationEventsScheduler:
                 if timestamp_str:
                     self._cache_timestamp = datetime.fromisoformat(timestamp_str)
                     
-                    # Check if cache is still valid (less than 1 hour old)
+                    # Check if cache is still valid (less than CACHE_STALENESS_THRESHOLD_SECONDS old)
                     age_seconds = (datetime.now() - self._cache_timestamp).total_seconds()
-                    if age_seconds > 3600:  # 1 hour
+                    if age_seconds > CACHE_STALENESS_THRESHOLD_SECONDS:
                         logger.info("Cached events are stale, invalidating")
                         self.invalidate_cache()
                     else:
