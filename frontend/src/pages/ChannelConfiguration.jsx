@@ -44,7 +44,6 @@ const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 const REGEX_TABLE_GRID_COLS = '50px 80px 80px 1fr 180px 120px 150px 140px'
 
 // Constants for stream checker priorities
-const BULK_HEALTH_CHECK_PRIORITY = 10
 
 // M3U account filtering - exclude 'custom' account as it's not a real source
 const CUSTOM_ACCOUNT_NAME = 'custom'
@@ -943,7 +942,6 @@ export default function ChannelConfiguration() {
 
       const response = await streamCheckerAPI.addToQueue({
         channel_ids: Array.from(selectedChannels),
-        priority: BULK_HEALTH_CHECK_PRIORITY,
         force_check: true  // Enable force check to bypass 2-hour immunity
       })
 
@@ -1080,7 +1078,6 @@ export default function ChannelConfiguration() {
     // Determine context based on mode and optional channelId
     let contextChannelId = channelId || editingChannelId
     let contextPattern = newPattern
-    let contextPriority = patternPriority
     let contextM3uAccounts = selectedM3uAccounts
 
     // If testing from outside match dialog (e.g. TVG preview or Global preview), we rely on passed channelId
@@ -1106,7 +1103,6 @@ export default function ChannelConfiguration() {
       if (mode === 'tvg_only') {
         requestData.match_by_tvg_id = true
         requestData.regex_patterns = []
-        requestData.match_priority_order = ['tvg']
       } else if (mode === 'regex_only') {
         // Test ONLY the current pattern being edited
         requestData.match_by_tvg_id = false
@@ -1114,7 +1110,6 @@ export default function ChannelConfiguration() {
           pattern: contextPattern,
           m3u_accounts: contextM3uAccounts.length > 0 ? contextM3uAccounts : undefined
         }]
-        requestData.match_priority_order = ['regex']
       } else if (mode === 'global') {
         // Full channel configuration test
         requestData.match_by_tvg_id = channelPatternConfig.match_by_tvg_id || false
@@ -1131,7 +1126,7 @@ export default function ChannelConfiguration() {
         }
 
         requestData.regex_patterns = regexPatterns
-        requestData.match_priority_order = profile?.stream_matching?.match_priority_order || ['tvg', 'regex']
+        requestData.regex_patterns = regexPatterns
       }
 
       const response = await regexAPI.testMatchLive(requestData)
@@ -1172,7 +1167,7 @@ export default function ChannelConfiguration() {
         setTestingPattern(false)
       }
     }
-  }, [newPattern, editingChannelId, channels, selectedM3uAccounts, toast, patterns, profiles, patternPriority, testResults])
+  }, [newPattern, editingChannelId, channels, selectedM3uAccounts, toast, patterns, profiles, testResults])
 
   const handlePreviewMatch = useCallback((channelId, mode) => {
     setTestResults(null)
@@ -1531,7 +1526,6 @@ export default function ChannelConfiguration() {
       setEditingCommonPattern(null)
       setNewCommonPattern('')
       setNewCommonPatternM3uAccounts(null)
-      setNewCommonPatternPriority(0)
     } catch (err) {
       toast({
         title: "Error",
@@ -2867,7 +2861,6 @@ export default function ChannelConfiguration() {
             // Reset state when closing
             setSelectedCommonPatterns(new Set())
             setCommonPatternsSearch('')
-            setNewCommonPatternPriority(0)
           }
         }}>
           <DialogContent className="sm:max-w-[90vw] lg:max-w-[1200px] max-h-[90vh] overflow-y-auto">
@@ -3176,87 +3169,135 @@ export default function ChannelConfiguration() {
                                     <div className="space-y-3">
                                       <div className="space-y-2">
                                         <Label>New Pattern</Label>
+                                        <Input
+                                          value={newCommonPattern}
+                                          onChange={(e) => setNewCommonPattern(e.target.value)}
+                                          className="font-mono"
+                                          placeholder="Enter new pattern"
+                                        />
+                                      </div>
 
-                                        {/* M3U Account filter */}
-                                        <div className="space-y-2">
-                                          <Label>Playlists (M3U Accounts)</Label>
-                                          <div className="space-y-2 border rounded-lg p-3">
-                                            <div className="flex items-center gap-2">
+                                      {/* M3U Account filter */}
+                                      <div className="space-y-2">
+                                        <Label>Playlists (M3U Accounts)</Label>
+                                        <div className="space-y-2 border rounded-lg p-3">
+                                          <div className="flex items-center gap-2">
+                                            <Checkbox
+                                              id="all-playlists-edit"
+                                              checked={newCommonPatternM3uAccounts === null}
+                                              onCheckedChange={(checked) => {
+                                                if (checked) {
+                                                  setNewCommonPatternM3uAccounts(null)
+                                                } else {
+                                                  // When unchecking "All", select first M3U account if available
+                                                  const availableAccounts = m3uAccounts.filter(acc => acc.id !== 'custom')
+                                                  if (availableAccounts.length > 0) {
+                                                    setNewCommonPatternM3uAccounts([availableAccounts[0].id])
+                                                  }
+                                                }
+                                              }}
+                                            />
+                                            <label
+                                              htmlFor="all-playlists-edit"
+                                              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                            >
+                                              All Playlists
+                                            </label>
+                                          </div>
+
+                                          {m3uAccounts.filter(acc => acc.id !== 'custom').map(account => (
+                                            <div key={account.id} className="flex items-center gap-2">
                                               <Checkbox
-                                                id="all-playlists-edit"
-                                                checked={newCommonPatternM3uAccounts === null}
+                                                id={`playlist-edit-${account.id}`}
+                                                checked={newCommonPatternM3uAccounts !== null && newCommonPatternM3uAccounts.includes(account.id)}
                                                 onCheckedChange={(checked) => {
                                                   if (checked) {
-                                                    setNewCommonPatternM3uAccounts(null)
+                                                    setNewCommonPatternM3uAccounts(prev =>
+                                                      prev === null ? [account.id] : [...prev, account.id]
+                                                    )
                                                   } else {
-                                                    // When unchecking "All", select first M3U account if available
-                                                    const availableAccounts = m3uAccounts.filter(acc => acc.id !== 'custom')
-                                                    if (availableAccounts.length > 0) {
-                                                      setNewCommonPatternM3uAccounts([availableAccounts[0].id])
-                                                    }
+                                                    setNewCommonPatternM3uAccounts(prev => {
+                                                      if (prev === null) return []
+                                                      const updated = prev.filter(id => id !== account.id)
+                                                      // Return null when all unchecked to mean "all playlists" (backend convention)
+                                                      return updated.length === 0 ? null : updated
+                                                    })
                                                   }
                                                 }}
                                               />
                                               <label
-                                                htmlFor="all-playlists-edit"
-                                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                                htmlFor={`playlist-edit-${account.id}`}
+                                                className={`text-sm leading-none cursor-pointer ${newCommonPatternM3uAccounts === null ? 'text-muted-foreground' : ''}`}
                                               >
-                                                All Playlists
+                                                {account.name}
                                               </label>
                                             </div>
-
-                                            {m3uAccounts.filter(acc => acc.id !== 'custom').map(account => (
-                                              <div key={account.id} className="flex items-center gap-2">
-                                                <Checkbox
-                                                  id={`playlist-edit-${account.id}`}
-                                                  checked={newCommonPatternM3uAccounts !== null && newCommonPatternM3uAccounts.includes(account.id)}
-                                                  onCheckedChange={(checked) => {
-                                                    if (checked) {
-                                                      setNewCommonPatternM3uAccounts(prev =>
-                                                        prev === null ? [account.id] : [...prev, account.id]
-                                                      )
-                                                    } else {
-                                                      setNewCommonPatternM3uAccounts(prev => {
-                                                        if (prev === null) return []
-                                                        const updated = prev.filter(id => id !== account.id)
-                                                        // Return null when all unchecked to mean "all playlists" (backend convention)
-                                                        return updated.length === 0 ? null : updated
-                                                      })
-                                                    }
-                                                  }}
-                                                />
-                                                <label
-                                                  htmlFor={`playlist-edit-${account.id}`}
-                                                  className={`text-sm leading-none cursor-pointer ${newCommonPatternM3uAccounts === null ? 'text-muted-foreground' : ''}`}
-                                                >
-                                                  {account.name}
-                                                </label>
-                                              </div>
-                                            ))}
-                                          </div>
+                                          ))}
                                         </div>
+                                      </div>
 
-
-                                        <div className="flex gap-2 justify-end">
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => {
-                                              setEditingCommonPattern(null)
-                                              setNewCommonPattern('')
-                                              setNewCommonPatternM3uAccounts(null)
-                                            }}
-                                          >
-                                            Cancel
-                                          </Button>
-                                          <Button
-                                            size="sm"
-                                            onClick={handleEditCommonPattern}
-                                            disabled={!newCommonPattern.trim()}
-                                          >
-                                            Save
-                                          </Button>
+                                      <div className="flex gap-2 justify-end">
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => {
+                                            setEditingCommonPattern(null)
+                                            setNewCommonPattern('')
+                                            setNewCommonPatternM3uAccounts(null)
+                                          }}
+                                        >
+                                          Cancel
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          onClick={handleEditCommonPattern}
+                                          disabled={!newCommonPattern.trim()}
+                                        >
+                                          Save
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    // View mode
+                                    <div className="flex items-start gap-3">
+                                      <Checkbox
+                                        checked={selectedCommonPatterns.has(actualIndex)}
+                                        onCheckedChange={(checked) => {
+                                          setSelectedCommonPatterns(prev => {
+                                            const newSet = new Set(prev)
+                                            if (checked) {
+                                              newSet.add(actualIndex)
+                                            } else {
+                                              newSet.delete(actualIndex)
+                                            }
+                                            return newSet
+                                          })
+                                        }}
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <code className="text-sm break-all block">{patternInfo.pattern}</code>
+                                        <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                                          <span>Used in {patternInfo.count} of {selectedChannels.size} channels ({patternInfo.percentage}%)</span>
                                         </div>
+                                      </div>
+                                      <div className="flex gap-1">
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => {
+                                            setEditingCommonPattern(patternInfo)
+                                            setNewCommonPattern(patternInfo.pattern)
+                                          }}
+                                        >
+                                          <Edit2 className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="destructive"
+                                          onClick={() => handleDeleteSingleCommonPattern(patternInfo)}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
                                       </div>
                                     </div>
                                   )}
@@ -3278,7 +3319,7 @@ export default function ChannelConfiguration() {
                   </>
                 )}
               </div>
-            </div >
+            </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => {
@@ -3291,8 +3332,8 @@ export default function ChannelConfiguration() {
                 Close
               </Button>
             </DialogFooter>
-          </DialogContent >
-        </Dialog >
+          </DialogContent>
+        </Dialog>
         <MatchPreviewDialog
           open={previewResultsOpen}
           onOpenChange={setPreviewResultsOpen}
@@ -3301,8 +3342,8 @@ export default function ChannelConfiguration() {
           loading={testingPattern}
           onLoadMore={() => handleTestPattern(testResults?.mode, true, testResults?.channelId)}
         />
-      </div >
-    </TooltipProvider >
+      </div>
+    </TooltipProvider>
   )
 }
 
