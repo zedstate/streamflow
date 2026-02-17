@@ -180,13 +180,13 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
       
       // Build enriched period list with profile names
       const enrichedPeriods = Object.entries(periodToProfile).map(([periodId, profileId]) => {
-        const period = allPeriods.find(p => p.id === periodId)
-        const profile = allProfiles.find(p => p.id === profileId)
+        const period = allPeriods.find(p => p.id === String(periodId))
+        const profile = allProfiles.find(p => p.id === String(profileId))
         return {
-          id: periodId,
+          id: String(periodId),
           name: period?.name || 'Unknown Period',
           schedule: period?.schedule || {},
-          profile_id: profileId,
+          profile_id: String(profileId),
           profile_name: profile?.name || 'Unknown Profile'
         }
       })
@@ -700,7 +700,10 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={saving || loading || allPeriods.length === 0 || Object.keys(periodAssignments).length === 0}>
+          <Button 
+            onClick={handleSave} 
+            disabled={saving || loading || allPeriods.length === 0 || Object.keys(periodAssignments).length === 0}
+          >
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Save
           </Button>

@@ -145,7 +145,7 @@ class AutomationEventsScheduler:
             for profile_id, count in profile_counts.items():
                 profile = automation_config.get_profile(profile_id)
                 if profile:
-                    profile_names.append(f"{profile.get('name', 'Unknown')} ({count}ch)")
+                    profile_names.append(f"{profile.get('name', 'Unknown')} ({count} channels)")
             
             profile_display = ", ".join(profile_names) if profile_names else "No Profile"
             

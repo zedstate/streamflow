@@ -520,8 +520,9 @@ class AutomationConfigManager:
             if isinstance(assignments, dict):
                 return assignments.copy()
             elif isinstance(assignments, list):
-                # Old format - migrate to new format (use default profile or empty)
-                return {pid: "" for pid in assignments}
+                # Old format - log warning and return empty dict (requires manual reassignment)
+                logger.warning(f"Channel {channel_id} has old-format period assignments - manual reassignment required")
+                return {}
             return {}
 
     def get_period_channels(self, period_id: str) -> List[int]:

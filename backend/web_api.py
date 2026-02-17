@@ -4168,12 +4168,13 @@ def batch_assign_periods_to_channels():
                 return jsonify({"error": "Each period assignment must have period_id and profile_id"}), 400
         
         # Assign each period-profile pair to all channels
-        for i, assignment in enumerate(period_assignments):
+        is_first = True
+        for assignment in period_assignments:
             pid = assignment['period_id']
             profile_id = assignment['profile_id']
             # Only the first period should replace if replace=True
-            should_replace = replace and i == 0
-            automation_config.assign_period_to_channels(pid, channel_ids, profile_id, should_replace)
+            automation_config.assign_period_to_channels(pid, channel_ids, profile_id, replace and is_first)
+            is_first = False
         
         return jsonify({
             "message": f"Assigned {len(period_assignments)} period-profile pairs to {len(channel_ids)} channels"
