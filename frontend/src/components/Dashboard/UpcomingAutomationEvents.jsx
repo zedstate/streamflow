@@ -142,7 +142,7 @@ export default function UpcomingAutomationEvents() {
             {formatDateTime(event.time)}
           </div>
           <div>
-            Profile: {event.profile_name}
+            Profiles: {event.profile_display || 'No Profile'}
           </div>
           <div>
             {event.channel_count} channel{event.channel_count !== 1 ? 's' : ''}

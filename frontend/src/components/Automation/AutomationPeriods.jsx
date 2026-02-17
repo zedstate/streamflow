@@ -52,10 +52,6 @@ export default function AutomationPeriods() {
   const handleCreate = () => {
     setCurrentPeriod({
       name: '',
-      schedule: { type: 'interval', value: 60 },
-  const handleCreate = () => {
-    setCurrentPeriod({
-      name: '',
       schedule: { type: 'interval', value: 60 }
     })
     setEditDialogOpen(true)
