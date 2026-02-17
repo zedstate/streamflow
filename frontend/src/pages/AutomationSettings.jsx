@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamCheckerAPI, dispatcharrAPI, sessionSettingsAPI, schedulingAPI } from '@/services/api.js'
 import AutomationProfileStudio from '@/components/Automation/AutomationProfileStudio.jsx'
+import AutomationPeriods from '@/components/Automation/AutomationPeriods.jsx'
 
 export default function AutomationSettings() {
   const [config, setConfig] = useState(null)
@@ -198,13 +199,18 @@ export default function AutomationSettings() {
         </p>
       </div>
 
-      <Tabs defaultValue="automation" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="automation">Automation</TabsTrigger>
+      <Tabs defaultValue="periods" className="w-full">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="periods">Periods</TabsTrigger>
+          <TabsTrigger value="automation">Profiles</TabsTrigger>
           <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
           <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
           <TabsTrigger value="connection">Connection</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="periods" className="space-y-6">
+          <AutomationPeriods />
+        </TabsContent>
 
         <TabsContent value="automation" className="space-y-6">
           <AutomationProfileStudio />

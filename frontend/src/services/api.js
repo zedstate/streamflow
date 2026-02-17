@@ -61,6 +61,21 @@ export const automationAPI = {
   assignChannel: (channelId, profileId) => api.post('/automation/assign/channel', { channel_id: channelId, profile_id: profileId }),
   assignChannels: (channelIds, profileId) => api.post('/automation/assign/channels', { channel_ids: channelIds, profile_id: profileId }),
   assignGroup: (groupId, profileId) => api.post('/automation/assign/group', { group_id: groupId, profile_id: profileId }),
+
+  // Automation Periods
+  getPeriods: () => api.get('/automation/periods'),
+  createPeriod: (period) => api.post('/automation/periods', period),
+  getPeriod: (periodId) => api.get(`/automation/periods/${periodId}`),
+  updatePeriod: (periodId, period) => api.put(`/automation/periods/${periodId}`, period),
+  deletePeriod: (periodId) => api.delete(`/automation/periods/${periodId}`),
+  assignPeriodToChannels: (periodId, channelIds, replace = false) => 
+    api.post(`/automation/periods/${periodId}/assign-channels`, { channel_ids: channelIds, replace }),
+  removePeriodFromChannels: (periodId, channelIds) => 
+    api.post(`/automation/periods/${periodId}/remove-channels`, { channel_ids: channelIds }),
+  getPeriodChannels: (periodId) => api.get(`/automation/periods/${periodId}/channels`),
+  getChannelPeriods: (channelId) => api.get(`/channels/${channelId}/automation-periods`),
+  batchAssignPeriods: (channelIds, periodIds, replace = false) => 
+    api.post('/channels/batch/assign-periods', { channel_ids: channelIds, period_ids: periodIds, replace }),
 };
 
 export const channelsAPI = {
