@@ -99,25 +99,6 @@ export default function Dashboard() {
     }
   }
 
-  const handleTriggerGlobalAction = async () => {
-    try {
-      setActionLoading('global')
-      await streamCheckerAPI.triggerGlobalAction()
-      toast({
-        title: "Success",
-        description: "Global action triggered successfully"
-      })
-      await loadStatus()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: "Failed to trigger global action",
-        variant: "destructive"
-      })
-    } finally {
-      setActionLoading('')
-    }
-  }
 
   const handleTogglePlaylist = async (playlistId, currentlyEnabled) => {
     try {
@@ -263,12 +244,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="flex items-center gap-2">
               <div className="text-2xl font-bold">
-                {streamCheckerStatus?.global_action_in_progress ? (
-                  <Badge variant="default" className="bg-blue-500">
-                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                    Global Check
-                  </Badge>
-                ) : streamCheckerStatus?.checking || (streamCheckerStatus?.queue?.in_progress > 0) ? (
+                {streamCheckerStatus?.checking || (streamCheckerStatus?.queue?.in_progress > 0) ? (
                   <Badge variant="default" className="bg-green-500">
                     <CheckCircle2 className="h-3 w-3 mr-1" />
                     Normal Check
@@ -334,14 +310,6 @@ export default function Dashboard() {
             {actionLoading === 'automation' ? 'Running...' : 'Run Automation'}
           </Button>
 
-          <Button
-            onClick={handleTriggerGlobalAction}
-            disabled={shouldDisableActions}
-            variant="outline"
-          >
-            <Activity className="mr-2 h-4 w-4" />
-            {actionLoading === 'global' ? 'Triggering...' : 'Global Action'}
-          </Button>
         </CardContent>
       </Card>
 

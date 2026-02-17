@@ -53,12 +53,12 @@ export default function StreamChecker() {
   useEffect(() => {
     loadData()
     // Poll for updates - use shorter interval when checking is active
-    const pollInterval = (status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)) ? 1000 : 3000
+    const pollInterval = (status?.checking || (status?.queue?.queue_size > 0)) ? 1000 : 3000
     const interval = setInterval(() => {
       loadData()
     }, pollInterval)
     return () => clearInterval(interval)
-  }, [status?.checking, status?.global_action_in_progress, status?.queue?.queue_size])
+  }, [status?.checking, status?.queue?.queue_size])
 
   const loadData = async () => {
     try {
@@ -80,25 +80,6 @@ export default function StreamChecker() {
     }
   }
 
-  const handleTriggerGlobalAction = async () => {
-    try {
-      setActionLoading('global-action')
-      await streamCheckerAPI.triggerGlobalAction()
-      toast({
-        title: "Success",
-        description: "Global action initiated successfully"
-      })
-      await loadData()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err.response?.data?.error || "Failed to trigger global action",
-        variant: "destructive"
-      })
-    } finally {
-      setActionLoading('')
-    }
-  }
 
   const handleClearQueue = async () => {
     try {
@@ -257,7 +238,7 @@ export default function StreamChecker() {
     )
   }
 
-  const isChecking = status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)
+  const isChecking = status?.checking || (status?.queue?.queue_size > 0)
   const queueSize = status?.queue?.queue_size || 0
   const inProgress = status?.queue?.in_progress || 0
   const completed = status?.queue?.completed || 0
@@ -273,18 +254,6 @@ export default function StreamChecker() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            onClick={handleTriggerGlobalAction}
-            disabled={actionLoading === 'global-action' || isChecking}
-            variant="default"
-          >
-            {actionLoading === 'global-action' ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Global Action
-          </Button>
         </div>
       </div>
 
@@ -300,9 +269,6 @@ export default function StreamChecker() {
               <Badge variant={isChecking ? "default" : "secondary"}>
                 {isChecking ? "Active" : "Idle"}
               </Badge>
-              {status?.global_action_in_progress && (
-                <Badge variant="destructive">Global Action</Badge>
-              )}
             </div>
             <p className="text-xs text-muted-foreground mt-2">
               Mode: {status?.parallel?.mode || 'sequential'}

@@ -148,16 +148,6 @@ export default function AutomationSettings() {
     }))
   }
 
-  const handleGlobalScheduleValueChange = (value) => {
-    setConfig(prev => ({
-      ...prev,
-      global_schedule: {
-        ...(prev.global_schedule || {}),
-        value: parseInt(value)
-      }
-    }))
-  }
-
   const handleTestConnection = async () => {
     try {
       setTestingConnection(true)
@@ -217,7 +207,6 @@ export default function AutomationSettings() {
         </TabsList>
 
         <TabsContent value="automation" className="space-y-6">
-          {/* Profile Studio */}
           <AutomationProfileStudio />
         </TabsContent>
 
@@ -252,11 +241,10 @@ export default function AutomationSettings() {
             <CardHeader>
               <CardTitle>Automation Scheduling</CardTitle>
               <CardDescription>
-                Configure schedules for regular automation cycles and global actions
+                Configure schedules for regular automation cycles
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-8">
-              {/* Automation Period Section */}
               <div className="space-y-4">
                 <div className="space-y-0.5">
                   <Label className="text-base">Regular Automation Period</Label>
@@ -309,64 +297,6 @@ export default function AutomationSettings() {
                 </Tabs>
               </div>
 
-              <Separator />
-
-              {/* Global Action Section */}
-              <div className="space-y-4">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Global Action Period</Label>
-                  <p className="text-sm text-muted-foreground">How often to perform full system validation and cleanup</p>
-                </div>
-                <Tabs
-                  value={config?.global_schedule?.type || 'interval'}
-                  onValueChange={(val) => {
-                    const currentVal = config?.global_schedule?.value;
-                    const newVal = val === 'interval' ? (parseInt(currentVal) || 60) : (typeof currentVal === 'string' ? currentVal : '0 * * * *');
-                    setConfig(prev => ({
-                      ...prev,
-                      global_schedule: { type: val, value: newVal }
-                    }));
-                  }}
-                >
-                  <TabsList className="grid w-[400px] grid-cols-2">
-                    <TabsTrigger value="interval">Interval (Minutes)</TabsTrigger>
-                    <TabsTrigger value="cron">Cron Expression</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="interval" className="space-y-2 pt-4">
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min="5"
-                        max="1440"
-                        className="max-w-[120px]"
-                        value={config?.global_schedule?.type === 'interval' ? config.global_schedule.value : 60}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value) || 60;
-                          setConfig(prev => ({
-                            ...prev,
-                            global_schedule: { type: 'interval', value: val }
-                          }));
-                        }}
-                      />
-                      <span className="text-sm text-muted-foreground">minutes</span>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="cron" className="space-y-2 pt-4">
-                    <div className="space-y-2">
-                      <Input
-                        placeholder="0 * * * *"
-                        value={config?.global_schedule?.type === 'cron' ? config.global_schedule.value : ''}
-                        onChange={(e) => setConfig(prev => ({
-                          ...prev,
-                          global_schedule: { type: 'cron', value: e.target.value }
-                        }))}
-                      />
-                      <p className="text-xs text-muted-foreground">Standard 5-field cron expression (e.g., 0 3 * * *)</p>
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </div>
-
               <div className="flex justify-end pt-4 border-t">
                 <Button onClick={handleSave} disabled={saving}>
                   {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -410,7 +340,6 @@ export default function AutomationSettings() {
         </TabsContent>
 
         <TabsContent value="connection" className="space-y-6">
-          {/* Dispatcharr Configuration */}
           <Card>
             <CardHeader>
               <CardTitle>Dispatcharr Connection</CardTitle>
@@ -486,8 +415,6 @@ export default function AutomationSettings() {
             </CardContent>
           </Card>
         </TabsContent>
-
-
       </Tabs>
     </div>
   )

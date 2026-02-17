@@ -205,28 +205,24 @@ class StreamCheckConfig:
                                 'auto_m3u_updates': True,
                                 'auto_stream_matching': True,
                                 'auto_quality_checking': True,
-                                'scheduled_global_action': True
                             }
                         elif pipeline_mode == 'pipeline_2':
                             config['automation_controls'] = {
                                 'auto_m3u_updates': True,
                                 'auto_stream_matching': True,
                                 'auto_quality_checking': False,
-                                'scheduled_global_action': False
                             }
                         elif pipeline_mode == 'pipeline_2_5':
                             config['automation_controls'] = {
                                 'auto_m3u_updates': True,
                                 'auto_stream_matching': True,
                                 'auto_quality_checking': False,
-                                'scheduled_global_action': True
                             }
                         elif pipeline_mode == 'pipeline_3':
                             config['automation_controls'] = {
                                 'auto_m3u_updates': False,
                                 'auto_stream_matching': False,
                                 'auto_quality_checking': False,
-                                'scheduled_global_action': True
                             }
                         
                         # Remove pipeline_mode key
@@ -329,9 +325,6 @@ class StreamCheckConfig:
         """Check if automatic quality checking is enabled."""
         return self.config.get('automation_controls', {}).get('auto_quality_checking', True)
     
-    def is_scheduled_global_action_enabled(self) -> bool:
-        """Check if scheduled global action is enabled."""
-        return self.config.get('automation_controls', {}).get('scheduled_global_action', False)
 
 
 class ChannelUpdateTracker:
@@ -1069,7 +1062,6 @@ class StreamCheckerService:
                             should_run = False
                         else:
                             logger.info(f"Global schedule triggered")
-                            self.last_global_check = now
                             # Launch global action in separate thread to not block scheduler
                             threading.Thread(target=self._perform_global_action, daemon=True).start()
                 
@@ -1124,11 +1116,6 @@ class StreamCheckerService:
         """
         if not self.config.get('global_check_schedule.enabled', True):
             logger.debug("Global check schedule is disabled")
-            return
-        
-        # Check if scheduled global action is enabled (considers both pipeline mode and individual controls)
-        if not self.config.is_scheduled_global_action_enabled():
-            logger.debug("Skipping global schedule check - scheduled global actions are disabled")
             return
         
         now = datetime.now()
@@ -1203,126 +1190,11 @@ class StreamCheckerService:
             # Monthly on specific day: minute hour day * *
             cron_expression = f"{minute} {hour} {day_of_month} * *"
         else:
-            # Daily: minute hour * * *
+            # Daily: minute hour * * *"
             cron_expression = f"{minute} {hour} * * *"
         
         logger.info(f"Converted legacy schedule to cron: {cron_expression}")
         return cron_expression
-    
-    def _perform_global_action(self):
-        """Perform a complete global action: Refresh UDI, Update M3U, Match streams, and Check all channels.
-        
-        This is the comprehensive global action that:
-        1. Refreshes UDI cache to ensure current data from Dispatcharr
-        2. Clears ALL dead streams from tracker to give them a second chance
-        3. Reloads enabled M3U accounts
-        4. Matches new streams with regex patterns (including previously dead ones)
-        5. Checks every channel from every stream (bypassing 2-hour immunity)
-        6. Disables empty channels if configured
-        
-        During this operation, regular automated updates, matching, and checking are paused.
-        """
-        try:
-            # Set global action flag to prevent concurrent operations
-            self.global_action_in_progress = True
-            logger.info("=" * 80)
-            logger.info("STARTING GLOBAL ACTION")
-            logger.info("Regular automation paused during global action")
-            logger.info("=" * 80)
-            
-            # Step 1: Refresh UDI cache to ensure we have current data from Dispatcharr
-            logger.info("Step 1/6: Refreshing UDI cache...")
-            try:
-                from udi import get_udi_manager
-                udi = get_udi_manager()
-                refresh_success = udi.refresh_all()
-                if refresh_success:
-                    logger.info("✓ UDI cache refreshed successfully")
-                else:
-                    logger.warning("⚠ UDI cache refresh had issues")
-            except Exception as e:
-                logger.error(f"✗ Failed to refresh UDI cache: {e}")
-            
-            # Step 2: Clear ALL dead streams from tracker to give them a second chance
-            logger.info("Step 2/6: Clearing dead stream tracker to give all streams a second chance...")
-            try:
-                dead_count = len(self.dead_streams_tracker.get_dead_streams())
-                if dead_count > 0:
-                    logger.info(f"Found {dead_count} dead stream(s) before clearing")
-                    self.dead_streams_tracker.clear_all_dead_streams()
-                    logger.info(f"✓ Cleared {dead_count} dead stream(s) from tracker - they will be given a second chance")
-                    
-                    # Verify the streams were actually cleared
-                    remaining_dead = len(self.dead_streams_tracker.get_dead_streams())
-                    if remaining_dead > 0:
-                        logger.warning(f"⚠ {remaining_dead} dead stream(s) still remain after clearing - this may indicate an issue")
-                    else:
-                        logger.info("✓ Verified: All dead streams successfully removed from tracker")
-                else:
-                    logger.info("✓ No dead streams to clear from tracker")
-            except Exception as e:
-                logger.error(f"✗ Failed to clear dead streams: {e}", exc_info=True)
-            
-            automation_manager = None
-            
-            # Step 3: Update M3U playlists
-            logger.info("Step 3/6: Updating M3U playlists...")
-            try:
-                from automated_stream_manager import AutomatedStreamManager
-                automation_manager = AutomatedStreamManager()
-                update_success = automation_manager.refresh_playlists(force=True)
-                if update_success:
-                    logger.info("✓ M3U playlists updated successfully")
-                else:
-                    logger.warning("⚠ M3U playlist update had issues")
-            except Exception as e:
-                logger.error(f"✗ Failed to update M3U playlists: {e}")
-            
-            # Step 4: Validate and remove non-matching streams
-            logger.info("Step 4/6: Validating existing streams against regex patterns...")
-            try:
-                if automation_manager is not None:
-                    # Respect automation_controls.remove_non_matching_streams setting
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams(force=True)
-                    if validation_results.get("streams_removed", 0) > 0:
-                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
-                    else:
-                        logger.info("✓ No non-matching streams found to remove")
-                else:
-                    logger.warning("⚠ Skipping stream validation - automation manager not available")
-            except Exception as e:
-                logger.error(f"✗ Failed to validate streams: {e}")
-            
-            # Step 5: Match and assign streams (including previously dead ones since tracker was cleared)
-            logger.info("Step 5/6: Matching and assigning streams...")
-            try:
-                if automation_manager is not None:
-                    assignments = automation_manager.discover_and_assign_streams(force=True)
-                    if assignments:
-                        logger.info(f"✓ Assigned streams to {len(assignments)} channels")
-                    else:
-                        logger.info("✓ No new stream assignments")
-                else:
-                    logger.warning("⚠ Skipping stream matching - automation manager not available")
-            except Exception as e:
-                logger.error(f"✗ Failed to match streams: {e}")
-            
-            # Step 6: Check all channels (force check to bypass immunity)
-            logger.info("Step 6/6: Queueing all channels for checking...")
-            self._queue_all_channels(force_check=True)
-            
-            # Note: Empty channel disabling will be triggered after batch finalization
-            
-            logger.info("=" * 80)
-            logger.info("GLOBAL ACTION INITIATED SUCCESSFULLY")
-            logger.info("Regular automation will resume")
-            logger.info("=" * 80)
-            
-        except Exception as e:
-            logger.error(f"Error performing global action: {e}", exc_info=True)
-        finally:
-            # Always clear the flag, even if there was an error
-            self.global_action_in_progress = False
     
     def _queue_all_channels(self, force_check: bool = False):
         """Queue all channels for checking (global check).
@@ -3147,65 +3019,6 @@ class StreamCheckerService:
             logger.error(f"Error calculating priority boost for stream {stream_id}: {e}")
             return 0.0
     
-    def _get_regex_priority_boost(self, stream_id: int, stream_data: Dict) -> float:
-        """Calculate priority boost for a stream based on which regex pattern matched it.
-        
-        When multiple streams from the same playlist match a channel, those matched by
-        higher-priority regex patterns should score higher.
-        
-        Args:
-            stream_id: The stream ID
-            stream_data: Stream data dictionary containing stream name and other info
-            
-        Returns:
-            Regex priority boost value (0.0 to 5.0+)
-        """
-        try:
-            # Get stream from UDI to find its name and M3U account
-            udi = get_udi_manager()
-            stream = udi.get_stream_by_id(stream_id)
-            if not stream:
-                return 0.0
-            
-            stream_name = stream.get('name', '')
-            stream_m3u_account = stream.get('m3u_account')
-            
-            if not stream_name:
-                return 0.0
-            
-            # Get the channel ID this stream belongs to
-            channel_id = stream_data.get('channel_id')
-            if not channel_id:
-                return 0.0
-            
-            # Import regex matcher to check which pattern matched this stream
-            from web_api import get_regex_matcher
-            regex_matcher = get_regex_matcher()
-            
-            # Get match results with priority
-            matches = regex_matcher.match_stream_to_channels_with_priority(stream_name, stream_m3u_account)
-            
-            # Find the match for this channel
-            for match in matches:
-                if str(match.get('channel_id')) == str(channel_id):
-                    priority = match.get('priority', 0)
-                    if priority > 0:
-                        # TVG match (priority 1000) gets a strong but limited boost
-                        # This avoids overriding M3U priority in 'Absolute' mode which adds 10+
-                        if priority >= 1000:
-                            boost = 5.0
-                        else:
-                            # Regex priority: Each point adds 0.05 to the score
-                            # This acts as a tie-breaker within account tiers (tier gap is 1.0)
-                            boost = round(priority * 0.05, 2)
-                        
-                        logger.debug(f"Applying regex priority boost of {boost} to stream {stream_id} in channel {channel_id} (input priority: {priority})")
-                        return boost
-            
-            return 0.0
-        except Exception as e:
-            logger.error(f"Error calculating regex priority boost for stream {stream_id}: {e}")
-            return 0.0
 
     def _get_resolution_tier(self, resolution: str) -> int:
         """Map resolution string to a numeric tier (0-5, lower is better)."""
@@ -3232,11 +3045,10 @@ class StreamCheckerService:
         
         The sort key is a tuple used for ascending sort (lower is better).
         
-        Tiers (for 'absolute' mode):
-        (AccountRank, ResolutionTier, MatchRank, QualityScore)
+        (AccountRank, ResolutionTier, QualityScore)
         
         Tiers (for 'same_resolution' mode):
-        (ResolutionTier, AccountRank, MatchRank, QualityScore)
+        (ResolutionTier, AccountRank, QualityScore)
         """
         # 1. Account Rank (0 = highest)
         account_rank = 100
@@ -3252,35 +3064,17 @@ class StreamCheckerService:
         # 2. Resolution Tier (0 = highest)
         res_tier = self._get_resolution_tier(stream_data.get('resolution'))
         
-        # 3. Match Rank (0 = highest)
-        match_rank = 1000
-        if stream_id:
-            from web_api import get_regex_matcher
-            regex_matcher = get_regex_matcher()
-            udi = get_udi_manager()
-            stream = udi.get_stream_by_id(stream_id)
-            if stream:
-                matches = regex_matcher.match_stream_to_channels_with_priority(
-                    stream.get('name', ''), 
-                    stream.get('m3u_account')
-                )
-                channel_id = stream_data.get('channel_id')
-                for m in matches:
-                    if str(m.get('channel_id')) == str(channel_id):
-                        priority = m.get('priority', 0)
-                        match_rank = 1000 - priority # Convert 1000 to 0 rank
-                        break
         
         # 4. Quality Score (lower is better, so negate the 0-1 scale)
         quality_score = -stream_data.get('score', 0.0)
         
         if priority_mode == 'same_resolution':
-            return (res_tier, account_rank, match_rank, quality_score)
+            return (res_tier, account_rank, quality_score)
         elif priority_mode == 'equal':
             # In 'equal' mode, resolution and quality matter, but not M3U account priority
-            return (res_tier, match_rank, quality_score)
+            return (res_tier, quality_score)
         else: # 'absolute' mode
-            return (account_rank, res_tier, match_rank, quality_score)
+            return (account_rank, res_tier, quality_score)
     
     def get_status(self) -> Dict:
         """Get current service status."""

@@ -336,8 +336,7 @@ class RegexChannelMatcher:
                                     continue
                                 regex_patterns.append({
                                     "pattern": pattern_str,
-                                    "m3u_accounts": channel_m3u_accounts,  # Apply channel-level to all patterns
-                                    "priority": 0  # Default priority for migrated patterns
+                                    "m3u_accounts": channel_m3u_accounts  # Apply channel-level to all patterns
                                 })
                             
                             if regex_patterns:
@@ -351,7 +350,7 @@ class RegexChannelMatcher:
                         regex_patterns = pattern_data.get('regex_patterns', [])
                         if not regex_patterns:
                             # Fallback to old format
-                            regex_patterns = [{"pattern": p, "priority": 0} for p in pattern_data.get('regex', [])]
+                            regex_patterns = [{"pattern": p} for p in pattern_data.get('regex', [])]
                         
                         # Check if any regex patterns are invalid
                         has_invalid = False
@@ -479,16 +478,14 @@ class RegexChannelMatcher:
                         raise ValueError("Each pattern object must have a 'pattern' field")
                     normalized_patterns.append({
                         "pattern": item["pattern"],
-                        "m3u_accounts": item.get("m3u_accounts"),
-                        "priority": item.get("priority", 0)  # Default priority is 0
+                        "m3u_accounts": item.get("m3u_accounts")
                     })
             else:
                 # Legacy format: List[str] - convert to new format
                 for pattern in regex_patterns:
                     normalized_patterns.append({
                         "pattern": pattern,
-                        "m3u_accounts": m3u_accounts,  # Use channel-level m3u_accounts for all patterns
-                        "priority": 0  # Default priority for legacy patterns
+                        "m3u_accounts": m3u_accounts  # Use channel-level m3u_accounts for all patterns
                     })
         else:
             raise ValueError("At least one regex pattern is required")
@@ -699,7 +696,6 @@ class RegexChannelMatcher:
                     continue
                 
                 matched = False
-                priority = 0
                 match_source = "regex"
                 
                 # Determine priority order
@@ -717,13 +713,7 @@ class RegexChannelMatcher:
                             if channel_tvg_id and stream_tvg_id == channel_tvg_id:
                                 matched = True
                                 match_source = "tvg_id"
-                                # Assign priority based on order preference
-                                # TVG-ID matches get a very high internal priority (1000)
-                                # This is normalized in stream_checker_service's scoring logic
-                                if priority_order[0] == 'tvg':
-                                    priority = 1000
-                                else:
-                                    priority = 0
+                                priority = 0
                                 break
                                 
                     elif match_type == 'regex':
@@ -741,7 +731,7 @@ class RegexChannelMatcher:
                             # Fallback to old format
                             old_regex = config.get("regex", [])
                             old_m3u_accounts = config.get("m3u_accounts")
-                            regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts, "priority": 0} for p in old_regex]
+                            regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
                         
                         regex_matched = False
                         best_regex_priority = 0
@@ -751,12 +741,10 @@ class RegexChannelMatcher:
                             if isinstance(pattern_obj, dict):
                                 pattern = pattern_obj.get("pattern", "")
                                 pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
-                                pattern_priority = pattern_obj.get("priority", 0)
                             else:
                                 # Legacy string format
                                 pattern = pattern_obj
                                 pattern_m3u_accounts = None
-                                pattern_priority = 0
                             
                             if not pattern:
                                 continue
@@ -782,20 +770,15 @@ class RegexChannelMatcher:
                             # Convert literal spaces in pattern to flexible whitespace regex
                             search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                             
-                            try:
-                                if re.search(search_pattern, search_name):
-                                    regex_matched = True
-                                    best_regex_priority = max(best_regex_priority, pattern_priority)
-                                    # We don't break here because we want to find the HIGHEST priority regex match
-                                    # But previous logic did break. Let's stick to "highest priority regex wins" assumption for 'with_priority'
-                            except re.error as e:
-                                logger.error(f"Invalid regex pattern '{pattern}' for channel {channel_id}: {e}")
+                            if re.search(search_pattern, search_name):
+                                regex_matched = True
+                                # Only match once per channel
+                                break
                                 
                         if regex_matched:
                             matched = True
                             match_source = "regex"
-                            # Regex priorities are typically 0-50 and scale separately from TVG matches
-                            priority = best_regex_priority
+                            priority = 0
                             break
 
             

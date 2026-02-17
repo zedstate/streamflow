@@ -18,34 +18,6 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
-const SortablePriorityItem = ({ id, label }) => {
-    const {
-        attributes,
-        listeners,
-        setNodeRef,
-        transform,
-        transition,
-    } = useSortable({ id })
-
-    const style = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-    }
-
-    return (
-        <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="flex items-center gap-3 p-3 bg-background border rounded-md cursor-move hover:bg-accent/50 group select-none">
-            <div className="p-1 rounded text-muted-foreground group-hover:text-foreground">
-                <GripVertical className="h-4 w-4" />
-            </div>
-            <div className="flex flex-col">
-                <span className="font-medium text-sm">{label}</span>
-                <span className="text-[10px] text-muted-foreground">
-                    {id === 'tvg' ? 'Match streams pointing to this channel ID' : 'Match streams by name using Regex'}
-                </span>
-            </div>
-        </div>
-    )
-}
 
 const DEFAULT_PROFILE = {
     name: '',
@@ -57,8 +29,7 @@ const DEFAULT_PROFILE = {
     stream_matching: {
         enabled: true,
         playlists: [],
-        validate_existing_streams: false,
-        match_priority_order: ['tvg', 'regex']
+        validate_existing_streams: false
     },
     stream_checking: {
         enabled: true,
@@ -77,17 +48,13 @@ const DEFAULT_PROFILE = {
         fps: 0.15,
         codec: 0.10,
         prefer_h265: true
-    },
-    global_action: {
-        affected: true
     }
 }
 
 const STEPS = [
     { id: 'm3u_update', label: 'Playlist Updating', sublabel: 'M3U Updates' },
     { id: 'stream_matching', label: 'Stream Matching', sublabel: 'Regex Pattern matching' },
-    { id: 'stream_checking', label: 'Stream Checking', sublabel: 'Quality & Scoring' },
-    { id: 'global_action', label: 'Global Action', sublabel: 'Global Cycle Inclusion' }
+    { id: 'stream_checking', label: 'Stream Checking', sublabel: 'Quality & Scoring' }
 ]
 
 export default function AutomationProfileEditor() {
@@ -126,8 +93,7 @@ export default function AutomationProfileEditor() {
                             scoring_weights: loadedProfile.scoring_weights || DEFAULT_PROFILE.scoring_weights,
                             stream_matching: {
                                 ...DEFAULT_PROFILE.stream_matching,
-                                ...loadedProfile.stream_matching,
-                                match_priority_order: loadedProfile.stream_matching?.match_priority_order || ['tvg', 'regex']
+                                ...loadedProfile.stream_matching
                             }
                         })
                     } else {
@@ -174,32 +140,6 @@ export default function AutomationProfileEditor() {
         })
     }
 
-    const sensors = useSensors(
-        useSensor(PointerSensor),
-        useSensor(KeyboardSensor, {
-            coordinateGetter: sortableKeyboardCoordinates,
-        })
-    )
-
-    const handlePriorityDragEnd = (event) => {
-        const { active, over } = event
-        if (active.id !== over.id) {
-            setProfile(prev => {
-                const currentOrder = prev.stream_matching.match_priority_order || ['tvg', 'regex']
-                const oldIndex = currentOrder.indexOf(active.id)
-                const newIndex = currentOrder.indexOf(over.id)
-                const newOrder = arrayMove(currentOrder, oldIndex, newIndex)
-
-                return {
-                    ...prev,
-                    stream_matching: {
-                        ...prev.stream_matching,
-                        match_priority_order: newOrder
-                    }
-                }
-            })
-        }
-    }
 
     const handleSave = async () => {
         if (!profile.name) {
@@ -241,7 +181,7 @@ export default function AutomationProfileEditor() {
     }
 
     const isStepEnabled = (stepId) => {
-        return profile?.[stepId]?.enabled || (stepId === 'global_action' && profile?.global_action?.affected)
+        return profile?.[stepId]?.enabled
     }
 
     return (
@@ -346,9 +286,7 @@ export default function AutomationProfileEditor() {
                             <Switch
                                 checked={isStepEnabled(activeStep)}
                                 onCheckedChange={(checked) => {
-                                    if (activeStep === 'global_action') {
-                                        updateProfile('global_action.affected', checked)
-                                    } else if (activeStep === 'm3u_update' && checked) {
+                                    if (activeStep === 'm3u_update' && checked) {
                                         // When enabling playlist updating, tick every playlist
                                         setProfile(prev => ({
                                             ...prev,
@@ -455,33 +393,6 @@ export default function AutomationProfileEditor() {
                                         </div>
                                     </div>
 
-                                    <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
-                                        <Label className="text-sm font-semibold">Match Priority</Label>
-                                        <p className="text-xs text-muted-foreground mb-4">
-                                            Drag to reorder. The system will try to match using the top method first.
-                                        </p>
-
-                                        <DndContext
-                                            sensors={sensors}
-                                            collisionDetection={closestCenter}
-                                            onDragEnd={handlePriorityDragEnd}
-                                        >
-                                            <SortableContext
-                                                items={profile.stream_matching.match_priority_order || ['tvg', 'regex']}
-                                                strategy={verticalListSortingStrategy}
-                                            >
-                                                <div className="space-y-2">
-                                                    {(profile.stream_matching.match_priority_order || ['tvg', 'regex']).map(id => (
-                                                        <SortablePriorityItem
-                                                            key={id}
-                                                            id={id}
-                                                            label={id === 'tvg' ? 'Exact TVG-ID Match' : 'Regex Patterns'}
-                                                        />
-                                                    ))}
-                                                </div>
-                                            </SortableContext>
-                                        </DndContext>
-                                    </div>
 
                                     <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
                                         <Label className="text-sm font-semibold">Source Playlists</Label>
@@ -793,32 +704,6 @@ export default function AutomationProfileEditor() {
                     )}
 
 
-                    {/* Step 4: Global Action */}
-                    {activeStep === 'global_action' && (
-                        <div className="space-y-4 text-center py-10">
-                            {profile.global_action.affected ? (
-                                <div className="max-w-md mx-auto space-y-4">
-                                    <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto text-primary">
-                                        <Check className="h-8 w-8" />
-                                    </div>
-                                    <h3 className="text-lg font-semibold">Included in Global Action</h3>
-                                    <p className="text-sm text-muted-foreground">
-                                        Channels using this profile will be processed during the global automation cycle. This includes full UDI refreshes, stream re-discovery, and forced quality checks across all playlists.
-                                    </p>
-                                </div>
-                            ) : (
-                                <div className="max-w-md mx-auto space-y-4 grayscale opacity-60">
-                                    <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto">
-                                        <AlertCircle className="h-8 w-8" />
-                                    </div>
-                                    <h3 className="text-lg font-semibold">Excluded from Global Action</h3>
-                                    <p className="text-sm text-muted-foreground">
-                                        This profile is manual-only for global cycles. It will only update when specific playlist changes are detected or if triggered manually.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    )}
                 </CardContent>
             </Card>
 

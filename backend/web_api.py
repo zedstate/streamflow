@@ -798,11 +798,9 @@ def add_bulk_regex_patterns():
                             if isinstance(p, dict):
                                 normalized_existing.append(p)
                             else:
-                                # Legacy string in new format (shouldn't happen but be safe)
                                 normalized_existing.append({
                                     "pattern": p,
-                                    "m3u_accounts": existing_pattern_data.get('m3u_accounts'),
-                                    "priority": 0
+                                    "m3u_accounts": existing_pattern_data.get('m3u_accounts')
                                 })
                     else:
                         # Old format: regex list
@@ -811,19 +809,15 @@ def add_bulk_regex_patterns():
                         for p in old_regex:
                             normalized_existing.append({
                                 "pattern": p,
-                                "m3u_accounts": old_m3u_accounts,
-                                "priority": 0
+                                "m3u_accounts": old_m3u_accounts
                             })
                     
                     # Normalize new patterns to list of objects
                     normalized_new = []
                     for p in regex_patterns:
-                        # Use provided m3u_accounts or None (applies to all)
-                        # For bulk add, we default priority to 0
                         normalized_new.append({
                             "pattern": p,
-                            "m3u_accounts": m3u_accounts,
-                            "priority": 0
+                            "m3u_accounts": m3u_accounts
                         })
                     
                     # Merge patterns (avoid duplicates based on pattern string)
@@ -900,8 +894,7 @@ def update_global_automation_settings():
             
         manager = get_automation_config_manager()
         success = manager.update_global_settings(
-            regular_automation_enabled=data.get('regular_automation_enabled'),
-            global_action_enabled=data.get('global_action_enabled')
+            regular_automation_enabled=data.get('regular_automation_enabled')
         )
         
         if success:
@@ -1317,7 +1310,7 @@ def bulk_edit_regex_pattern():
                     # Fallback to old format
                     old_regex = existing_patterns.get('regex', [])
                     old_m3u_accounts = existing_patterns.get('m3u_accounts')
-                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts, "priority": 0} for p in old_regex]
+                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
                 
                 # Find and replace pattern
                 pattern_found = False
@@ -1328,22 +1321,19 @@ def bulk_edit_regex_pattern():
                     if isinstance(pattern_obj, dict):
                         pattern = pattern_obj.get("pattern", "")
                         pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
-                        pattern_priority = pattern_obj.get("priority", 0)
                     else:
                         # Legacy string format
                         pattern = pattern_obj
                         pattern_m3u_accounts = None
-                        pattern_priority = 0
                     
                     if pattern == old_pattern:
                         pattern_found = True
-                        # Update the pattern and optionally the m3u_accounts and priority
+                        # Update the pattern and optionally the m3u_accounts
                         # Only add if we haven't seen the new pattern yet (avoid duplicates)
                         if new_pattern not in seen_patterns:
                             updated_pattern = {
                                 "pattern": new_pattern,
-                                "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts,
-                                "priority": new_priority if new_priority is not None else pattern_priority
+                                "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts
                             }
                             updated_patterns.append(updated_pattern)
                             seen_patterns.add(new_pattern)
@@ -1352,8 +1342,7 @@ def bulk_edit_regex_pattern():
                         if pattern not in seen_patterns:
                             updated_patterns.append({
                                 "pattern": pattern,
-                                "m3u_accounts": pattern_m3u_accounts,
-                                "priority": pattern_priority
+                                "m3u_accounts": pattern_m3u_accounts
                             })
                             seen_patterns.add(pattern)
                 
@@ -3013,35 +3002,6 @@ def queue_all_channels():
         logger.error(f"Error queueing all channels: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/stream-checker/global-action', methods=['POST'])
-def trigger_global_action():
-    """Trigger a manual global action (Update M3U, Match streams, Check all channels).
-    
-    This performs a complete global action that:
-    1. Reloads enabled M3U accounts
-    2. Matches new streams with regex patterns
-    3. Checks every channel, bypassing 2-hour immunity
-    """
-    try:
-        service = get_stream_checker_service()
-        
-        if not service.running:
-            return jsonify({"error": "Stream checker service is not running"}), 400
-        
-        success = service.trigger_global_action()
-        
-        if success:
-            return jsonify({
-                "message": "Global action triggered successfully",
-                "status": "in_progress",
-                "description": "Update, Match, and Check all channels in progress"
-            })
-        else:
-            return jsonify({"error": "Failed to trigger global action"}), 500
-    
-    except Exception as e:
-        logger.error(f"Error triggering global action: {e}")
-        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
 # Scheduling API Endpoints

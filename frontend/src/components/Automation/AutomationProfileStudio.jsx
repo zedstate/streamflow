@@ -27,8 +27,7 @@ export default function AutomationProfileStudio() {
     const [selectedProfiles, setSelectedProfiles] = useState([])
     const [globalSettings, setGlobalSettings] = useState({
         regular_automation_enabled: false,
-        global_action_enabled: false,
-        global_schedule: { type: 'interval', value: 60 }
+        playlist_update_interval_minutes: { type: 'interval', value: 5 }
     })
 
     const { toast } = useToast()
@@ -49,8 +48,7 @@ export default function AutomationProfileStudio() {
             setProfiles(Object.values(profilesResponse.data))
             setGlobalSettings(globalSettingsResponse.data || {
                 regular_automation_enabled: false,
-                global_action_enabled: false,
-                global_schedule: { type: 'interval', value: 60 }
+                playlist_update_interval_minutes: { type: 'interval', value: 5 }
             })
         } catch (err) {
             console.error('Failed to load profiles:', err)
@@ -200,7 +198,6 @@ export default function AutomationProfileStudio() {
                                 <TableHead className="text-center">PL Update</TableHead>
                                 <TableHead className="text-center">Matching</TableHead>
                                 <TableHead className="text-center">Checking</TableHead>
-                                <TableHead className="text-center">Global</TableHead>
                                 <TableHead>Min Res</TableHead>
                                 <TableHead className="text-right">Actions</TableHead>
                             </TableRow>
@@ -232,11 +229,6 @@ export default function AutomationProfileStudio() {
                                     <TableCell className="text-center">
                                         <Badge variant={profile.stream_checking?.enabled ? "default" : "secondary"}>
                                             {profile.stream_checking?.enabled ? "Yes" : "No"}
-                                        </Badge>
-                                    </TableCell>
-                                    <TableCell className="text-center">
-                                        <Badge variant={profile.global_action?.affected ? "default" : "secondary"}>
-                                            {profile.global_action?.affected ? "Yes" : "No"}
                                         </Badge>
                                     </TableCell>
                                     <TableCell>
