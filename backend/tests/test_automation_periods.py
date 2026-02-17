@@ -24,9 +24,7 @@ def test_automation_periods_creation():
         # Override config paths
         import automation_config_manager
         original_config_dir = automation_config_manager.CONFIG_DIR
-        original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
-        automation_config_manager.CONFIG_DIR = Path(tmpdir)
         automation_config_manager.CONFIG_DIR = Path(tmpdir)
         automation_config_manager.AUTOMATION_CONFIG_FILE = Path(tmpdir) / 'test_automation_config.json'
         
@@ -74,7 +72,6 @@ def test_automation_periods_creation():
             
         finally:
             # Restore original config
-            automation_config_manager.CONFIG_DIR = original_config_dir
             automation_config_manager.CONFIG_DIR = original_config_dir
             automation_config_manager.AUTOMATION_CONFIG_FILE = original_config_file
 

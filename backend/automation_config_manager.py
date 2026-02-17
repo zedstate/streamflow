@@ -74,8 +74,11 @@ class AutomationConfigManager:
                             self._config["automation_periods"] = {}
                         if "channel_period_assignments" not in self._config:
                             self._config["channel_period_assignments"] = {}
-                            
-                        logger.info(f"Loaded {len(self._config.get('profiles', {}))} automation profiles and {len(self._config.get('automation_periods', {}))} automation periods")
+                        
+                        logger.info(
+                            f"Loaded {len(self._config.get('profiles', {}))} automation profiles "
+                            f"and {len(self._config.get('automation_periods', {}))} automation periods"
+                        )
                 else:
                     logger.info("No automation config found, initializing defaults")
                     self._create_default_profile()

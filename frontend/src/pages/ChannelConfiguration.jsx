@@ -588,7 +588,7 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
             <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50 text-muted-foreground" />
             <p className="text-muted-foreground mb-4">No automation periods available</p>
             <p className="text-sm text-muted-foreground">
-              Create automation periods in Settings &gt; Automation &gt; Periods first
+              Create automation periods in Settings → Automation → Periods first
             </p>
           </div>
         ) : (
