@@ -191,6 +191,15 @@ export default function AutomationPeriods() {
                       <Badge variant="secondary">
                         {period.channel_count || 0} channel{period.channel_count !== 1 ? 's' : ''}
                       </Badge>
+                      {period.channel_count > 0 ? (
+                        <Badge variant="default" className="bg-green-600 hover:bg-green-700">
+                          Enabled
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-muted-foreground">
+                          Disabled
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
