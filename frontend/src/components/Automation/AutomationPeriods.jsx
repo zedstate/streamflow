@@ -53,7 +53,10 @@ export default function AutomationPeriods() {
     setCurrentPeriod({
       name: '',
       schedule: { type: 'interval', value: 60 },
-      profile_id: profiles.length > 0 ? profiles[0].id : ''
+  const handleCreate = () => {
+    setCurrentPeriod({
+      name: '',
+      schedule: { type: 'interval', value: 60 }
     })
     setEditDialogOpen(true)
   }
@@ -68,15 +71,6 @@ export default function AutomationPeriods() {
       toast({
         title: "Validation Error",
         description: "Period name is required",
-        variant: "destructive"
-      })
-      return
-    }
-
-    if (!currentPeriod.profile_id) {
-      toast({
-        title: "Validation Error",
-        description: "Profile selection is required",
         variant: "destructive"
       })
       return
@@ -168,7 +162,7 @@ export default function AutomationPeriods() {
             <div>
               <CardTitle>Automation Periods</CardTitle>
               <CardDescription>
-                Create and manage automation periods with different schedules and profiles
+                Create and manage automation periods with different schedules. Profiles are assigned per-channel.
               </CardDescription>
             </div>
             <Button onClick={handleCreate}>
@@ -207,9 +201,6 @@ export default function AutomationPeriods() {
                         <Clock className="h-4 w-4" />
                         {formatSchedule(period.schedule)}
                       </div>
-                      <div>
-                        Profile: {getProfileName(period.profile_id)}
-                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -243,7 +234,7 @@ export default function AutomationPeriods() {
               {currentPeriod?.id ? 'Edit Automation Period' : 'Create Automation Period'}
             </DialogTitle>
             <DialogDescription>
-              Configure the schedule and profile for this automation period
+              Configure the schedule for this automation period. Profiles will be assigned per-channel.
             </DialogDescription>
           </DialogHeader>
 
@@ -258,26 +249,6 @@ export default function AutomationPeriods() {
                   value={currentPeriod.name}
                   onChange={(e) => setCurrentPeriod({ ...currentPeriod, name: e.target.value })}
                 />
-              </div>
-
-              {/* Profile Selection */}
-              <div className="space-y-2">
-                <Label htmlFor="profile">Automation Profile</Label>
-                <Select
-                  value={currentPeriod.profile_id}
-                  onValueChange={(value) => setCurrentPeriod({ ...currentPeriod, profile_id: value })}
-                >
-                  <SelectTrigger id="profile">
-                    <SelectValue placeholder="Select a profile" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {profiles.map((profile) => (
-                      <SelectItem key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
 
               {/* Schedule Configuration */}

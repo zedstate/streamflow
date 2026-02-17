@@ -46,8 +46,8 @@ class AutomationConfigManager:
             "profiles": {},  # ID -> Profile Dict
             "channel_assignments": {},  # Channel ID -> Profile ID (legacy, kept for backward compatibility)
             "group_assignments": {},     # Group ID -> Profile ID (legacy, kept for backward compatibility)
-            "automation_periods": {},    # Period ID -> Period Dict (name, schedule, profile_id)
-            "channel_period_assignments": {}  # Channel ID -> List of Period IDs
+            "automation_periods": {},    # Period ID -> Period Dict (name, schedule) - NO profile_id
+            "channel_period_assignments": {}  # Channel ID -> Dict of {Period ID: Profile ID}
         }
         self._load_config()
         
@@ -361,25 +361,19 @@ class AutomationConfigManager:
         """Create a new automation period.
         
         Args:
-            period_data: Dict with keys: name, schedule, profile_id
+            period_data: Dict with keys: name, schedule
                 schedule format: {"type": "interval"/"cron", "value": int/"cron_expr"}
+                Note: profile_id is NOT stored in the period, it's per-channel
         
         Returns:
             Period ID if successful, None otherwise
         """
         with self._lock:
-            # Validate profile exists
-            profile_id = period_data.get("profile_id")
-            if profile_id and profile_id not in self._config["profiles"]:
-                logger.error(f"Cannot create period: profile {profile_id} does not exist")
-                return None
-            
             period_id = str(uuid.uuid4())
             new_period = {
                 "id": period_id,
                 "name": period_data.get("name", "New Period"),
-                "schedule": period_data.get("schedule", {"type": "interval", "value": 60}),
-                "profile_id": profile_id
+                "schedule": period_data.get("schedule", {"type": "interval", "value": 60})
             }
             self._config["automation_periods"][period_id] = new_period
             if self._save_config():
@@ -402,13 +396,7 @@ class AutomationConfigManager:
                 current["name"] = period_data["name"]
             if "schedule" in period_data:
                 current["schedule"] = period_data["schedule"]
-            if "profile_id" in period_data:
-                # Validate profile exists
-                profile_id = period_data["profile_id"]
-                if profile_id and profile_id not in self._config["profiles"]:
-                    logger.error(f"Cannot update period: profile {profile_id} does not exist")
-                    return False
-                current["profile_id"] = profile_id
+            # Note: profile_id is no longer stored in periods, it's per-channel
             
             logger.info(f"Updated automation period: {pid}")
             result = self._save_config()
@@ -426,10 +414,15 @@ class AutomationConfigManager:
             
             # Remove from all channel assignments
             for channel_id in list(self._config["channel_period_assignments"].keys()):
-                periods = self._config["channel_period_assignments"][channel_id]
-                if pid in periods:
-                    periods.remove(pid)
-                    if not periods:  # Remove channel entry if no periods left
+                period_assignments = self._config["channel_period_assignments"][channel_id]
+                if isinstance(period_assignments, dict) and pid in period_assignments:
+                    del period_assignments[pid]
+                    if not period_assignments:  # Remove channel entry if no periods left
+                        del self._config["channel_period_assignments"][channel_id]
+                elif isinstance(period_assignments, list) and pid in period_assignments:
+                    # Handle old format for backwards compatibility
+                    period_assignments.remove(pid)
+                    if not period_assignments:
                         del self._config["channel_period_assignments"][channel_id]
             
             del self._config["automation_periods"][pid]
@@ -441,12 +434,13 @@ class AutomationConfigManager:
 
     # --- Period-Channel Assignments ---
 
-    def assign_period_to_channels(self, period_id: str, channel_ids: List[int], replace: bool = False) -> bool:
-        """Assign an automation period to multiple channels.
+    def assign_period_to_channels(self, period_id: str, channel_ids: List[int], profile_id: str, replace: bool = False) -> bool:
+        """Assign an automation period to multiple channels with a specific profile.
         
         Args:
             period_id: ID of the period to assign
             channel_ids: List of channel IDs
+            profile_id: ID of the profile to use for this period on these channels
             replace: If True, replace all existing periods for these channels. If False, add to existing.
         
         Returns:
@@ -458,25 +452,33 @@ class AutomationConfigManager:
                 logger.error(f"Period {pid} not found")
                 return False
             
+            # Validate profile exists
+            if profile_id not in self._config["profiles"]:
+                logger.error(f"Profile {profile_id} not found")
+                return False
+            
             changes_made = False
             for cid_raw in channel_ids:
                 cid = int(cid_raw)
                 
                 if replace:
                     # Replace all periods for this channel
-                    self._config["channel_period_assignments"][cid] = [pid]
+                    self._config["channel_period_assignments"][cid] = {pid: profile_id}
                     changes_made = True
                 else:
-                    # Add to existing periods
+                    # Add to existing periods (or create new dict)
                     if cid not in self._config["channel_period_assignments"]:
-                        self._config["channel_period_assignments"][cid] = []
+                        self._config["channel_period_assignments"][cid] = {}
+                    elif isinstance(self._config["channel_period_assignments"][cid], list):
+                        # Migrate old list format to new dict format
+                        self._config["channel_period_assignments"][cid] = {}
                     
-                    if pid not in self._config["channel_period_assignments"][cid]:
-                        self._config["channel_period_assignments"][cid].append(pid)
-                        changes_made = True
+                    # Add/update the period-profile mapping
+                    self._config["channel_period_assignments"][cid][pid] = profile_id
+                    changes_made = True
             
             if changes_made:
-                logger.info(f"Assigned period {pid} to {len(channel_ids)} channels")
+                logger.info(f"Assigned period {pid} with profile {profile_id} to {len(channel_ids)} channels")
                 return self._save_config()
             return True
 
@@ -489,11 +491,17 @@ class AutomationConfigManager:
             for cid_raw in channel_ids:
                 cid = int(cid_raw)
                 if cid in self._config["channel_period_assignments"]:
-                    periods = self._config["channel_period_assignments"][cid]
-                    if pid in periods:
-                        periods.remove(pid)
+                    period_assignments = self._config["channel_period_assignments"][cid]
+                    if isinstance(period_assignments, dict) and pid in period_assignments:
+                        del period_assignments[pid]
                         changes_made = True
-                        if not periods:  # Remove channel entry if no periods left
+                        if not period_assignments:  # Remove channel entry if no periods left
+                            del self._config["channel_period_assignments"][cid]
+                    elif isinstance(period_assignments, list) and pid in period_assignments:
+                        # Handle old format
+                        period_assignments.remove(pid)
+                        changes_made = True
+                        if not period_assignments:
                             del self._config["channel_period_assignments"][cid]
             
             if changes_made:
@@ -501,18 +509,31 @@ class AutomationConfigManager:
                 return self._save_config()
             return True
 
-    def get_channel_periods(self, channel_id: int) -> List[str]:
-        """Get list of period IDs assigned to a channel."""
+    def get_channel_periods(self, channel_id: int) -> Dict[str, str]:
+        """Get dict of period IDs to profile IDs assigned to a channel.
+        
+        Returns:
+            Dict mapping period_id -> profile_id
+        """
         with self._lock:
-            return self._config["channel_period_assignments"].get(int(channel_id), []).copy()
+            assignments = self._config["channel_period_assignments"].get(int(channel_id), {})
+            if isinstance(assignments, dict):
+                return assignments.copy()
+            elif isinstance(assignments, list):
+                # Old format - migrate to new format (use default profile or empty)
+                return {pid: "" for pid in assignments}
+            return {}
 
     def get_period_channels(self, period_id: str) -> List[int]:
         """Get list of channel IDs assigned to a period."""
         with self._lock:
             pid = str(period_id)
             channels = []
-            for channel_id, periods in self._config["channel_period_assignments"].items():
-                if pid in periods:
+            for channel_id, period_assignments in self._config["channel_period_assignments"].items():
+                if isinstance(period_assignments, dict) and pid in period_assignments:
+                    channels.append(channel_id)
+                elif isinstance(period_assignments, list) and pid in period_assignments:
+                    # Handle old format
                     channels.append(channel_id)
             return channels
 
@@ -546,21 +567,24 @@ class AutomationConfigManager:
     def get_active_periods_for_channel(self, channel_id: int) -> List[Dict]:
         """Get all active automation periods for a channel.
         
-        Returns list of period dicts with full details including the profile.
+        Returns list of period dicts with full details including the profile for that channel.
         """
         with self._lock:
-            period_ids = self.get_channel_periods(channel_id)
+            period_to_profile = self.get_channel_periods(channel_id)  # Now returns dict
             active_periods = []
             
-            for pid in period_ids:
+            for pid, profile_id in period_to_profile.items():
                 period = self.get_period(pid)
                 if period and self.is_period_active_now(pid):
-                    # Add the full profile data to the period
-                    profile_id = period.get("profile_id")
+                    # Add the full profile data to the period (channel-specific profile)
+                    period_with_profile = period.copy()
                     if profile_id:
-                        period_with_profile = period.copy()
                         period_with_profile["profile"] = self.get_profile(profile_id)
-                        active_periods.append(period_with_profile)
+                        period_with_profile["profile_id"] = profile_id
+                    else:
+                        period_with_profile["profile"] = None
+                        period_with_profile["profile_id"] = None
+                    active_periods.append(period_with_profile)
             
             return active_periods
 

@@ -3960,13 +3960,11 @@ def handle_automation_periods():
             if not data:
                 return jsonify({"error": "No data provided"}), 400
                 
-            # Validate required fields
+            # Validate required fields (profile_id is no longer required here)
             if 'name' not in data:
                 return jsonify({"error": "Period name is required"}), 400
             if 'schedule' not in data:
                 return jsonify({"error": "Schedule is required"}), 400
-            if 'profile_id' not in data:
-                return jsonify({"error": "Profile ID is required"}), 400
                 
             period_id = automation_config.create_period(data)
             if period_id:
@@ -4022,20 +4020,23 @@ def handle_automation_period(period_id):
 @app.route('/api/automation/periods/<period_id>/assign-channels', methods=['POST'])
 @log_function_call
 def assign_period_to_channels(period_id):
-    """Assign an automation period to multiple channels."""
+    """Assign an automation period to multiple channels with a profile."""
     try:
         automation_config = get_automation_config_manager()
         data = request.json
         
         channel_ids = data.get('channel_ids')
+        profile_id = data.get('profile_id')  # Now required
         replace = data.get('replace', False)  # If True, replace existing periods
         
         if not channel_ids or not isinstance(channel_ids, list):
             return jsonify({"error": "channel_ids list is required"}), 400
+        if not profile_id:
+            return jsonify({"error": "profile_id is required"}), 400
             
-        if automation_config.assign_period_to_channels(period_id, channel_ids, replace):
+        if automation_config.assign_period_to_channels(period_id, channel_ids, profile_id, replace):
             return jsonify({
-                "message": f"Period {period_id} assigned to {len(channel_ids)} channels",
+                "message": f"Period {period_id} with profile {profile_id} assigned to {len(channel_ids)} channels",
                 "channel_ids": channel_ids
             }), 200
         else:
@@ -4136,28 +4137,46 @@ def get_channel_automation_periods(channel_id):
 @app.route('/api/channels/batch/assign-periods', methods=['POST'])
 @log_function_call
 def batch_assign_periods_to_channels():
-    """Batch assign automation periods to multiple channels."""
+    """Batch assign automation periods to multiple channels with profiles.
+    
+    Expects format:
+    {
+        "channel_ids": [1, 2, 3],
+        "period_assignments": [
+            {"period_id": "period1", "profile_id": "profile1"},
+            {"period_id": "period2", "profile_id": "profile2"}
+        ],
+        "replace": false
+    }
+    """
     try:
         automation_config = get_automation_config_manager()
         data = request.json
         
         channel_ids = data.get('channel_ids')
-        period_ids = data.get('period_ids')
+        period_assignments = data.get('period_assignments')
         replace = data.get('replace', False)
         
         if not channel_ids or not isinstance(channel_ids, list):
             return jsonify({"error": "channel_ids list is required"}), 400
-        if not period_ids or not isinstance(period_ids, list):
-            return jsonify({"error": "period_ids list is required"}), 400
+        if not period_assignments or not isinstance(period_assignments, list):
+            return jsonify({"error": "period_assignments list is required"}), 400
         
-        # Assign each period to all channels
-        for pid in period_ids:
-            automation_config.assign_period_to_channels(pid, channel_ids, replace)
+        # Validate period_assignments format
+        for assignment in period_assignments:
+            if 'period_id' not in assignment or 'profile_id' not in assignment:
+                return jsonify({"error": "Each period assignment must have period_id and profile_id"}), 400
+        
+        # Assign each period-profile pair to all channels
+        for i, assignment in enumerate(period_assignments):
+            pid = assignment['period_id']
+            profile_id = assignment['profile_id']
             # Only the first period should replace if replace=True
-            replace = False
+            should_replace = replace and i == 0
+            automation_config.assign_period_to_channels(pid, channel_ids, profile_id, should_replace)
         
         return jsonify({
-            "message": f"Assigned {len(period_ids)} periods to {len(channel_ids)} channels"
+            "message": f"Assigned {len(period_assignments)} period-profile pairs to {len(channel_ids)} channels"
         }), 200
         
     except Exception as e:

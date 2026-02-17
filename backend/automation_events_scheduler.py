@@ -124,15 +124,30 @@ class AutomationEventsScheduler:
         for period in all_periods:
             period_id = period.get('id')
             period_name = period.get('name', 'Unknown')
-            profile_id = period.get('profile_id')
             
-            # Get profile name
-            profile = automation_config.get_profile(profile_id)
-            profile_name = profile.get('name', 'Unknown') if profile else 'Unknown'
-            
-            # Get channels assigned to this period
+            # Get channels assigned to this period (now returns dict of channel_id -> profile_id)
             channels = automation_config.get_period_channels(period_id)
             channel_count = len(channels)
+            
+            if channel_count == 0:
+                continue  # Skip periods with no channels assigned
+            
+            # Group channels by profile to show which profiles will be used
+            profile_counts = {}
+            for channel_id in channels:
+                period_to_profile = automation_config.get_channel_periods(channel_id)
+                profile_id = period_to_profile.get(period_id)
+                if profile_id:
+                    profile_counts[profile_id] = profile_counts.get(profile_id, 0) + 1
+            
+            # Get profile names (could be multiple profiles for same period)
+            profile_names = []
+            for profile_id, count in profile_counts.items():
+                profile = automation_config.get_profile(profile_id)
+                if profile:
+                    profile_names.append(f"{profile.get('name', 'Unknown')} ({count}ch)")
+            
+            profile_display = ", ".join(profile_names) if profile_names else "No Profile"
             
             # Calculate events for this period
             schedule = period.get('schedule', {})
@@ -156,8 +171,7 @@ class AutomationEventsScheduler:
                                 'time': temp_time.isoformat(),
                                 'period_id': period_id,
                                 'period_name': period_name,
-                                'profile_id': profile_id,
-                                'profile_name': profile_name,
+                                'profile_display': profile_display,
                                 'channel_count': channel_count,
                                 'schedule_type': 'interval',
                                 'schedule_display': f'Every {minutes} minutes'
@@ -173,8 +187,7 @@ class AutomationEventsScheduler:
                                     'time': temp_time.isoformat(),
                                     'period_id': period_id,
                                     'period_name': period_name,
-                                    'profile_id': profile_id,
-                                    'profile_name': profile_name,
+                                    'profile_display': profile_display,
                                     'channel_count': channel_count,
                                     'schedule_type': 'cron',
                                     'schedule_display': f'Cron: {schedule_value}'
