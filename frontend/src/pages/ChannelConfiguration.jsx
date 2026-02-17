@@ -597,7 +597,10 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
       if (periodId in newAssignments) {
         delete newAssignments[periodId]
       } else {
-        newAssignments[periodId] = allProfiles.length > 0 ? allProfiles[0].id : ''
+        // Only add if profiles are available
+        if (allProfiles.length > 0) {
+          newAssignments[periodId] = allProfiles[0].id
+        }
       }
       return newAssignments
     })
@@ -752,7 +755,7 @@ function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, chan
   }
 
   const handleSave = async () => {
-    const selectedPeriods = Object.entries(periodAssignments).filter(([_, profileId]) => profileId)
+    const selectedPeriods = Object.entries(periodAssignments).filter(([_, profileId]) => profileId && profileId !== '')
     
     if (selectedPeriods.length === 0) {
       toast({
@@ -799,7 +802,10 @@ function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, chan
       if (periodId in newAssignments) {
         delete newAssignments[periodId]
       } else {
-        newAssignments[periodId] = allProfiles.length > 0 ? allProfiles[0].id : ''
+        // Only add if profiles are available
+        if (allProfiles.length > 0) {
+          newAssignments[periodId] = allProfiles[0].id
+        }
       }
       return newAssignments
     })
