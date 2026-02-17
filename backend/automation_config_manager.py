@@ -384,6 +384,7 @@ class AutomationConfigManager:
             self._config["automation_periods"][period_id] = new_period
             if self._save_config():
                 logger.info(f"Created automation period: {period_id} - {new_period['name']}")
+                self._invalidate_events_cache()
                 return period_id
             return None
 
@@ -410,7 +411,10 @@ class AutomationConfigManager:
                 current["profile_id"] = profile_id
             
             logger.info(f"Updated automation period: {pid}")
-            return self._save_config()
+            result = self._save_config()
+            if result:
+                self._invalidate_events_cache()
+            return result
 
     def delete_period(self, period_id: str) -> bool:
         """Delete an automation period and remove all channel assignments."""
@@ -430,7 +434,10 @@ class AutomationConfigManager:
             
             del self._config["automation_periods"][pid]
             logger.info(f"Deleted automation period: {pid}")
-            return self._save_config()
+            result = self._save_config()
+            if result:
+                self._invalidate_events_cache()
+            return result
 
     # --- Period-Channel Assignments ---
 
@@ -583,6 +590,16 @@ class AutomationConfigManager:
             
             # No automation periods assigned - channel does not participate in automation
             return None
+    
+    def _invalidate_events_cache(self):
+        """Invalidate the automation events cache when periods are modified."""
+        try:
+            from automation_events_scheduler import get_events_scheduler
+            scheduler = get_events_scheduler()
+            scheduler.invalidate_cache()
+            logger.debug("Invalidated automation events cache")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate events cache: {e}")
 
 # Singleton instance
 _automation_config_manager = None

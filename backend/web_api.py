@@ -4165,6 +4165,64 @@ def batch_assign_periods_to_channels():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== Automation Events API ====================
+# Calculate and retrieve upcoming automation events based on periods
+
+from automation_events_scheduler import get_events_scheduler
+
+
+@app.route('/api/automation/events/upcoming', methods=['GET'])
+@log_function_call
+def get_upcoming_automation_events():
+    """Get upcoming automation events based on configured periods.
+    
+    Query parameters:
+    - hours: Number of hours ahead to calculate (default: 24, max: 168)
+    - max_events: Maximum number of events to return (default: 100, max: 500)
+    - period_id: Filter by specific period ID
+    - force_refresh: Force cache refresh (true/false)
+    """
+    try:
+        events_scheduler = get_events_scheduler()
+        
+        # Parse query parameters
+        hours_ahead = min(int(request.args.get('hours', 24)), 168)  # Max 1 week
+        max_events = min(int(request.args.get('max_events', 100)), 500)
+        period_id_filter = request.args.get('period_id')
+        force_refresh = request.args.get('force_refresh', '').lower() == 'true'
+        
+        # Get cached or fresh events
+        result = events_scheduler.get_cached_events(hours_ahead, max_events, force_refresh)
+        
+        # Filter by period if requested
+        if period_id_filter:
+            result['events'] = [e for e in result['events'] if e.get('period_id') == period_id_filter]
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting upcoming automation events: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/events/invalidate-cache', methods=['POST'])
+@log_function_call
+def invalidate_automation_events_cache():
+    """Invalidate the automation events cache.
+    
+    This should be called whenever automation periods are modified.
+    """
+    try:
+        events_scheduler = get_events_scheduler()
+        events_scheduler.invalidate_cache()
+        
+        return jsonify({"message": "Cache invalidated successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error invalidating cache: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ==================== Stream Monitoring Session API ====================
 # Advanced stream monitoring with live quality tracking, reliability scoring,
 # and screenshot capture for event-based stream management

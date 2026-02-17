@@ -76,6 +76,15 @@ export const automationAPI = {
   getChannelPeriods: (channelId) => api.get(`/channels/${channelId}/automation-periods`),
   batchAssignPeriods: (channelIds, periodIds, replace = false) => 
     api.post('/channels/batch/assign-periods', { channel_ids: channelIds, period_ids: periodIds, replace }),
+  
+  // Automation Events
+  getUpcomingEvents: (hours = 24, maxEvents = 100, periodId = null, forceRefresh = false) => {
+    const params = new URLSearchParams({ hours: hours.toString(), max_events: maxEvents.toString() })
+    if (periodId) params.append('period_id', periodId)
+    if (forceRefresh) params.append('force_refresh', 'true')
+    return api.get(`/automation/events/upcoming?${params.toString()}`)
+  },
+  invalidateEventsCache: () => api.post('/automation/events/invalidate-cache'),
 };
 
 export const channelsAPI = {
