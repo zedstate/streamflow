@@ -2246,6 +2246,11 @@ class AutomatedStreamManager:
                 if p_id:
                     active_profile_ids.add(p_id)
             
+            if not active_profile_ids:
+                logger.info("No active automation profiles found among channels. Skipping cycle.")
+                self.last_playlist_update = datetime.now()
+                return
+            
             # Determine playlists to update
             playlists_to_update = set()
             update_all_playlists = False

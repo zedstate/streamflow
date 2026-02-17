@@ -394,10 +394,11 @@ class AutomationConfigManager:
     def get_group_assignment(self, group_id: int) -> Optional[str]:
         return self._config["group_assignments"].get(int(group_id))
 
-    def get_effective_profile_id(self, channel_id: int, group_id: Optional[int] = None) -> str:
+    def get_effective_profile_id(self, channel_id: int, group_id: Optional[int] = None) -> Optional[str]:
         """
         Determine the effective profile ID for a channel.
-        Precedence: Channel Assignment > Group Assignment > Default
+        Precedence: Channel Assignment > Group Assignment
+        Returns None if no profile is assigned.
         """
         with self._lock:
             # 1. Channel Assignment
@@ -408,16 +409,7 @@ class AutomationConfigManager:
             if group_id is not None and int(group_id) in self._config["group_assignments"]:
                 return self._config["group_assignments"][int(group_id)]
             
-            # 3. Default
-            # We assume there's always a default profile (created in __init__)
-            # If for some reason default is deleted, we might return None or a fallback
-            if "default" in self._config["profiles"]:
-                return "default"
-            
-            # Fallback if even default is gone (shouldn't happen)
-            if self._config["profiles"]:
-                return list(self._config["profiles"].keys())[0]
-            
+            # No assignment
             return None
 
     def get_effective_profile(self, channel_id: int, group_id: Optional[int] = None) -> Optional[Dict]:
