@@ -98,7 +98,6 @@ class StreamCheckConfig:
             'auto_m3u_updates': True,  # Automatically refresh M3U playlists
             'auto_stream_matching': True,  # Automatically match streams to channels via regex
             'auto_quality_checking': True,  # Automatically check stream quality
-            'scheduled_global_action': False,  # Run scheduled global actions (update + match + check all)
             'remove_non_matching_streams': False  # Remove streams from channels if they no longer match regex
         },
         'global_check_schedule': {
@@ -197,8 +196,7 @@ class StreamCheckConfig:
                             config['automation_controls'] = {
                                 'auto_m3u_updates': True,
                                 'auto_stream_matching': True,
-                                'auto_quality_checking': True,
-                                'scheduled_global_action': False
+                                'auto_quality_checking': True
                             }
                         elif pipeline_mode == 'pipeline_1_5':
                             config['automation_controls'] = {
@@ -878,8 +876,6 @@ class StreamCheckerService:
         
         self.running = False
         self.checking = False
-        self.global_action_in_progress = False
-        self.last_global_check = None
         self.start_time = datetime.now()
         self.worker_thread = None
         self.scheduler_thread = None
@@ -990,80 +986,15 @@ class StreamCheckerService:
                 if triggered:
                     self.check_trigger.clear()
                     # Only process channel queueing if this was a real M3U update trigger
-                    # (not a config change wake-up) AND no global action is in progress
+                    # (not a config change wake-up)
                     if not self.config_changed.is_set():
-                        if self.global_action_in_progress:
-                            logger.info("Skipping channel queueing - global action in progress")
-                        else:
-                            # Call _queue_updated_channels() directly - it handles pipeline mode checking internally
-                            self._queue_updated_channels()
+                        # Call _queue_updated_channels() directly - it handles pipeline mode checking internally
+                        self._queue_updated_channels()
                 
                 # Check if config was changed
                 if self.config_changed.is_set():
                     self.config_changed.clear()
                     logger.info("Configuration change detected, applying new settings immediately")
-                
-                # Check if it's time for a global check (checked on every iteration)
-                now = datetime.now()
-                should_run = False
-                
-                # Get schedule from config
-                try:
-                    from automation_config_manager import get_automation_config_manager
-                    config_manager = get_automation_config_manager()
-                    settings = config_manager.get_global_settings()
-                    schedule = settings.get('global_schedule', {'type': 'interval', 'value': 60})
-                    
-                    if schedule.get('type') == 'cron' and CRONITER_AVAILABLE:
-                        cron_expression = schedule.get('value', '0 * * * *')
-                        if croniter.is_valid(cron_expression):
-                            # Check if we just passed a cron trigger time
-                            # We check if the previous run (or start time) + next scheduled time <= now
-                            # But standard way is to check if a trigger happened between last check and now.
-                            # Since we check every second, we can just check if current time matches.
-                            # better: check if next trigger from last_global_check is in the past
-                            
-                            reference_time = self.last_global_check or self.start_time
-                            iter = croniter(cron_expression, reference_time)
-                            next_trigger = iter.get_next(datetime)
-                            
-                            if next_trigger <= now:
-                                should_run = True
-                                logger.info(f"Global schedule trigger (Cron: {cron_expression}) - Next: {next_trigger}")
-                    elif schedule.get('type') == 'interval':
-                        # Interval in minutes
-                        minutes = int(schedule.get('value', 60))
-                        # Avoid 0 or negative intervals
-                        if minutes < 1: minutes = 60
-                        
-                        if self.last_global_check is None:
-                            # For interval, we might want to respect time since start
-                            if (now - self.start_time).total_seconds() > (minutes * 60):
-                                should_run = True
-                        else:
-                            if (now - self.last_global_check).total_seconds() > (minutes * 60):
-                                should_run = True
-                except Exception as e:
-                    logger.error(f"Error checking schedule: {e}")
-                    # Fallback to 60 minutes
-                    if self.last_global_check and (now - self.last_global_check).total_seconds() > 3600:
-                         should_run = True
-                
-                if should_run and not self.global_action_in_progress:
-                    # Check if queue processing is active or batch is in progress to avoid overlap
-                    # We want to wait until the current processing batch completes
-                    if not self.check_queue.is_empty() or self.batch_start_time is not None:
-                        logger.info("Skipping global check interval - regular queue processing or batch still in progress")
-                        should_run = False
-                        
-                    if should_run:
-                        # Double check we haven't run very recently (debounce 1 min)
-                        if self.last_global_check and (now - self.last_global_check).total_seconds() < 60:
-                            should_run = False
-                        else:
-                            logger.info(f"Global schedule triggered")
-                            # Launch global action in separate thread to not block scheduler
-                            threading.Thread(target=self._perform_global_action, daemon=True).start()
                 
             except Exception as e:
                 logger.error(f"Error in scheduler loop: {e}", exc_info=True)
@@ -1077,7 +1008,6 @@ class StreamCheckerService:
         - Disabled: Skip all automation
         - Pipeline 1/1.5: Queue channels for checking
         - Pipeline 2/2.5: Skip checking (only update and match)
-        - Pipeline 3: Skip checking (only scheduled global actions)
         """
         # Check if auto quality checking is enabled (considers both pipeline mode and individual controls)
         if not self.config.is_auto_quality_checking_enabled():
@@ -1100,101 +1030,6 @@ class StreamCheckerService:
             logger.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking")
         else:
             logger.debug("No channels need checking")
-    
-    def _check_global_schedule(self):
-        """Check if it's time for a scheduled global action.
-        
-        Uses cron expression to determine when to run the global action.
-        
-        On fresh start (no previous check recorded):
-        - Only runs if current time is within ±10 minutes of the next scheduled time
-        - Otherwise waits for the scheduled time to arrive
-        
-        On subsequent checks (previous check exists):
-        - Runs if the next scheduled time has passed since the last check
-        - Prevents duplicate runs by tracking the last check time
-        """
-        if not self.config.get('global_check_schedule.enabled', True):
-            logger.debug("Global check schedule is disabled")
-            return
-        
-        now = datetime.now()
-        
-        # Get cron expression, with backward compatibility for old config format
-        cron_expression = self.config.get('global_check_schedule.cron_expression')
-        if not cron_expression:
-            # Backward compatibility: convert old format to cron
-            cron_expression = self._convert_legacy_schedule_to_cron()
-        
-        try:
-            from croniter import croniter
-        except ImportError:
-            logger.error("croniter library not installed. Please install it with: pip install croniter")
-            return
-        
-        # Validate cron expression
-        if not croniter.is_valid(cron_expression):
-            logger.error(f"Invalid cron expression: {cron_expression}")
-            return
-        
-        last_global = self.update_tracker.get_last_global_check()
-        
-        # Calculate next scheduled time from now
-        cron = croniter(cron_expression, now)
-        next_scheduled_time = cron.get_next(datetime)
-        
-        # Calculate previous scheduled time (going back from now)
-        cron_prev = croniter(cron_expression, now)
-        prev_scheduled_time = cron_prev.get_prev(datetime)
-        
-        # On fresh start (no previous check), only run if within the scheduled time window (±10 minutes)
-        # Otherwise, do nothing and wait for the scheduled time to arrive
-        if last_global is None:
-            time_diff_minutes = abs((now - prev_scheduled_time).total_seconds() / 60)
-            if time_diff_minutes <= 10:
-                # We're within the scheduled window on fresh start, run the check
-                automation_controls = self.config.get('automation_controls', {})
-                logger.info(f"Starting scheduled global action (automation_controls: {automation_controls}, cron: {cron_expression})")
-                self._perform_global_action()
-                self.update_tracker.mark_global_check()
-            else:
-                # Fresh start but not within scheduled window, do nothing and wait
-                # The scheduler will check again later when the scheduled time arrives
-                logger.debug(f"Fresh start outside scheduled window (±10 min of {prev_scheduled_time.strftime('%Y-%m-%d %H:%M')}), waiting for scheduled time")
-            return
-        
-        # Parse last check time
-        last_check_time = datetime.fromisoformat(last_global)
-        
-        # Check if we've passed the previous scheduled time since the last check
-        # This prevents running multiple times between scheduled intervals
-        if prev_scheduled_time > last_check_time:
-            # We've passed a scheduled time since the last check, so we should run
-            automation_controls = self.config.get('automation_controls', {})
-            logger.info(f"Starting scheduled global action (automation_controls: {automation_controls}, cron: {cron_expression})")
-            self._perform_global_action()
-            # Mark that global check has been initiated to prevent duplicate queueing
-            self.update_tracker.mark_global_check()
-    
-    def _convert_legacy_schedule_to_cron(self):
-        """Convert legacy schedule format (hour/minute/frequency) to cron expression.
-        
-        This provides backward compatibility for existing configurations.
-        """
-        frequency = self.config.get('global_check_schedule.frequency', 'daily')
-        hour = self.config.get('global_check_schedule.hour', 3)
-        minute = self.config.get('global_check_schedule.minute', 0)
-        
-        if frequency == 'monthly':
-            day_of_month = self.config.get('global_check_schedule.day_of_month', 1)
-            # Monthly on specific day: minute hour day * *
-            cron_expression = f"{minute} {hour} {day_of_month} * *"
-        else:
-            # Daily: minute hour * * *"
-            cron_expression = f"{minute} {hour} * * *"
-        
-        logger.info(f"Converted legacy schedule to cron: {cron_expression}")
-        return cron_expression
     
     def _queue_all_channels(self, force_check: bool = False):
         """Queue all channels for checking (global check).
@@ -1233,7 +1068,7 @@ class StreamCheckerService:
                 excluded_count = len(channel_ids) - len(filtered_channel_ids)
                 
                 if excluded_count > 0:
-                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level) from global action")
+                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level)")
                 
                 if not filtered_channel_ids:
                     logger.info("No channels with checking enabled to queue for global check")
@@ -3082,11 +2917,9 @@ class StreamCheckerService:
         progress = self.progress.get()
         
         # Stream checking mode is active when:
-        # - A global action is in progress, OR
         # - An individual channel is being checked, OR
         # - There are channels in the queue waiting to be checked
         stream_checking_mode = (
-            self.global_action_in_progress or 
             self.checking or 
             queue_status.get('queue_size', 0) > 0 or
             queue_status.get('in_progress', 0) > 0
@@ -3095,7 +2928,6 @@ class StreamCheckerService:
         return {
             'running': self.running,
             'checking': self.checking,
-            'global_action_in_progress': self.global_action_in_progress,
             'stream_checking_mode': stream_checking_mode,
             'enabled': self.config.get('enabled', True),
             'queue': queue_status,
@@ -3148,7 +2980,7 @@ class StreamCheckerService:
         This performs a targeted channel refresh for a single channel:
         - Identifies M3U accounts used by the channel
         - Refreshes playlists for accounts associated with the channel
-        - Clears dead streams for the specified channel to give them a second chance (like global action)
+        - Clears dead streams for the specified channel to give them a second chance
         - Re-matches and assigns streams (including previously dead ones) if matching_mode is enabled
         - Force checks all streams (bypasses 2-hour immunity) if checking_mode is enabled
         - Detects newly dead streams and marks them (if checking is enabled)
@@ -3586,25 +3418,6 @@ class StreamCheckerService:
         if 'queue' in updates and 'max_size' in updates['queue']:
             # Can't resize existing queue, but will apply on next restart
             logger.info("Queue max size updated, will apply on next restart")
-    
-    def trigger_global_action(self):
-        """Manually trigger a global action (Update, Match, Check all channels).
-        
-        This can be called at any time to perform a complete global action,
-        regardless of the scheduled time.
-        """
-        if not self.running:
-            logger.warning("Cannot trigger global action - service is not running")
-            return False
-        
-        logger.info("Manual global action triggered")
-        try:
-            self._perform_global_action()
-            self.update_tracker.mark_global_check()
-            return True
-        except Exception as e:
-            logger.error(f"Failed to trigger global action: {e}")
-            return False
 
 
 # Global service instance

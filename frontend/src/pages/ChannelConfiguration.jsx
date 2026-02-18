@@ -597,7 +597,10 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
       if (periodId in newAssignments) {
         delete newAssignments[periodId]
       } else {
-        newAssignments[periodId] = allProfiles.length > 0 ? allProfiles[0].id : ''
+        // Only add if profiles are available
+        if (allProfiles.length > 0) {
+          newAssignments[periodId] = allProfiles[0].id
+        }
       }
       return newAssignments
     })
@@ -706,6 +709,219 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
           >
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Batch Assign Periods Dialog - for assigning periods to multiple channels at once
+function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, channelsData, onSuccess }) {
+  const [allPeriods, setAllPeriods] = useState([])
+  const [allProfiles, setAllProfiles] = useState([])
+  const [periodAssignments, setPeriodAssignments] = useState({})  // {period_id: profile_id}
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    if (open) {
+      loadData()
+    }
+  }, [open])
+
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const [periodsResponse, profilesResponse] = await Promise.all([
+        automationAPI.getPeriods(),
+        automationAPI.getProfiles()
+      ])
+      setAllPeriods(periodsResponse.data || [])
+      setAllProfiles(profilesResponse.data || [])
+      // Start with empty assignments for batch operation
+      setPeriodAssignments({})
+    } catch (err) {
+      console.error('Failed to load data:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load periods and profiles",
+        variant: "destructive"
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    const selectedPeriods = Object.entries(periodAssignments).filter(([_, profileId]) => profileId && profileId !== '')
+    
+    if (selectedPeriods.length === 0) {
+      toast({
+        title: "No Periods Selected",
+        description: "Please select at least one period and assign a profile",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      setSaving(true)
+      
+      // Build period assignments array: [{period_id, profile_id}, ...]
+      const assignments = selectedPeriods.map(([periodId, profileId]) => ({
+        period_id: periodId,
+        profile_id: profileId
+      }))
+      
+      // Use batch assignment endpoint with replace=false to add to existing periods
+      await automationAPI.batchAssignPeriods(selectedChannelIds, assignments, false)
+      
+      toast({
+        title: "Success",
+        description: `Assigned ${selectedPeriods.length} period${selectedPeriods.length > 1 ? 's' : ''} to ${selectedChannelIds.length} channel${selectedChannelIds.length > 1 ? 's' : ''}`
+      })
+      
+      if (onSuccess) onSuccess()
+    } catch (err) {
+      console.error('Failed to save:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to assign periods",
+        variant: "destructive"
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const togglePeriod = (periodId) => {
+    setPeriodAssignments(prev => {
+      const newAssignments = { ...prev }
+      if (periodId in newAssignments) {
+        delete newAssignments[periodId]
+      } else {
+        // Only add if profiles are available
+        if (allProfiles.length > 0) {
+          newAssignments[periodId] = allProfiles[0].id
+        }
+      }
+      return newAssignments
+    })
+  }
+
+  const updateProfile = (periodId, profileId) => {
+    setPeriodAssignments(prev => ({
+      ...prev,
+      [periodId]: profileId
+    }))
+  }
+
+  const selectedChannelNames = channelsData
+    .filter(ch => selectedChannelIds.includes(ch.id))
+    .map(ch => ch.name)
+    .slice(0, 3)
+  const remainingCount = selectedChannelIds.length - 3
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Batch Assign Automation Periods</DialogTitle>
+          <DialogDescription>
+            Assign automation periods with profiles to {selectedChannelIds.length} selected channel{selectedChannelIds.length > 1 ? 's' : ''}
+            {selectedChannelNames.length > 0 && (
+              <span className="block mt-1 text-xs">
+                ({selectedChannelNames.join(', ')}{remainingCount > 0 ? ` and ${remainingCount} more` : ''})
+              </span>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : allPeriods.length === 0 ? (
+          <div className="text-center py-8">
+            <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50 text-muted-foreground" />
+            <p className="text-muted-foreground mb-4">No automation periods available</p>
+            <p className="text-sm text-muted-foreground">
+              Create automation periods in Settings → Automation → Periods first
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3 overflow-y-auto flex-1">
+            {allPeriods.map((period) => {
+              const isSelected = period.id in periodAssignments
+              const selectedProfile = periodAssignments[period.id]
+              
+              return (
+                <div
+                  key={period.id}
+                  className={`p-3 border rounded-lg transition-colors ${
+                    isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => togglePeriod(period.id)}
+                      className="mt-1"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium">{period.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {period.channel_count || 0} channel{period.channel_count !== 1 ? 's' : ''}
+                          </Badge>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {period.schedule?.type === 'interval'
+                            ? `Every ${period.schedule.value} minutes`
+                            : `Cron: ${period.schedule?.value || 'Not configured'}`}
+                        </div>
+                      </div>
+                      
+                      {isSelected && (
+                        <div className="pt-2 border-t">
+                          <Label className="text-xs text-muted-foreground mb-1 block">
+                            Profile for this period:
+                          </Label>
+                          <Select 
+                            value={selectedProfile} 
+                            onValueChange={(value) => updateProfile(period.id, value)}
+                          >
+                            <SelectTrigger className="h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {allProfiles.map((profile) => (
+                                <SelectItem key={profile.id} value={profile.id}>
+                                  {profile.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving || loading || Object.keys(periodAssignments).length === 0}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Assign to Channels
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1107,6 +1323,9 @@ export default function ChannelConfiguration() {
   // Delete confirmation dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
+  // Batch automation period assignment state
+  const [batchPeriodsDialogOpen, setBatchPeriodsDialogOpen] = useState(false)
+
   // Edit common regex dialog state
   const [editCommonDialogOpen, setEditCommonDialogOpen] = useState(false)
   const [commonPatterns, setCommonPatterns] = useState([])
@@ -1341,6 +1560,18 @@ export default function ChannelConfiguration() {
       setLoading(false)
       setAssignProfileId('') // Reset selection
     }
+  }
+
+  const handleBatchAssignPeriods = () => {
+    if (selectedChannels.size === 0) {
+      toast({
+        title: "No Channels Selected",
+        description: "Please select at least one channel",
+        variant: "destructive"
+      })
+      return
+    }
+    setBatchPeriodsDialogOpen(true)
   }
 
   const handleUpdateMatchSettings = async (channelId, settings) => {
@@ -2592,6 +2823,20 @@ export default function ChannelConfiguration() {
                           </SelectContent>
                         </Select>
                       </div>
+
+                      <div className="mx-2 h-6 w-px bg-border" />
+
+                      {/* Batch Automation Periods */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleBatchAssignPeriods}
+                        disabled={selectedChannels.size === 0}
+                      >
+                        <Clock className="h-4 w-4 mr-2" />
+                        Assign Periods
+                      </Button>
+
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -3678,6 +3923,19 @@ export default function ChannelConfiguration() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Batch Assign Automation Periods Dialog */}
+        <BatchAssignPeriodsDialog
+          open={batchPeriodsDialogOpen}
+          onOpenChange={setBatchPeriodsDialogOpen}
+          selectedChannelIds={Array.from(selectedChannels)}
+          channelsData={channels}
+          onSuccess={() => {
+            loadData()
+            setBatchPeriodsDialogOpen(false)
+          }}
+        />
+
         <MatchPreviewDialog
           open={previewResultsOpen}
           onOpenChange={setPreviewResultsOpen}
