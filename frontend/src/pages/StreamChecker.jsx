@@ -323,7 +323,20 @@ export default function StreamChecker() {
       {isChecking && totalBatch > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle>Batch Progress</CardTitle>
+            <div className="flex justify-between items-center">
+              <CardTitle>Batch Progress</CardTitle>
+              {status?.queue?.eta_seconds > 0 ? (
+                <span className="text-sm text-muted-foreground font-medium bg-secondary/50 px-2 py-1 rounded-md">
+                  ~{status.queue.eta_seconds > 60
+                    ? `${Math.floor(status.queue.eta_seconds / 60)}m ${status.queue.eta_seconds % 60}s`
+                    : `${status.queue.eta_seconds}s`} remaining
+                </span>
+              ) : (
+                <span className="text-sm text-muted-foreground font-medium bg-secondary/50 px-2 py-1 rounded-md animate-pulse">
+                  Calculating ETA...
+                </span>
+              )}
+            </div>
             <CardDescription>Checking {totalBatch} channels</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

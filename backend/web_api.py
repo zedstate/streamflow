@@ -2857,7 +2857,7 @@ def update_stream_checker_config():
                 if service.running:
                     service.stop()
                     logger.info("Stream checker service stopped (all automation disabled)")
-                if manager.running:
+                if manager.automation_running:
                     manager.stop_automation()
                     logger.info("Automation service stopped (all automation disabled)")
                 # Stop background processors
@@ -2871,10 +2871,10 @@ def update_stream_checker_config():
                     logger.info(f"Stream checker service auto-started after config update")
                 
                 # Only start automation service if regular automation is enabled
-                if regular_automation_enabled and not manager.running:
+                if regular_automation_enabled and not manager.automation_running:
                     manager.start_automation()
                     logger.info(f"Automation service auto-started after config update")
-                elif not regular_automation_enabled and manager.running:
+                elif not regular_automation_enabled and manager.automation_running:
                     # Don't auto-start if master switch is off, but also don't stop it
                     # (user might have it on for testing, we only stop via the master switch)
                     pass
@@ -3648,10 +3648,21 @@ def get_automation_status():
         thread_alive = manager.automation_thread is not None and manager.automation_thread.is_alive()
         is_running = thread_alive and manager.automation_running
         
+        # Aggregate logic for new Dashboard UI readouts
+        from automation_config_manager import get_automation_config_manager
+        config_manager = get_automation_config_manager()
+        profiles = config_manager.get_all_profiles()
+        
+        profiles_count = len(profiles)
+        # Verify if ANY profile has stream checking currently toggled 'on'
+        stream_checking_enabled = any(p.get("stream_checking", {}).get("enabled", False) for p in profiles)
+        
         return jsonify({
             "running": is_running,
             "thread_alive": thread_alive,
-            "last_playlist_update": manager.last_playlist_update.isoformat() if manager.last_playlist_update else None
+            "last_playlist_update": manager.last_playlist_update.isoformat() if manager.last_playlist_update else None,
+            "profiles_count": profiles_count,
+            "stream_checking_enabled": stream_checking_enabled
         }), 200
     
     except Exception as e:
@@ -3765,12 +3776,12 @@ def handle_automation_global_config():
                     
                     if new_regular_enabled:
                         # Start automation service if not already running
-                        if not manager.running:
+                        if not manager.automation_running:
                             manager.start_automation()
                             logger.info("Automation service started (Enable Regular Automation toggled ON)")
                     else:
                         # Stop automation service if running
-                        if manager.running:
+                        if manager.automation_running:
                             manager.stop_automation()
                             logger.info("Automation service stopped (Enable Regular Automation toggled OFF)")
                 
@@ -5112,16 +5123,14 @@ if __name__ == '__main__':
                 service = get_stream_checker_service()
                 automation_controls = service.config.get('automation_controls', {})
                 
-                # Check if any automation is enabled
-                any_automation_enabled = (
-                    automation_controls.get('auto_m3u_updates', True) or
-                    automation_controls.get('auto_stream_matching', True) or
-                    automation_controls.get('auto_quality_checking', True) or
-                    automation_controls.get('scheduled_global_action', False)
-                )
+                # Check the master switch for regular automation
+                from automation_config_manager import get_automation_config_manager
+                automation_config = get_automation_config_manager()
+                global_settings = automation_config.get_global_settings()
+                regular_automation_enabled = global_settings.get('regular_automation_enabled', False)
                 
-                if not any_automation_enabled:
-                    logger.info("Automation service is disabled (all automation controls disabled)")
+                if not regular_automation_enabled:
+                    logger.info("Automation service is disabled (regular_automation_enabled is False)")
                 else:
                     # Auto-start automation
                     manager.start_automation()

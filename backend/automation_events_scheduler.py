@@ -165,7 +165,10 @@ class AutomationEventsScheduler:
                 manager = get_automation_manager()
                 last_run = manager.period_last_run.get(period_id)
                 if last_run:
-                    base_time = datetime.fromisoformat(last_run)
+                    if isinstance(last_run, datetime):
+                        base_time = last_run
+                    else:
+                        base_time = datetime.fromisoformat(str(last_run))
             except Exception:
                 pass
 

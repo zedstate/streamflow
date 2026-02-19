@@ -959,8 +959,9 @@ class AutomatedStreamManager:
                 logger.warning(f"Failed to initialize dead streams tracker: {e}")
         
         self.running = False
+        self.state_file = CONFIG_DIR / "automation_state.json"
         self.last_playlist_update = None
-        self.period_last_run = {}  # Tracks last run time per period ID
+        self.period_last_run = self._load_state()  # Tracks last run time per period ID
         self.automation_start_time = None
         
         # Cache for M3U accounts to avoid redundant API calls within a single automation cycle
@@ -980,6 +981,43 @@ class AutomatedStreamManager:
         
         # Lock to prevent concurrent execution of heavy batch processes
         self._lock = threading.Lock()
+    
+    def _load_state(self) -> Dict[str, datetime]:
+        """Load persisted automation state from file."""
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, 'r') as f:
+                    state = json.load(f)
+                    # Convert stored ISO strings back to datetime objects
+                    loaded_runs = state.get('period_last_run', {})
+                    parsed_runs = {}
+                    for pid, iso_str in loaded_runs.items():
+                        try:
+                            parsed_runs[pid] = datetime.fromisoformat(iso_str)
+                        except (ValueError, TypeError):
+                            pass
+                    if parsed_runs:
+                        logger.info(f"Loaded {len(parsed_runs)} period last-run timestamps from state file")
+                    return parsed_runs
+            except (json.JSONDecodeError, FileNotFoundError):
+                logger.warning(f"Could not load state from {self.state_file}, starting fresh")
+        return {}
+
+    def _save_state(self):
+        """Save current automation state to file."""
+        try:
+            # Convert datetime objects to ISO strings for JSON serialization
+            serializable_runs = {
+                pid: dt.isoformat() 
+                for pid, dt in self.period_last_run.items() 
+                if isinstance(dt, datetime)
+            }
+            state = {'period_last_run': serializable_runs}
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save automation state: {e}")
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -2546,6 +2584,7 @@ class AutomatedStreamManager:
             # Keep legacy last_playlist_update synced for legacy backward compatibility if any
             if active_periods:
                 self.last_playlist_update = datetime.now()
+                self._save_state()
             
             logger.info("Automation cycle completed")
             

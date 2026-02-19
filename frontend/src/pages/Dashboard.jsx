@@ -366,18 +366,34 @@ export default function Dashboard() {
           <CardContent>
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between items-center">
-                <dt className="text-muted-foreground">Update Interval:</dt>
+                <dt className="text-muted-foreground">Active Profiles:</dt>
                 <dd>
                   <Badge variant="secondary">
-                    {status?.config?.playlist_update_interval_minutes ? `${status.config.playlist_update_interval_minutes}m` : 'N/A'}
+                    {status?.profiles_count || 0}
                   </Badge>
                 </dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-muted-foreground">M3U Accounts:</dt>
+                <dt className="text-muted-foreground">Scheduled Periods:</dt>
                 <dd>
                   <Badge variant="outline">
-                    {playlists.length}
+                    {periods.length || 0}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-muted-foreground">Stream Checking:</dt>
+                <dd>
+                  <Badge variant={status?.stream_checking_enabled ? "default" : "secondary"}>
+                    {status?.stream_checking_enabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-muted-foreground">Checker Concurrency:</dt>
+                <dd>
+                  <Badge variant={(streamCheckerStatus?.parallel?.max_workers || 0) > 0 ? "outline" : "secondary"}>
+                    {streamCheckerStatus?.parallel?.max_workers || 0} Workers
                   </Badge>
                 </dd>
               </div>
@@ -400,14 +416,6 @@ export default function Dashboard() {
                 </dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-muted-foreground">Active Workers:</dt>
-                <dd>
-                  <Badge variant={(streamCheckerStatus?.parallel?.max_workers || 0) > 0 ? "default" : "secondary"}>
-                    {streamCheckerStatus?.parallel?.max_workers || 0}
-                  </Badge>
-                </dd>
-              </div>
-              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Total Processed:</dt>
                 <dd>
                   <Badge variant="outline">
@@ -417,7 +425,20 @@ export default function Dashboard() {
               </div>
               {queueSize > 0 && (
                 <div className="pt-2">
-                  <Label className="text-xs text-muted-foreground mb-2 block">Processing Progress</Label>
+                  <div className="flex justify-between items-center mb-2">
+                    <Label className="text-xs text-muted-foreground block">Processing Progress</Label>
+                    {streamCheckerStatus?.queue?.eta_seconds > 0 ? (
+                      <span className="text-xs text-muted-foreground">
+                        ~{streamCheckerStatus.queue.eta_seconds > 60
+                          ? `${Math.floor(streamCheckerStatus.queue.eta_seconds / 60)}m ${streamCheckerStatus.queue.eta_seconds % 60}s`
+                          : `${streamCheckerStatus.queue.eta_seconds}s`} remaining
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground animate-pulse text-primary/70">
+                        Calculating ETA...
+                      </span>
+                    )}
+                  </div>
                   <Progress value={queueProgress} className="h-2" />
                 </div>
               )}
@@ -432,9 +453,9 @@ export default function Dashboard() {
       {/* Available Playlists */}
       <Card>
         <CardHeader>
-          <CardTitle>Available Playlists</CardTitle>
+          <CardTitle>Global Playlist Visibility</CardTitle>
           <CardDescription>
-            Enable or disable M3U playlists for stream management
+            Toggle global extraction pooling for upstream API connections.
           </CardDescription>
         </CardHeader>
         <CardContent>

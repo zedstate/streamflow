@@ -637,11 +637,16 @@ class StreamCheckQueue:
     
     def __init__(self, max_size=1000):
         self.queue = queue.Queue(maxsize=max_size)
-        self.queued = set()  # Track channels already in queue
-        self.in_progress = set()
+        self.queued = {}  # Track channels already in queue dict(channel_id -> stream_count)
+        self.in_progress = {} # dict(channel_id -> stream_count)
         self.completed = set()
         self.failed = {}
         self.lock = threading.Lock()
+        
+        # ETA Tracking variables
+        import collections
+        self.stream_processing_times = collections.deque(maxlen=100)
+        self.channel_start_times = {}
         self.stats = {
             'total_queued': 0,
             'total_completed': 0,
@@ -650,7 +655,7 @@ class StreamCheckQueue:
             'queue_size': 0
         }
     
-    def add_channel(self, channel_id: int, priority: int = 0):
+    def add_channel(self, channel_id: int, priority: int = 0, stream_count: int = 1):
         """Add a channel to the checking queue."""
         with self.lock:
             # Check if this is a new "batch" starting (queue is completely empty and no workers are active)
@@ -666,7 +671,8 @@ class StreamCheckQueue:
             if channel_id not in self.queued and channel_id not in self.in_progress and channel_id not in self.completed:
                 try:
                     self.queue.put((priority, channel_id), block=False)
-                    self.queued.add(channel_id)
+                    # We default to 1 stream roughly if unknown, but add_channels will pass precise length 
+                    self.queued[channel_id] = stream_count
                     self.stats['total_queued'] += 1
                     self.stats['queue_size'] = self.queue.qsize()
                     logger.debug(f"Added channel {channel_id} to queue (priority: {priority})")
@@ -679,8 +685,13 @@ class StreamCheckQueue:
     def add_channels(self, channel_ids: List[int], priority: int = 0):
         """Add multiple channels to the queue."""
         added = 0
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
         for channel_id in channel_ids:
-            if self.add_channel(channel_id, priority):
+            channel = udi.get_channel_by_id(channel_id)
+            stream_count = len(channel.get('streams', [])) if channel else 1
+            if self.add_channel(channel_id, priority, stream_count=stream_count):
                 added += 1
         logger.info(f"Added {added}/{len(channel_ids)} channels to checking queue")
         return added
@@ -703,8 +714,9 @@ class StreamCheckQueue:
         try:
             priority, channel_id = self.queue.get(timeout=timeout)
             with self.lock:
-                self.queued.discard(channel_id)  # Remove from queued set
-                self.in_progress.add(channel_id)
+                stream_count = self.queued.pop(channel_id, 1)  # Remove from queued dict
+                self.in_progress[channel_id] = stream_count
+                self.channel_start_times[channel_id] = datetime.now()
                 self.stats['current_channel'] = channel_id
                 self.stats['queue_size'] = self.queue.qsize()
             return channel_id
@@ -714,8 +726,17 @@ class StreamCheckQueue:
     def mark_completed(self, channel_id: int):
         """Mark a channel check as completed."""
         with self.lock:
+            # Calculate stream processing duration
+            if channel_id in self.channel_start_times:
+                duration_sec = (datetime.now() - self.channel_start_times[channel_id]).total_seconds()
+                stream_count = self.in_progress.get(channel_id, 1)
+                if stream_count > 0:
+                    time_per_stream = duration_sec / stream_count
+                    self.stream_processing_times.append(time_per_stream)
+                del self.channel_start_times[channel_id]
+
             if channel_id in self.in_progress:
-                self.in_progress.remove(channel_id)
+                del self.in_progress[channel_id]
             self.completed.add(channel_id)
             self.stats['total_completed'] += 1
             if self.stats['current_channel'] == channel_id:
@@ -725,8 +746,11 @@ class StreamCheckQueue:
     def mark_failed(self, channel_id: int, error: str):
         """Mark a channel check as failed."""
         with self.lock:
+            if channel_id in self.channel_start_times:
+                del self.channel_start_times[channel_id]
+                
             if channel_id in self.in_progress:
-                self.in_progress.remove(channel_id)
+                del self.in_progress[channel_id]
             self.failed[channel_id] = {
                 'error': error,
                 'timestamp': datetime.now().isoformat()
@@ -745,6 +769,12 @@ class StreamCheckQueue:
                 'in_progress': len(self.in_progress),
                 'completed': len(self.completed),
                 'failed': len(self.failed),
+                
+                # Expose stream ETA calculations to API Response payload
+                'queued_streams_count': sum(self.queued.values()),
+                'in_progress_streams_count': sum(self.in_progress.values()),
+                'avg_stream_process_time_sec': sum(self.stream_processing_times) / len(self.stream_processing_times) if self.stream_processing_times else 0,
+                
                 'current_channel': self.stats['current_channel'],
                 'total_queued': self.stats['total_queued'],
                 'total_completed': self.stats['total_completed'],
@@ -3045,6 +3075,37 @@ class StreamCheckerService:
             queue_status['total_completed'] = sync_state['completed']
             queue_status['total_failed'] = sync_state['failed']
             queue_status['queue_size'] = queue_status['queued']
+            
+            # Map tracking stream properties back over queue_status for calculations
+            queue_status['queued_streams_count'] = sync_state.get('queued_streams_count', 0)
+            queue_status['in_progress_streams_count'] = sync_state.get('in_progress_streams_count', 0)
+            
+            # Use real queue average if available, otherwise 0
+            queue_status['avg_stream_process_time_sec'] = self.check_queue.get_status().get('avg_stream_process_time_sec', 0)
+            
+        # Mathematical ETA Calculation
+        avg_seconds = queue_status.get('avg_stream_process_time_sec', 0)
+        remaining_streams = queue_status.get('queued_streams_count', 0) + queue_status.get('in_progress_streams_count', 0)
+        
+        eta_seconds = 0
+        if avg_seconds > 0 and remaining_streams > 0:
+            if self.config.get('concurrent_streams.enabled', True):
+                # Parallel worker mapping applies strictly per-channel, not across the whole queue.
+                # E.g. If max_workers=5 and a channel has 1 stream, it processes sequentially.
+                # Therefore, ETA = (Remaining Channels) * (Average stream timing * Average streams per channel / max_workers)
+                
+                # To keep math accurate simply across total queued items vs average duration metric:
+                # We factor concurrency purely as a divisor of the remaining time, but cap the denominator
+                # at whatever typical 'max streams per channel' throughput averages to avoid over-optimistic calculations.
+                max_workers = max(1, self.config.get('concurrent_streams', {}).get('max_workers', 5))
+                
+                # Assume an average channel distributes its streams perfectly over max_workers:
+                eta_seconds = (avg_seconds * remaining_streams) / max_workers
+            else:
+                # Sequential Mode
+                eta_seconds = avg_seconds * remaining_streams
+                
+        queue_status['eta_seconds'] = int(eta_seconds)
         
         # Stream checking mode is active when:
         # - An individual channel is being checked, OR
@@ -3090,7 +3151,19 @@ class StreamCheckerService:
         # Ensure we can re-queue if it was completed (manual check overrides completion state)
         self.check_queue.remove_from_completed(channel_id)
         
-        return self.check_queue.add_channel(channel_id, priority)
+        # Look up stream count accurately to assist in ETA tracking calculations
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(channel_id)
+        stream_count = len(channel.get('streams', [])) if channel else 1
+        
+        # Inject exact array width
+        with self.check_queue.lock:
+            # We add manually here if not queued, or intercept normal logic.
+            # Best way without changing add_channel signature excessively is to manually modify:
+            pass # We'll modify add_channel signature to handle this cleanly.
+        
+        # Calling modified add_channel
+        return self.check_queue.add_channel(channel_id, priority, stream_count=stream_count)
     
     def queue_channels(self, channel_ids: List[int], priority: int = 10, force_check: bool = False) -> int:
         """Manually queue multiple channels for checking.
@@ -3130,21 +3203,42 @@ class StreamCheckerService:
             for channel_id in channel_ids:
                 self.update_tracker.mark_channel_for_force_check(channel_id)
                 
+        # Fast lookup precise stream counts
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        channel_streams = {}
+        total_streams = 0
+        for channel_id in channel_ids:
+            channel = udi.get_channel_by_id(channel_id)
+            stream_count = len(channel.get('streams', [])) if channel else 1
+            channel_streams[channel_id] = stream_count
+            total_streams += stream_count
+                
         with self.lock:
             self.sync_batch_state = {
                 'active': True,
                 'total_channels': len(channel_ids),
                 'completed': 0,
                 'failed': 0,
-                'in_progress': 0
+                'in_progress': 0,
+                'queued_streams_count': total_streams,
+                'in_progress_streams_count': 0
             }
             self.checking = True
         
         try:
             # Process each channel
             for channel_id in channel_ids:
+                stream_count = channel_streams.get(channel_id, 1)
+                
                 with self.lock:
                     self.sync_batch_state['in_progress'] = 1
+                    self.sync_batch_state['queued_streams_count'] = max(0, self.sync_batch_state['queued_streams_count'] - stream_count)
+                    self.sync_batch_state['in_progress_streams_count'] = stream_count
+                    
+                channel_start_time = datetime.now()
+                
                 try:
                     # Use concurrent method directly (synchronously) but skip batch changelog
                     # The caller (Automation Cycle) will handle reporting
@@ -3158,8 +3252,15 @@ class StreamCheckerService:
                     with self.lock:
                         self.sync_batch_state['failed'] += 1
                 finally:
+                    duration_sec = (datetime.now() - channel_start_time).total_seconds()
+                    if stream_count > 0:
+                        time_per_stream = duration_sec / stream_count
+                        with self.check_queue.lock:
+                            self.check_queue.stream_processing_times.append(time_per_stream)
+                            
                     with self.lock:
                         self.sync_batch_state['in_progress'] = 0
+                        self.sync_batch_state['in_progress_streams_count'] = 0
         finally:
             with self.lock:
                 self.sync_batch_state['active'] = False
