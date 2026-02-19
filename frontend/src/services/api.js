@@ -38,7 +38,7 @@ export const automationAPI = {
   getStatus: () => api.get('/automation/status'),
   start: () => api.post('/automation/start'),
   stop: () => api.post('/automation/stop'),
-  runCycle: () => api.post('/automation/trigger'),  // Trigger immediate automation cycle
+  runCycle: (data) => api.post('/automation/trigger', data),  // Trigger immediate automation cycle
   trigger: () => api.post('/automation/trigger'),
 
   // Configuration
@@ -68,15 +68,18 @@ export const automationAPI = {
   getPeriod: (periodId) => api.get(`/automation/periods/${periodId}`),
   updatePeriod: (periodId, period) => api.put(`/automation/periods/${periodId}`, period),
   deletePeriod: (periodId) => api.delete(`/automation/periods/${periodId}`),
-  assignPeriodToChannels: (periodId, channelIds, profileId, replace = false) => 
+  assignPeriodToChannels: (periodId, channelIds, profileId, replace = false) =>
     api.post(`/automation/periods/${periodId}/assign-channels`, { channel_ids: channelIds, profile_id: profileId, replace }),
-  removePeriodFromChannels: (periodId, channelIds) => 
+  removePeriodFromChannels: (periodId, channelIds) =>
     api.post(`/automation/periods/${periodId}/remove-channels`, { channel_ids: channelIds }),
   getPeriodChannels: (periodId) => api.get(`/automation/periods/${periodId}/channels`),
   getChannelPeriods: (channelId) => api.get(`/channels/${channelId}/automation-periods`),
-  batchAssignPeriods: (channelIds, periodAssignments, replace = false) => 
+  batchAssignPeriods: (channelIds, periodAssignments, replace = false) =>
     api.post('/channels/batch/assign-periods', { channel_ids: channelIds, period_assignments: periodAssignments, replace }),
-  
+
+  getBatchPeriodUsage: (channelIds) =>
+    api.post('/channels/batch/period-usage', { channel_ids: channelIds }),
+
   // Automation Events
   getUpcomingEvents: (hours = 24, maxEvents = 100, periodId = null, forceRefresh = false) => {
     const params = new URLSearchParams({ hours: hours.toString(), max_events: maxEvents.toString() })

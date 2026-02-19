@@ -479,7 +479,10 @@ class AutomationConfigManager:
             
             if changes_made:
                 logger.info(f"Assigned period {pid} with profile {profile_id} to {len(channel_ids)} channels")
-                return self._save_config()
+                result = self._save_config()
+                if result:
+                    self._invalidate_events_cache()
+                return result
             return True
 
     def remove_period_from_channels(self, period_id: str, channel_ids: List[int]) -> bool:
@@ -506,7 +509,10 @@ class AutomationConfigManager:
             
             if changes_made:
                 logger.info(f"Removed period {pid} from {len(channel_ids)} channels")
-                return self._save_config()
+                result = self._save_config()
+                if result:
+                    self._invalidate_events_cache()
+                return result
             return True
 
     def get_channel_periods(self, channel_id: int) -> Dict[str, str]:
@@ -596,18 +602,19 @@ class AutomationConfigManager:
         Legacy profile assignments are ignored.
         
         Returns:
-            Dict with 'source' ('period'), 'period_id', 'period_name', and 'profile' (the profile dict), or None
+            Dict with 'source' ('period'), 'periods' (list of periods), 'period_id', 'period_name', and 'profile' (the profile dict), or None
         """
         with self._lock:
             # Only use automation periods - legacy profile assignments are ignored
             active_periods = self.get_active_periods_for_channel(channel_id)
             if active_periods:
-                # Use the first active period's profile
+                # Use the first active period's profile as the primary profile for compatibility
                 period = active_periods[0]
                 profile = period.get('profile')
                 if profile:
                     return {
                         'source': 'period',
+                        'periods': active_periods,
                         'period_id': period.get('id'),
                         'period_name': period.get('name'),
                         'profile': profile

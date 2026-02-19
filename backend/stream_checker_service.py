@@ -653,6 +653,15 @@ class StreamCheckQueue:
     def add_channel(self, channel_id: int, priority: int = 0):
         """Add a channel to the checking queue."""
         with self.lock:
+            # Check if this is a new "batch" starting (queue is completely empty and no workers are active)
+            if self.queue.empty() and len(self.in_progress) == 0:
+                self.stats['total_queued'] = 0
+                self.stats['total_completed'] = 0
+                self.stats['total_failed'] = 0
+                self.queued.clear()
+                self.completed.clear()
+                self.failed.clear()
+
             # Check if channel is already queued, in progress, or completed
             if channel_id not in self.queued and channel_id not in self.in_progress and channel_id not in self.completed:
                 try:
@@ -778,7 +787,8 @@ class StreamCheckerProgress:
         self.lock = threading.Lock()
     
     def update(self, channel_id: int, channel_name: str, current: int, total: int,
-               current_stream: str = '', status: str = 'checking', step: str = '', step_detail: str = ''):
+               current_stream: str = '', status: str = 'checking', step: str = '', step_detail: str = '',
+               streams_detail: Optional[Dict] = None):
         """Update progress information.
         
         Args:
@@ -800,10 +810,11 @@ class StreamCheckerProgress:
                 'percentage': round((current / total * 100) if total > 0 else 0, 1),
                 'current_stream_name': current_stream,
                 'status': status,
-                'step': step,
                 'step_detail': step_detail,
                 'timestamp': datetime.now().isoformat()
             }
+            if streams_detail is not None:
+                progress_data['streams_detail'] = streams_detail
             
             self.progress_file.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -880,6 +891,14 @@ class StreamCheckerService:
         self.worker_thread = None
         self.scheduler_thread = None
         self.lock = threading.Lock()
+        
+        self.sync_batch_state = {
+            'active': False,
+            'total_channels': 0,
+            'completed': 0,
+            'failed': 0,
+            'in_progress': 0
+        }
         
         # Event for immediate triggering of updated channels check
         self.check_trigger = threading.Event()
@@ -1585,6 +1604,7 @@ class StreamCheckerService:
         # Get effective profile for this channel
         stream_limit = 0
         allow_revive = True
+        grace_period = False
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -1748,7 +1768,32 @@ class StreamCheckerService:
                             stream_count=current_stream_count,
                             checked_stream_ids=checked_stream_ids
                         )
-                        return
+                        # Best effort to reconstruct stats for skipped/cached streams
+                        cached_stats = []
+                        for s in streams:
+                            # Try to find existing stats if available in stream object
+                            # Otherwise use placeholders
+                            stat = {
+                                'stream_id': s.get('id'),
+                                'stream_name': s.get('name'),
+                                'resolution': 'Cached',
+                                'fps': 'Cached',
+                                'video_codec': 'Cached',
+                                'bitrate': 'Cached',
+                                'm3u_account': self._get_m3u_account_name(s.get('id'), udi) if hasattr(self, '_get_m3u_account_name') else 'N/A',
+                                'score': s.get('score', 0)
+                            }
+                            cached_stats.append(stat)
+
+                        return {
+                            'dead_streams_count': 0,
+                            'revived_streams_count': 0,
+                            'dead_streams': [],
+                            'revived_streams': [],
+                            'skipped_streams_count': len(streams),
+                            'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams],
+                            'checked_streams': cached_stats
+                        }
                     else:
                         logger.info(f"Channel composition changed (prev: {previous_stream_count}, curr: {current_stream_count}) - will reorder")
             
@@ -1773,13 +1818,53 @@ class StreamCheckerService:
             total_streams = len(streams_to_check)
             completed_count = [0]  # Use list for mutable closure
             
+            # Dict to keep track of the stream details throughout the analysis
+            stream_statuses = {
+                s['id']: {
+                    'id': s['id'],
+                    'name': s.get('name', f"Stream {s['id']}"),
+                    'status': 'pending',
+                    'm3u_account': self._get_m3u_account_name(s.get('id'), udi) if hasattr(self, '_get_m3u_account_name') else 'N/A'
+                }
+                for s in streams_to_check
+            }
+            
+            # Start callback for parallel checker
+            def start_callback(stream):
+                stream_id = stream.get('id')
+                if stream_id in stream_statuses:
+                    stream_statuses[stream_id]['status'] = 'checking'
+                    self.progress.update(
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        current=completed_count[0],
+                        total=total_streams,
+                        current_stream=stream.get('name', 'Unknown'),
+                        status='analyzing',
+                        step='Analyzing streams with account limits',
+                        step_detail=f'Started checking {stream.get("name", "Unknown")}',
+                        streams_detail=list(stream_statuses.values())
+                    )
+            
             # Progress callback for parallel checker
             def progress_callback(completed, total, result):
                 completed_count[0] = completed
                 stream_name = result.get('stream_name', 'Unknown')
+                stream_id = result.get('stream_id')
                 
-                # DO NOT update stream stats here - wait until all checks complete
-                # This prevents race conditions with concurrent checks
+                # Update stream status based on result
+                if stream_id in stream_statuses:
+                    if result.get('status') == 'ERROR':
+                        stream_statuses[stream_id]['status'] = 'error'
+                    else:
+                        stream_statuses[stream_id]['status'] = 'completed'
+                        # Optional: record score or resolution
+                        stream_statuses[stream_id]['score'] = result.get('score', 0)
+                        stream_statuses[stream_id]['resolution'] = result.get('resolution', '0x0')
+                        stream_statuses[stream_id]['video_codec'] = result.get('video_codec', 'N/A')
+                        stream_statuses[stream_id]['fps'] = result.get('fps', 0)
+                        stream_statuses[stream_id]['bitrate'] = result.get('bitrate')
+                        stream_statuses[stream_id]['hdr_format'] = result.get('hdr_format')
                 
                 # Update progress
                 self.progress.update(
@@ -1790,7 +1875,8 @@ class StreamCheckerService:
                     current_stream=stream_name,
                     status='analyzing',
                     step='Analyzing streams with account limits',
-                    step_detail=f'Completed {completed}/{total}'
+                    step_detail=f'Completed {completed}/{total}',
+                    streams_detail=list(stream_statuses.values())
                 )
             
             if streams_to_check:
@@ -1811,6 +1897,7 @@ class StreamCheckerService:
                     streams=streams_to_check,
                     check_function=analyze_stream,
                     progress_callback=progress_callback,
+                    start_callback=start_callback,
                     stagger_delay=stagger_delay,
                     ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
                     timeout=analysis_params.get('timeout', 30),
@@ -1999,53 +2086,68 @@ class StreamCheckerService:
             
             logger.info(f"✓ Channel {channel_name} checked and streams reordered (parallel mode)")
             
+            # Generate detailed stream stats for return value and changelog
+            try:
+                # Get channel logo URL
+                logo_url = None
+                logo_id = channel_data.get('logo_id')
+                if logo_id:
+                    logo = udi.get_logo_by_id(logo_id)
+                    if logo:
+                        logo_url = logo.get('cache_url') or logo.get('url')
+                
+                # Calculate channel-level averages from analyzed streams
+                averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
+                
+                stream_stats = []
+                # Use all analyzed streams for stats, not just first 10
+                for analyzed in analyzed_streams:
+                    stream_id = analyzed.get('stream_id')
+                    is_dead = stream_id in dead_stream_ids
+                    is_revived = stream_id in revived_stream_ids
+                    
+                    # Extract and format stats using centralized utilities
+                    extracted_stats = extract_stream_stats(analyzed)
+                    formatted_stats = format_stream_stats_for_display(extracted_stats)
+                    
+                    # Get M3U account name for this stream using helper method
+                    m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+                    
+                    stream_stat = {
+                        'stream_id': stream_id,
+                        'stream_name': analyzed.get('stream_name'),
+                        'resolution': formatted_stats['resolution'],
+                        'fps': formatted_stats['fps'],
+                        'video_codec': formatted_stats['video_codec'],
+                        'bitrate': formatted_stats['bitrate'],
+                        'm3u_account': m3u_account_name,
+                        'hdr_format': analyzed.get('hdr_format')
+                    }
+                    
+                    # Mark dead streams as "dead" instead of showing score:0
+                    if is_dead:
+                        stream_stat['status'] = 'dead'
+                    elif is_revived:
+                        stream_stat['status'] = 'revived'
+                        stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                    else:
+                        stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                    
+                    # Clean up N/A values for cleaner JSON
+                    cleaned_stat = {k: v for k, v in stream_stat.items() if v not in [None]}
+                    stream_stats.append(cleaned_stat)
+
+            except Exception as e:
+                logger.error(f"Error generating stream stats: {e}")
+                stream_stats = []
+                averages = {'avg_resolution': 'N/A', 'avg_bitrate': 'N/A', 'avg_fps': 'N/A'}
+                logo_url = None
+
             # Add to batch changelog instead of creating individual entry
             if self.changelog:
                 try:
-                    # Get channel logo URL
-                    logo_url = None
-                    logo_id = channel_data.get('logo_id')
-                    if logo_id:
-                        logo = udi.get_logo_by_id(logo_id)
-                        if logo:
-                            logo_url = logo.get('cache_url') or logo.get('url')
                     
-                    # Calculate channel-level averages from analyzed streams
-                    averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
-                    
-                    stream_stats = []
-                    for analyzed in analyzed_streams[:10]:  # Limit to first 10
-                        stream_id = analyzed.get('stream_id')
-                        is_dead = stream_id in dead_stream_ids
-                        is_revived = stream_id in revived_stream_ids
-                        
-                        # Extract and format stats using centralized utilities
-                        extracted_stats = extract_stream_stats(analyzed)
-                        formatted_stats = format_stream_stats_for_display(extracted_stats)
-                        
-                        # Get M3U account name for this stream using helper method
-                        m3u_account_name = self._get_m3u_account_name(stream_id, udi)
-                        
-                        stream_stat = {
-                            'stream_id': stream_id,
-                            'stream_name': analyzed.get('stream_name'),
-                            'resolution': formatted_stats['resolution'],
-                            'fps': formatted_stats['fps'],
-                            'video_codec': formatted_stats['video_codec'],
-                            'bitrate': formatted_stats['bitrate'],
-                            'm3u_account': m3u_account_name
-                        }
-                        
-                        # Mark dead streams as "dead" instead of showing score:0
-                        if is_dead:
-                            stream_stat['status'] = 'dead'
-                        elif is_revived:
-                            stream_stat['status'] = 'revived'
-                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
-                        else:
-                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
-                        
-                        stream_stats.append({k: v for k, v in stream_stat.items() if v not in [None, "N/A"]})
+                    # Add to batch instead of creating individual changelog entry
                     
                     # Add to batch instead of creating individual changelog entry
                     # Only add to batch if not explicitly skipped (e.g., when called from check_single_channel)
@@ -2087,8 +2189,13 @@ class StreamCheckerService:
             # Return statistics for callers that need them
             return {
                 'dead_streams_count': len(dead_stream_ids),
-                'revived_streams_count': len(revived_stream_ids)
+                'revived_streams_count': len(revived_stream_ids),
+                'dead_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in dead_stream_ids],
+                'revived_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in revived_stream_ids],
+                'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
+                'checked_streams': stream_stats
             }
+
             
         except Exception as e:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
@@ -2120,7 +2227,9 @@ class StreamCheckerService:
             # Return empty stats on error
             return {
                 'dead_streams_count': 0,
-                'revived_streams_count': 0
+                'revived_streams_count': 0,
+                'checked_streams': [],
+                'error': str(e)
             }
         
         finally:
@@ -2152,6 +2261,7 @@ class StreamCheckerService:
         # Get effective profile for this channel
         stream_limit = 0
         allow_revive = True
+        grace_period = False
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -2671,8 +2781,13 @@ class StreamCheckerService:
             # Return statistics for callers that need them
             return {
                 'dead_streams_count': len(dead_stream_ids),
-                'revived_streams_count': len(revived_stream_ids)
+                'revived_streams_count': len(revived_stream_ids),
+                'dead_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in dead_stream_ids],
+                'revived_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in revived_stream_ids],
+                'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked]
             }
+
+
             
         except Exception as e:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
@@ -2916,13 +3031,29 @@ class StreamCheckerService:
         queue_status = self.check_queue.get_status()
         progress = self.progress.get()
         
+        with self.lock:
+            sync_state = dict(self.sync_batch_state)
+            
+        if sync_state.get('active'):
+            # Override queue status with our synchronous batch status
+            # When active, ONLY the sync batch progress should be displayed
+            queue_status['in_progress'] = sync_state['in_progress']
+            queue_status['completed'] = sync_state['completed']
+            queue_status['failed'] = sync_state['failed']
+            queue_status['queued'] = sync_state['total_channels'] - sync_state['completed'] - sync_state['failed'] - sync_state['in_progress']
+            queue_status['total_queued'] = sync_state['total_channels']
+            queue_status['total_completed'] = sync_state['completed']
+            queue_status['total_failed'] = sync_state['failed']
+            queue_status['queue_size'] = queue_status['queued']
+        
         # Stream checking mode is active when:
         # - An individual channel is being checked, OR
         # - There are channels in the queue waiting to be checked
         stream_checking_mode = (
             self.checking or 
             queue_status.get('queue_size', 0) > 0 or
-            queue_status.get('in_progress', 0) > 0
+            queue_status.get('in_progress', 0) > 0 or
+            sync_state.get('active', False)
         )
         
         return {
@@ -2955,6 +3086,10 @@ class StreamCheckerService:
         if force_check:
             self.update_tracker.mark_channel_for_force_check(channel_id)
             logger.info(f"Marked channel {channel_id} for force check (bypasses 2-hour immunity)")
+            
+        # Ensure we can re-queue if it was completed (manual check overrides completion state)
+        self.check_queue.remove_from_completed(channel_id)
+        
         return self.check_queue.add_channel(channel_id, priority)
     
     def queue_channels(self, channel_ids: List[int], priority: int = 10, force_check: bool = False) -> int:
@@ -2974,6 +3109,66 @@ class StreamCheckerService:
             logger.info(f"Marked {len(channel_ids)} channels for force check (bypasses 2-hour immunity)")
         return self.check_queue.add_channels(channel_ids, priority)
     
+    def check_channels_synchronously(self, channel_ids: List[int], force_check: bool = False) -> Dict[int, Dict]:
+        """Check multiple channels synchronously and return results.
+        
+        Using this method Bypasses the queue and worker/scheduler entirely.
+        This is useful for automation cycles where we want to wait for results
+        and consolidate them into a single report.
+        
+        Args:
+            channel_ids: List of channel IDs to check
+            force_check: If True, marks channels for force checking
+            
+        Returns:
+            Dict mapping channel_id to result dict (containing dead/revived streams)
+        """
+        results = {}
+        
+        # Mark force check if requested
+        if force_check:
+            for channel_id in channel_ids:
+                self.update_tracker.mark_channel_for_force_check(channel_id)
+                
+        with self.lock:
+            self.sync_batch_state = {
+                'active': True,
+                'total_channels': len(channel_ids),
+                'completed': 0,
+                'failed': 0,
+                'in_progress': 0
+            }
+            self.checking = True
+        
+        try:
+            # Process each channel
+            for channel_id in channel_ids:
+                with self.lock:
+                    self.sync_batch_state['in_progress'] = 1
+                try:
+                    # Use concurrent method directly (synchronously) but skip batch changelog
+                    # The caller (Automation Cycle) will handle reporting
+                    channel_result = self._check_channel_concurrent(channel_id, skip_batch_changelog=True)
+                    results[channel_id] = channel_result
+                    with self.lock:
+                        self.sync_batch_state['completed'] += 1
+                except Exception as e:
+                    logger.error(f"Error checking channel {channel_id} synchronously: {e}")
+                    results[channel_id] = {'error': str(e)}
+                    with self.lock:
+                        self.sync_batch_state['failed'] += 1
+                finally:
+                    with self.lock:
+                        self.sync_batch_state['in_progress'] = 0
+        finally:
+            with self.lock:
+                self.sync_batch_state['active'] = False
+                queue_status = self.check_queue.get_status()
+                if queue_status.get('queue_size', 0) == 0 and queue_status.get('in_progress', 0) == 0:
+                    self.checking = False
+                
+        return results
+
     def check_single_channel(self, channel_id: int, program_name: Optional[str] = None) -> Dict:
         """Check a single channel immediately and return results.
         

@@ -14,7 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelOrderAPI, automationAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2, ArrowRight, Clock } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2, ArrowRight, Clock, Calendar } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
@@ -170,14 +170,14 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
       setLoadingPeriods(true)
       const response = await automationAPI.getChannelPeriods(channel.id)
       const periodToProfile = response.data || {}  // {period_id: profile_id}
-      
+
       // Fetch full period and profile details
       const periodsResponse = await automationAPI.getPeriods()
       const profilesResponse = await automationAPI.getProfiles()
-      
+
       const allPeriods = periodsResponse.data || []
       const allProfiles = profilesResponse.data || []
-      
+
       // Build enriched period list with profile names
       const enrichedPeriods = Object.entries(periodToProfile).map(([periodId, profileId]) => {
         const period = allPeriods.find(p => p.id === String(periodId))
@@ -190,7 +190,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
           profile_name: profile?.name || 'Unknown Profile'
         }
       })
-      
+
       setAutomationPeriods(enrichedPeriods)
     } catch (err) {
       console.error('Failed to load automation periods:', err)
@@ -396,7 +396,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {period.schedule?.type === 'interval' 
+                          {period.schedule?.type === 'interval'
                             ? `Every ${period.schedule.value} minutes`
                             : `Cron: ${period.schedule?.value || 'Not configured'}`
                           }
@@ -533,7 +533,7 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
       ])
       setAllPeriods(periodsResponse.data)
       setAllProfiles(profilesResponse.data)
-      
+
       // assignedResponse.data is now {period_id: profile_id}
       setPeriodAssignments(assignedResponse.data || {})
     } catch (err) {
@@ -551,32 +551,32 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
   const handleSave = async () => {
     try {
       setSaving(true)
-      
+
       const currentResponse = await automationAPI.getChannelPeriods(channelId)
       const currentAssignments = currentResponse.data || {}
-      
+
       const newPeriods = Object.keys(periodAssignments)
       const currentPeriods = Object.keys(currentAssignments)
-      
+
       const toRemove = currentPeriods.filter(p => !newPeriods.includes(p))
-      
+
       // Remove unassigned periods
       for (const periodId of toRemove) {
         await automationAPI.removePeriodFromChannels(periodId, [channelId])
       }
-      
+
       // Add/update periods with profiles
       for (const [periodId, profileId] of Object.entries(periodAssignments)) {
         if (profileId) {
           await automationAPI.assignPeriodToChannels(periodId, [channelId], profileId, false)
         }
       }
-      
+
       toast({
         title: "Success",
         description: "Automation periods updated"
       })
-      
+
       onOpenChange(false)
       if (onSuccess) onSuccess()
     } catch (err) {
@@ -640,13 +640,12 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
             {allPeriods.map((period) => {
               const isSelected = period.id in periodAssignments
               const selectedProfile = periodAssignments[period.id]
-              
+
               return (
                 <div
                   key={period.id}
-                  className={`p-3 border rounded-lg transition-colors ${
-                    isSelected ? 'border-primary bg-primary/5' : 'border-border'
-                  }`}
+                  className={`p-3 border rounded-lg transition-colors ${isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                    }`}
                 >
                   <div className="flex items-start gap-3">
                     <Checkbox
@@ -668,14 +667,14 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
                             : `Cron: ${period.schedule?.value || 'Not configured'}`}
                         </div>
                       </div>
-                      
+
                       {isSelected && (
                         <div className="pt-2 border-t">
                           <Label className="text-xs text-muted-foreground mb-1 block">
                             Profile for this period:
                           </Label>
-                          <Select 
-                            value={selectedProfile} 
+                          <Select
+                            value={selectedProfile}
                             onValueChange={(value) => updateProfile(period.id, value)}
                           >
                             <SelectTrigger className="h-8">
@@ -703,8 +702,8 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button 
-            onClick={handleSave} 
+          <Button
+            onClick={handleSave}
             disabled={saving || loading || allPeriods.length === 0 || Object.keys(periodAssignments).length === 0}
           >
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
@@ -756,7 +755,7 @@ function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, chan
 
   const handleSave = async () => {
     const selectedPeriods = Object.entries(periodAssignments).filter(([_, profileId]) => profileId && profileId !== '')
-    
+
     if (selectedPeriods.length === 0) {
       toast({
         title: "No Periods Selected",
@@ -768,21 +767,21 @@ function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, chan
 
     try {
       setSaving(true)
-      
+
       // Build period assignments array: [{period_id, profile_id}, ...]
       const assignments = selectedPeriods.map(([periodId, profileId]) => ({
         period_id: periodId,
         profile_id: profileId
       }))
-      
+
       // Use batch assignment endpoint with replace=false to add to existing periods
       await automationAPI.batchAssignPeriods(selectedChannelIds, assignments, false)
-      
+
       toast({
         title: "Success",
         description: `Assigned ${selectedPeriods.length} period${selectedPeriods.length > 1 ? 's' : ''} to ${selectedChannelIds.length} channel${selectedChannelIds.length > 1 ? 's' : ''}`
       })
-      
+
       if (onSuccess) onSuccess()
     } catch (err) {
       console.error('Failed to save:', err)
@@ -856,13 +855,12 @@ function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, chan
             {allPeriods.map((period) => {
               const isSelected = period.id in periodAssignments
               const selectedProfile = periodAssignments[period.id]
-              
+
               return (
                 <div
                   key={period.id}
-                  className={`p-3 border rounded-lg transition-colors ${
-                    isSelected ? 'border-primary bg-primary/5' : 'border-border'
-                  }`}
+                  className={`p-3 border rounded-lg transition-colors ${isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                    }`}
                 >
                   <div className="flex items-start gap-3">
                     <Checkbox
@@ -884,14 +882,14 @@ function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, chan
                             : `Cron: ${period.schedule?.value || 'Not configured'}`}
                         </div>
                       </div>
-                      
+
                       {isSelected && (
                         <div className="pt-2 border-t">
                           <Label className="text-xs text-muted-foreground mb-1 block">
                             Profile for this period:
                           </Label>
-                          <Select 
-                            value={selectedProfile} 
+                          <Select
+                            value={selectedProfile}
                             onValueChange={(value) => updateProfile(period.id, value)}
                           >
                             <SelectTrigger className="h-8">
@@ -928,6 +926,176 @@ function BatchAssignPeriodsDialog({ open, onOpenChange, selectedChannelIds, chan
     </Dialog>
   )
 }
+
+// Batch Edit Periods Dialog - for editing existing period assignments across multiple channels
+function BatchPeriodEditDialog({ open, onOpenChange, selectedChannelIds, profiles, onSuccess }) {
+  const [usage, setUsage] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [updating, setUpdating] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    if (open) {
+      loadUsage()
+    }
+  }, [open, selectedChannelIds])
+
+  const loadUsage = async () => {
+    try {
+      setLoading(true)
+      const response = await automationAPI.getBatchPeriodUsage(selectedChannelIds)
+      setUsage(response.data)
+    } catch (err) {
+      console.error('Failed to load period usage:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load automation period usage",
+        variant: "destructive"
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleUpdateProfile = async (periodId, profileId) => {
+    try {
+      setUpdating(periodId)
+      await automationAPI.batchAssignPeriods(selectedChannelIds, [{
+        period_id: periodId,
+        profile_id: profileId
+      }], false)
+
+      toast({
+        title: "Success",
+        description: "Profile updated for selected channels"
+      })
+      loadUsage()
+      if (onSuccess) onSuccess()
+    } catch (err) {
+      console.error('Failed to update profile:', err)
+      toast({
+        title: "Error",
+        description: "Failed to update profile",
+        variant: "destructive"
+      })
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const handleRemovePeriod = async (periodId) => {
+    try {
+      setRemoving(periodId)
+      await automationAPI.removePeriodFromChannels(periodId, selectedChannelIds)
+      toast({
+        title: "Success",
+        description: "Period removed from selected channels"
+      })
+      loadUsage()
+      if (onSuccess) onSuccess()
+    } catch (err) {
+      console.error('Failed to remove period:', err)
+      toast({
+        title: "Error",
+        description: "Failed to remove period",
+        variant: "destructive"
+      })
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Edit Common Automation Periods</DialogTitle>
+          <DialogDescription>
+            These are automation periods assigned to one or more of the {selectedChannelIds.length} selected channels.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : !usage || usage.periods.length === 0 ? (
+          <div className="text-center py-12">
+            <Clock className="h-12 w-12 mx-auto mb-4 opacity-50 text-muted-foreground" />
+            <p className="text-muted-foreground">No automation periods assigned to selected channels</p>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto pr-2">
+            <div className="space-y-4">
+              {usage.periods.map((item) => (
+                <div key={item.id} className="p-4 border rounded-lg bg-card">
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-semibold">{item.name}</span>
+                        <Badge variant="secondary">
+                          Used in {item.count} channel{item.count !== 1 ? 's' : ''} ({item.percentage}%)
+                        </Badge>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        Manage this period's profile or remove it from all {selectedChannelIds.length} channels.
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive border-destructive hover:bg-destructive/10"
+                      disabled={removing === item.id}
+                      onClick={() => handleRemovePeriod(item.id)}
+                    >
+                      {removing === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                      Remove from All
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {item.profiles.map((prof) => (
+                      <div key={prof.id} className="p-3 bg-muted/50 rounded-md border flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-xs text-muted-foreground mb-0.5">Profile:</div>
+                          <div className="font-medium text-sm truncate">{prof.name}</div>
+                          <div className="text-[10px] text-muted-foreground">{prof.channel_ids.length} channel{prof.channel_ids.length !== 1 ? 's' : ''}</div>
+                        </div>
+                        <div className="flex-shrink-0">
+                          <Select
+                            disabled={updating === item.id}
+                            onValueChange={(value) => handleUpdateProfile(item.id, value)}
+                          >
+                            <SelectTrigger className="h-8 w-[140px] text-xs">
+                              <SelectValue placeholder="Change Profile" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {profiles.map(p => (
+                                <SelectItem key={p.id} value={p.id} disabled={p.id === prof.id}>
+                                  {p.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="pt-4 border-t mt-4">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 
 function SortableChannelItem({ channel }) {
   const [logoUrl, setLogoUrl] = useState(null)
@@ -1011,9 +1179,12 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, groups, profiles, patterns, selectedChannels, onToggleChannel, onEditRegex, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel, m3uAccounts, onUpdateMatchSettings, onPreviewMatch }) {
+function RegexTableRow({ channel, group, groups, profiles, patterns, selectedChannels, onToggleChannel, onEditRegex, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel, m3uAccounts, onUpdateMatchSettings, onPreviewMatch, onRefresh }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
+  const [channelPeriods, setChannelPeriods] = useState([])
+  const [loadingPeriods, setLoadingPeriods] = useState(false)
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const { toast } = useToast()
 
   // Use parent-controlled expanded state
@@ -1023,6 +1194,43 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
   const matchByTvgId = channelPatterns?.match_by_tvg_id || false
   const patternCount = normalizePatternData(channelPatterns).length
+
+  const loadChannelPeriods = useCallback(async () => {
+    try {
+      setLoadingPeriods(true)
+      const response = await automationAPI.getChannelPeriods(channel.id)
+      setChannelPeriods(response.data || [])
+    } catch (err) {
+      console.error('Failed to load channel periods:', err)
+    } finally {
+      setLoadingPeriods(false)
+    }
+  }, [channel.id])
+
+  useEffect(() => {
+    if (expanded) {
+      loadChannelPeriods()
+    }
+  }, [expanded, loadChannelPeriods])
+
+  const handleRemovePeriod = async (periodId) => {
+    try {
+      await automationAPI.removePeriodFromChannels(periodId, [channel.id])
+      toast({
+        title: "Success",
+        description: "Automation period removed from channel"
+      })
+      loadChannelPeriods()
+      if (onRefresh) onRefresh()
+    } catch (err) {
+      console.error('Failed to remove period:', err)
+      toast({
+        title: "Error",
+        description: "Failed to remove automation period",
+        variant: "destructive"
+      })
+    }
+  }
 
   // Load channel logo
   useEffect(() => {
@@ -1081,29 +1289,9 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
           {group?.name || '-'}
         </div>
         <div className="flex items-center">
-          {(() => {
-            const profileId = channel.automation_profile_id
-            const profile = profiles?.find(p => p.id === profileId)
-
-            if (profile) {
-              return (
-                <Badge variant="outline" className="text-xs font-normal">
-                  {profile.name}
-                </Badge>
-              )
-            }
-
-            // Fallback/Debug: Show ID if present but profile not found
-            if (profileId) {
-              return (
-                <span className="text-xs text-muted-foreground" title={`Profile ID: ${profileId}`}>
-                  {profileId === 'default' ? 'Default' : 'Unknown Profile'}
-                </span>
-              )
-            }
-
-            return <span className="text-sm text-muted-foreground">-</span>
-          })()}
+          <Badge variant="outline" className="text-xs font-normal">
+            {channel.automation_periods_count || 0} period{channel.automation_periods_count !== 1 ? 's' : ''}
+          </Badge>
         </div>
         <div className="flex items-center">
           {patternCount > 0 ? (
@@ -1157,7 +1345,75 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
 
       {/* Expanded Section */}
       {expanded && (
-        <div className="border-t p-4 bg-muted/50 space-y-4">
+        <div className="border-t p-4 bg-muted/50 space-y-6">
+          {/* Automation Periods */}
+          <div>
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="font-medium text-sm flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                Automation Periods
+              </h4>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAssignDialogOpen(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Assign to Period
+              </Button>
+            </div>
+
+            {loadingPeriods ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : channelPeriods.length > 0 ? (
+              <div className="grid gap-2 grid-cols-1 md:grid-cols-2">
+                {channelPeriods.map(period => (
+                  <div key={period.id} className="flex items-center justify-between p-3 bg-background border rounded-lg">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm truncate">{period.name}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge variant="secondary" className="text-[10px] font-normal">
+                          {period.profile_name || 'No Profile'}
+                        </Badge>
+                        <span className="text-[10px] text-muted-foreground">
+                          {period.schedule?.type === 'interval'
+                            ? `${period.schedule.value}m`
+                            : 'Cron'}
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleRemovePeriod(period.id)}
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 h-7 w-7 p-0"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground bg-background p-4 rounded-lg border border-dashed text-center">
+                No automation periods assigned to this channel
+              </p>
+            )}
+
+            <AssignPeriodsDialog
+              open={assignDialogOpen}
+              onOpenChange={setAssignDialogOpen}
+              channelId={channel.id}
+              channelName={channel.name}
+              onSuccess={() => {
+                loadChannelPeriods()
+                if (onRefresh) onRefresh()
+              }}
+            />
+          </div>
+
+          <Separator />
 
 
           {/* Regex Patterns */}
@@ -1299,6 +1555,7 @@ export default function ChannelConfiguration() {
   const [filterByGroup, setFilterByGroup] = useState('all')
   const [sortByGroup, setSortByGroup] = useState(false)
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
+  const [bulkPeriodEditOpen, setBulkPeriodEditOpen] = useState(false)
   const [bulkPattern, setBulkPattern] = useState('')
 
   // Automation Profile state
@@ -2687,14 +2944,14 @@ export default function ChannelConfiguration() {
               {/* Filter and Action Bar */}
               <Card>
                 <CardContent className="p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-4 flex-1">
-                      {/* Group Filter */}
+                  <div className="flex flex-wrap items-center gap-6">
+                    {/* Section: Sorting */}
+                    <div className="flex items-center gap-4">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Sorting</div>
                       <div className="flex items-center gap-2">
-                        <Label htmlFor="group-filter" className="text-sm whitespace-nowrap">Filter Group:</Label>
                         <Select value={filterByGroup} onValueChange={setFilterByGroup}>
-                          <SelectTrigger id="group-filter" className="h-9 w-[200px]">
-                            <SelectValue />
+                          <SelectTrigger id="group-filter" className="h-8 w-[140px]">
+                            <SelectValue placeholder="Group" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">All Groups</SelectItem>
@@ -2707,24 +2964,23 @@ export default function ChannelConfiguration() {
                         </Select>
                       </div>
 
-                      {/* Sort by Group */}
                       <div className="flex items-center gap-2">
                         <Checkbox
                           id="sort-by-group"
                           checked={sortByGroup}
                           onCheckedChange={setSortByGroup}
                         />
-                        <Label htmlFor="sort-by-group" className="text-sm whitespace-nowrap cursor-pointer">
+                        <Label htmlFor="sort-by-group" className="text-xs whitespace-nowrap cursor-pointer">
                           Sort by Group
                         </Label>
                       </div>
                     </div>
 
-                    {/* Selection Actions */}
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary">
-                        {selectedChannels.size} selected
-                      </Badge>
+                    <Separator orientation="vertical" className="h-6 hidden lg:block" />
+
+                    {/* Section: Matching */}
+                    <div className="flex items-center gap-3">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Matching</div>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -2732,13 +2988,12 @@ export default function ChannelConfiguration() {
                             variant="outline"
                             onClick={() => setBulkDialogOpen(true)}
                             disabled={selectedChannels.size === 0}
+                            className="h-8 w-8 p-0"
                           >
                             <Plus className="h-4 w-4" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Add Regex to Selected</p>
-                        </TooltipContent>
+                        <TooltipContent><p>Add Regex</p></TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -2747,18 +3002,12 @@ export default function ChannelConfiguration() {
                             variant="outline"
                             onClick={handleBulkHealthCheck}
                             disabled={selectedChannels.size === 0 || bulkCheckingChannels}
-                            className="text-blue-600 dark:text-green-500 border-blue-600 dark:border-green-500 hover:bg-blue-50 dark:hover:bg-green-950"
+                            className="h-8 w-8 p-0 text-blue-600 dark:text-green-500 border-blue-600 dark:border-green-500"
                           >
-                            {bulkCheckingChannels ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Activity className="h-4 w-4" />
-                            )}
+                            {bulkCheckingChannels ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Health Check Selected</p>
-                        </TooltipContent>
+                        <TooltipContent><p>Health Check</p></TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -2767,76 +3016,79 @@ export default function ChannelConfiguration() {
                             variant="outline"
                             onClick={handleOpenEditCommon}
                             disabled={selectedChannels.size === 0}
+                            className="h-8 w-8 p-0"
                           >
                             <Edit2 className="h-4 w-4" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Edit Common Regex</p>
-                        </TooltipContent>
+                        <TooltipContent><p>Mass Regex Edit</p></TooltipContent>
                       </Tooltip>
 
-                      <div className="mx-2 h-6 w-px bg-border" />
-
-                      {/* Bulk Match Settings */}
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" disabled={selectedChannels.size === 0}>
-                            <Activity className="h-4 w-4 mr-2" />
-                            Match Settings
-                          </Button>
-                        </DropdownMenuTrigger>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="outline" size="sm" disabled={selectedChannels.size === 0} className="h-8 w-10 px-0 font-bold text-xs ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                                ID
+                              </Button>
+                            </DropdownMenuTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>Match Settings</TooltipContent>
+                        </Tooltip>
                         <DropdownMenuContent>
-                          <DropdownMenuLabel>Batch Actions</DropdownMenuLabel>
+                          <DropdownMenuLabel>Match by TVG-ID</DropdownMenuLabel>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleBulkMatchSettings(true)}>
-                            Enable Match by TVG-ID
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleBulkMatchSettings(false)}>
-                            Disable Match by TVG-ID
-                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleBulkMatchSettings(true)}>Enable</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleBulkMatchSettings(false)}>Disable</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                    </div>
 
-                      <div className="mx-2 h-6 w-px bg-border" />
+                    <Separator orientation="vertical" className="h-6 hidden lg:block" />
 
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm font-medium hidden sm:inline-block">Assign Profile:</span>
-                        <Select
-                          value={assignProfileId}
-                          onValueChange={(value) => {
-                            setAssignProfileId(value)
-                            handleBatchAssignProfile(value)
-                          }}
-                          disabled={selectedChannels.size === 0}
-                        >
-                          <SelectTrigger className="w-[180px] h-8">
-                            <SelectValue placeholder="Select Profile" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">None (Clear)</SelectItem>
-                            {profiles.map(profile => (
-                              <SelectItem key={profile.id} value={profile.id.toString()}>
-                                {profile.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                    {/* Section: Periods */}
+                    <div className="flex items-center gap-3">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Periods</div>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleBatchAssignPeriods}
+                            disabled={selectedChannels.size === 0}
+                            className="h-8 px-2"
+                          >
+                            <div className="flex items-center gap-0.5">
+                              <Clock className="h-4 w-4" />
+                              <Plus className="h-3 w-3" />
+                            </div>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Assign Periods</TooltipContent>
+                      </Tooltip>
 
-                      <div className="mx-2 h-6 w-px bg-border" />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setBulkPeriodEditOpen(true)}
+                            disabled={selectedChannels.size === 0}
+                            className="h-8 w-8 p-0"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Mass Period Edit</TooltipContent>
+                      </Tooltip>
+                    </div>
 
-                      {/* Batch Automation Periods */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleBatchAssignPeriods}
-                        disabled={selectedChannels.size === 0}
-                      >
-                        <Clock className="h-4 w-4 mr-2" />
-                        Assign Periods
-                      </Button>
+                    <Separator orientation="vertical" className="h-6 hidden lg:block" />
 
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Badge variant="secondary" className="whitespace-nowrap text-[10px]">
+                        {selectedChannels.size} selected
+                      </Badge>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -2844,13 +3096,12 @@ export default function ChannelConfiguration() {
                             variant="destructive"
                             onClick={() => setDeleteDialogOpen(true)}
                             disabled={selectedChannels.size === 0}
+                            className="h-8 w-8 p-0"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Delete Selected Regex</p>
-                        </TooltipContent>
+                        <TooltipContent><p>Delete Selected</p></TooltipContent>
                       </Tooltip>
                     </div>
                   </div>
@@ -2931,7 +3182,7 @@ export default function ChannelConfiguration() {
                           <div>Logo</div>
                           <div>Channel Name</div>
                           <div>Channel Group</div>
-                          <div>Profile</div>
+                          <div>Nº of Periods</div>
                           <div>Regex Patterns</div>
                           <div>Actions</div>
                         </div>
@@ -2962,6 +3213,7 @@ export default function ChannelConfiguration() {
                               m3uAccounts={m3uAccounts}
                               onUpdateMatchSettings={handleUpdateMatchSettings}
                               onPreviewMatch={handlePreviewMatch}
+                              onRefresh={loadData}
                             />
                           )
                         })}
@@ -3442,6 +3694,15 @@ export default function ChannelConfiguration() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Batch Period Edit Dialog */}
+        <BatchPeriodEditDialog
+          open={bulkPeriodEditOpen}
+          onOpenChange={setBulkPeriodEditOpen}
+          selectedChannelIds={Array.from(selectedChannels)}
+          profiles={profiles}
+          onSuccess={loadData}
+        />
 
         {/* Edit Common Regex Dialog */}
         <Dialog open={editCommonDialogOpen} onOpenChange={(open) => {
@@ -3945,7 +4206,7 @@ export default function ChannelConfiguration() {
           onLoadMore={() => handleTestPattern(testResults?.mode, true, testResults?.channelId)}
         />
       </div>
-    </TooltipProvider>
+    </TooltipProvider >
   )
 }
 

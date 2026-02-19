@@ -405,6 +405,11 @@ def get_channels():
             )
             # Also include explicit assignment for UI logic if needed
             ch_copy['assigned_profile_id'] = automation_config.get_channel_assignment(ch_copy.get('id'))
+            
+            # Get automation periods count
+            periods = automation_config.get_channel_periods(ch_copy.get('id'))
+            ch_copy['automation_periods_count'] = len(periods)
+            
             channels_with_profiles.append(ch_copy)
             
         # Apply custom channel order if configured
@@ -2120,7 +2125,7 @@ def refresh_playlist():
         
         manager = get_automation_manager()
         # Use force=True to bypass feature flags for manual Quick Actions
-        success = manager.refresh_playlists(force=True)
+        success, _ = manager.refresh_playlists(force=True)
         
         if success:
             return jsonify({"message": "Playlist refresh completed successfully"})
@@ -3699,12 +3704,29 @@ def stop_automation_service_api():
 def trigger_automation_cycle():
     """Manually trigger an immediate automation cycle."""
     try:
+        data = request.json or {}
+        period_id = data.get('period_id')
+        force = data.get('force', True)
+        
         manager = get_automation_manager()
         
         # We can trigger it by waking up the thread if it's running
+        # We can trigger it by waking up the thread if it's running
         if manager.automation_running:
-            manager.trigger_automation()
-            return jsonify({"message": "Automation cycle triggered"}), 200
+            manager.trigger_automation(period_id=period_id, force=force)
+            return jsonify({"message": f"Automation cycle triggered{' for period ' + period_id if period_id else ''}"}), 200
+        elif force:
+            # Allow forcing a cycle even if service is not running (e.g. for testing)
+            # Run in background to avoid blocking
+            import threading
+            def run_forced():
+                try:
+                    manager.run_automation_cycle(force=True, forced_period_id=period_id)
+                except Exception as e:
+                    logger.error(f"Error in forced automation cycle: {e}")
+            
+            threading.Thread(target=run_forced).start()
+            return jsonify({"message": f"Forced automation cycle started{' for period ' + period_id if period_id else ''}"}), 200
         else:
             return jsonify({"error": "Automation service is not running"}), 400
     
@@ -4109,23 +4131,94 @@ def get_period_channels(period_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/channels/batch/period-usage', methods=['POST'])
+@log_function_call
+def get_batch_period_usage():
+    """Analyze automation period usage across multiple channels."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        channel_ids = data.get('channel_ids', [])
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+            
+        automation_config = get_automation_config_manager()
+        
+        # Structure: {period_id: {"count": N, "profile_ids": {profile_id: [channel_ids]}}}
+        period_usage = {}
+        
+        for ch_id in channel_ids:
+            # get_channel_periods returns {period_id: profile_id}
+            assignments = automation_config.get_channel_periods(ch_id)
+            for pid, prof_id in assignments.items():
+                if pid not in period_usage:
+                    period = automation_config.get_period(pid)
+                    if not period:
+                        continue
+                    period_usage[pid] = {
+                        "id": pid,
+                        "name": period.get('name', 'Unknown'),
+                        "count": 0,
+                        "profile_breakdown": {} # {profile_id: {"name": str, "channel_ids": []}}
+                    }
+                
+                usage = period_usage[pid]
+                usage["count"] += 1
+                
+                if prof_id not in usage["profile_breakdown"]:
+                    profile = automation_config.get_profile(prof_id)
+                    usage["profile_breakdown"][prof_id] = {
+                        "id": prof_id,
+                        "name": profile.get('name', 'Unknown') if profile else 'Unknown',
+                        "channel_ids": []
+                    }
+                
+                usage["profile_breakdown"][prof_id]["channel_ids"].append(ch_id)
+                
+        # Format for frontend
+        results = []
+        for pid, usage in period_usage.items():
+            results.append({
+                "id": pid,
+                "name": usage["name"],
+                "count": usage["count"],
+                "percentage": round((usage["count"] / len(channel_ids)) * 100, 1),
+                "profiles": list(usage["profile_breakdown"].values())
+            })
+            
+        # Sort by frequency
+        results.sort(key=lambda x: x['count'], reverse=True)
+        
+        return jsonify({
+            "periods": results,
+            "total_channels": len(channel_ids)
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting batch period usage: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/channels/<int:channel_id>/automation-periods', methods=['GET'])
 @log_function_call
 def get_channel_automation_periods(channel_id):
     """Get all automation periods assigned to a channel."""
     try:
         automation_config = get_automation_config_manager()
-        period_ids = automation_config.get_channel_periods(channel_id)
+        # get_channel_periods returns a dict {period_id: profile_id}
+        period_assignments = automation_config.get_channel_periods(channel_id)
         
         periods = []
-        for pid in period_ids:
+        for pid, profile_id in period_assignments.items():
             period = automation_config.get_period(pid)
             if period:
+                period_copy = period.copy()
+                period_copy['profile_id'] = profile_id
                 # Include profile name
-                profile = automation_config.get_profile(period.get('profile_id'))
+                profile = automation_config.get_profile(profile_id)
                 if profile:
-                    period['profile_name'] = profile.get('name')
-                periods.append(period)
+                    period_copy['profile_name'] = profile.get('name')
+                periods.append(period_copy)
         
         return jsonify(periods), 200
         

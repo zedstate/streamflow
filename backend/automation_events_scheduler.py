@@ -158,7 +158,18 @@ class AutomationEventsScheduler:
                 continue
             
             # Generate events within the time window
-            temp_time = current_time
+            # Try to align the schedule track with the *actual* last run time for this period
+            base_time = current_time
+            try:
+                from web_api import get_automation_manager
+                manager = get_automation_manager()
+                last_run = manager.period_last_run.get(period_id)
+                if last_run:
+                    base_time = datetime.fromisoformat(last_run)
+            except Exception:
+                pass
+
+            temp_time = base_time
             period_events = []
             
             try:
@@ -166,7 +177,7 @@ class AutomationEventsScheduler:
                     minutes = int(schedule_value)
                     while temp_time < end_time and len(period_events) < 50:  # Limit per period
                         temp_time = temp_time + timedelta(minutes=minutes)
-                        if temp_time <= end_time:
+                        if temp_time >= current_time and temp_time <= end_time:
                             period_events.append({
                                 'time': temp_time.isoformat(),
                                 'period_id': period_id,
@@ -179,10 +190,10 @@ class AutomationEventsScheduler:
                 
                 elif schedule_type == 'cron' and CRONITER_AVAILABLE:
                     try:
-                        cron = croniter(schedule_value, current_time)
+                        cron = croniter(schedule_value, base_time)
                         while temp_time < end_time and len(period_events) < 50:
                             temp_time = cron.get_next(datetime)
-                            if temp_time <= end_time:
+                            if temp_time >= current_time and temp_time <= end_time:
                                 period_events.append({
                                     'time': temp_time.isoformat(),
                                     'period_id': period_id,

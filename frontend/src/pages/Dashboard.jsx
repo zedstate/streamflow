@@ -8,7 +8,15 @@ import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamCheckerAPI, m3uAPI, dispatcharrAPI } from '@/services/api.js'
-import { PlayCircle, RefreshCw, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import { PlayCircle, RefreshCw, Activity, CheckCircle2, AlertCircle, Loader2, ChevronDown } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu.jsx'
 import UpcomingAutomationEvents from '@/components/Dashboard/UpcomingAutomationEvents.jsx'
 
 export default function Dashboard() {
@@ -18,11 +26,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState('')
   const [togglingPlaylist, setTogglingPlaylist] = useState(null)
+  const [periods, setPeriods] = useState([])
   const { toast } = useToast()
 
   useEffect(() => {
     loadStatus()
     loadPlaylists()
+    loadPeriods()
     const interval = setInterval(() => {
       loadStatus()
       loadPlaylists()
@@ -60,6 +70,15 @@ export default function Dashboard() {
     }
   }
 
+  const loadPeriods = async () => {
+    try {
+      const response = await automationAPI.getPeriods()
+      setPeriods(response.data || [])
+    } catch (err) {
+      console.error('Failed to load periods:', err)
+    }
+  }
+
   const handleReloadUDI = async () => {
     try {
       setActionLoading('udi')
@@ -80,13 +99,15 @@ export default function Dashboard() {
     }
   }
 
-  const handleRunAutomation = async () => {
+  const handleRunAutomation = async (periodId = null) => {
     try {
       setActionLoading('automation')
-      await automationAPI.runCycle()
+      await automationAPI.runCycle({ period_id: periodId })
       toast({
         title: "Success",
-        description: "Automation cycle triggered successfully"
+        description: periodId
+          ? `Automation cycle for "${periods.find(p => p.id === periodId)?.name}" triggered successfully`
+          : "Full automation cycle triggered successfully"
       })
       await loadStatus()
     } catch (err) {
@@ -302,14 +323,36 @@ export default function Dashboard() {
             {actionLoading === 'udi' ? 'Reloading...' : 'Reload UDI'}
           </Button>
 
-          <Button
-            onClick={handleRunAutomation}
-            disabled={shouldDisableActions}
-            variant="outline"
-          >
-            <PlayCircle className="mr-2 h-4 w-4" />
-            {actionLoading === 'automation' ? 'Running...' : 'Run Automation'}
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                disabled={shouldDisableActions}
+                variant="outline"
+              >
+                <PlayCircle className="mr-2 h-4 w-4" />
+                {actionLoading === 'automation' ? 'Running...' : 'Run Automation'}
+                <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-[200px]">
+              <DropdownMenuLabel>Choose Run Mode</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleRunAutomation(null)}>
+                Run All Periods
+              </DropdownMenuItem>
+              {periods.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-[10px] uppercase text-muted-foreground">Specific Periods</DropdownMenuLabel>
+                  {periods.map(period => (
+                    <DropdownMenuItem key={period.id} onClick={() => handleRunAutomation(period.id)}>
+                      {period.name}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
         </CardContent>
       </Card>

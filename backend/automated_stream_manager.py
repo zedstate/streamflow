@@ -254,11 +254,26 @@ class ChangelogManager:
             subentries=subentries
         )
     
+    def add_automation_run_entry(self, run_results: Dict[str, Any]):
+        """Add a consolidated automation run entry.
+        
+        Args:
+            run_results: Dictionary containing periods, channels, and their step results.
+        """
+        self.add_entry(
+            action='automation_run',
+            details=run_results
+        )
+
     def _has_channel_updates(self, entry: Dict) -> bool:
         """Check if a changelog entry contains meaningful channel/stream updates."""
         details = entry.get('details', {})
         action = entry.get('action', '')
         
+        # For automation_run, always include
+        if action == 'automation_run':
+            return True
+            
         # For new action types, check if they have subentries
         if action in ['playlist_update_match', 'global_check', 'single_channel_check']:
             subentries = entry.get('subentries', [])
@@ -945,6 +960,7 @@ class AutomatedStreamManager:
         
         self.running = False
         self.last_playlist_update = None
+        self.period_last_run = {}  # Tracks last run time per period ID
         self.automation_start_time = None
         
         # Cache for M3U accounts to avoid redundant API calls within a single automation cycle
@@ -959,6 +975,7 @@ class AutomatedStreamManager:
         self.automation_running = False
         self.automation_wake_event = threading.Event()
         self.force_next_run = False
+        self.forced_period_id = None
         self._dead_stream_removal_cache_time = None
         
         # Lock to prevent concurrent execution of heavy batch processes
@@ -1093,19 +1110,23 @@ class AutomatedStreamManager:
         # letting the specific logic (assignment/validation) handle per-channel profiles.
         return all_channels
     
-    def refresh_playlists(self, force: bool = False, account_id: Optional[int] = None) -> bool:
+    def refresh_playlists(self, force: bool = False, account_id: Optional[int] = None, skip_changelog: bool = False) -> Tuple[bool, List[Dict]]:
         """Refresh M3U playlists and track changes.
         
         Args:
             force: If True, bypass the auto_playlist_update feature flag check.
                    Used for manual/quick action triggers from the UI.
             account_id: Optional ID of specific account to refresh. If None, refreshes all enabled accounts.
+            
+        Returns:
+            Tuple of (success_bool, refreshed_accounts_list)
         """
+        refreshed_accounts = []
         try:
             if not force and not self.config.get("enabled_features", {}).get("auto_playlist_update", True):
                 if not force:  # Allow force to override feature flag
                     logger.info("Playlist update is disabled in configuration")
-                    return False
+                    return False, []
             
             logger.info("Starting M3U playlist refresh...")
             
@@ -1152,6 +1173,10 @@ class AutomatedStreamManager:
                     if acc_id is not None:
                         logger.info(f"Refreshing M3U account {acc_id}: {account.get('name')}")
                         refresh_m3u_playlists(account_id=acc_id)
+                        refreshed_accounts.append({
+                            "id": acc_id,
+                            "name": account.get('name', f"Account {acc_id}")
+                        })
                 
                 if not accounts_to_process:
                     logger.info("No accounts matched criteria for refresh.")
@@ -1203,7 +1228,7 @@ class AutomatedStreamManager:
             removed_streams = [{"id": sid, "name": before_stream_ids[sid]} for sid in removed_stream_ids]
             
             
-            if self.config.get("enabled_features", {}).get("changelog_tracking", True):
+            if not skip_changelog and self.config.get("enabled_features", {}).get("changelog_tracking", True):
                 self.changelog.add_entry("playlist_refresh", {
                     "success": True,
                     "timestamp": self.last_playlist_update.isoformat(),
@@ -1232,18 +1257,20 @@ class AutomatedStreamManager:
             # after streams are actually assigned to specific channels. This prevents marking all channels
             # when we only know that *some* streams changed in the playlist, not which channels are affected.
             
-            return True
+            return True, refreshed_accounts
             
         except Exception as e:
             logger.error(f"Failed to refresh M3U playlists: {e}")
             
             
-            if self.config.get("enabled_features", {}).get("changelog_tracking", True):
+            if not skip_changelog and self.config.get("enabled_features", {}).get("changelog_tracking", True):
                 self.changelog.add_entry("playlist_refresh", {
                     "success": False,
                     "error": str(e),
                     "timestamp": datetime.now().isoformat()
                 })
+            
+            return False, []
     def _match_streams_batch(self, streams: List[Dict], channel_streams: Dict[str, set], 
                              dead_stream_removal_enabled: bool,
                              channel_to_allowed_playlists: Dict[str, List[int]],
@@ -1482,18 +1509,18 @@ class AutomatedStreamManager:
                 
         return results
 
-    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
+    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, int]:
         """Wrapper for stream discovery to ensure single execution."""
         if not self._lock.acquire(blocking=False):
             logger.warning("Stream discovery already active - skipping concurrent request")
             return {}
         
         try:
-            return self._discover_and_assign_streams_impl(force, skip_check_trigger)
+            return self._discover_and_assign_streams_impl(force, skip_check_trigger, forced_period_id, skip_changelog)
         finally:
             self._lock.release()
 
-    def _discover_and_assign_streams_impl(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
+    def _discover_and_assign_streams_impl(self, force: bool = False, skip_check_trigger: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
@@ -1501,6 +1528,7 @@ class AutomatedStreamManager:
                    Used for manual/quick action triggers from the UI.
             skip_check_trigger: If True, don't trigger immediate stream quality check.
                    Used when the caller will handle the check itself (e.g., check_single_channel).
+            forced_period_id: Optional period ID to filter channels.
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logger.info("Stream discovery is disabled in configuration")
@@ -1610,6 +1638,12 @@ class AutomatedStreamManager:
                 # Skip channels without automation periods assigned
                 if not config:
                     continue
+                
+                # Filter by forced_period_id if provided
+                if forced_period_id:
+                    has_period = any(p.get('id') == forced_period_id for p in config.get('periods', []))
+                    if not has_period:
+                        continue
                     
                 profile = config.get('profile')
                 
@@ -1851,7 +1885,9 @@ class AutomatedStreamManager:
             
             # Add comprehensive changelog entry
             total_assigned = sum(assignment_count.values())
-            if self.config.get("enabled_features", {}).get("changelog_tracking", True):
+            # Add comprehensive changelog entry
+            total_assigned = sum(assignment_count.values())
+            if self.config.get("enabled_features", {}).get("changelog_tracking", True) and not skip_changelog:
                 # Limit detailed assignments to prevent oversized changelog entries
                 # Sort by stream count (descending) to show the most significant updates
                 sorted_assignments = sorted(detailed_assignments, key=lambda x: x['stream_count'], reverse=True)
@@ -1904,18 +1940,21 @@ class AutomatedStreamManager:
                 except Exception as mark_error:
                     logger.debug(f"Could not mark channels for stream checking after discovery: {mark_error}")
             
-            return assignment_count
+            return {
+                "assignment_count": assignment_count,
+                "assignment_details": detailed_assignments
+            }
             
         except Exception as e:
             logger.error(f"Stream discovery failed: {e}")
-            if self.config.get("enabled_features", {}).get("changelog_tracking", True):
-                self.changelog.add_entry("stream_discovery", {
-                    "success": False,
-                    "error": str(e)
-                })
-            return {}
+            return {
+                "assignment_count": {},
+                "assignment_details": [],
+                "success": False,
+                "error": str(e)
+            }
     
-    def validate_and_remove_non_matching_streams(self, force: bool = False) -> Dict[str, Any]:
+    def validate_and_remove_non_matching_streams(self, force: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, Any]:
         """
         Validate existing streams in channels against regex patterns.
         Remove streams that no longer match their channel's patterns.
@@ -1930,6 +1969,7 @@ class AutomatedStreamManager:
             force: If True, bypass the automation_controls config check.
                    Reserved for future use or special cases where removal must happen
                    regardless of user settings. Default is False to respect user config.
+            forced_period_id: Optional period ID to filter channels.
         
         Returns:
             Dict containing validation statistics:
@@ -1975,11 +2015,11 @@ class AutomatedStreamManager:
             }
             
         try:
-            return self._validate_and_remove_non_matching_streams_impl(force)
+            return self._validate_and_remove_non_matching_streams_impl(force, forced_period_id, skip_changelog)
         finally:
             self._lock.release()
 
-    def _validate_and_remove_non_matching_streams_impl(self, force: bool = False) -> Dict[str, Any]:
+    def _validate_and_remove_non_matching_streams_impl(self, force: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, Any]:
         """Core implementation of stream validation."""
         log_function_call(logger, "validate_and_remove_non_matching_streams")
         try:
@@ -1990,12 +2030,7 @@ class AutomatedStreamManager:
             
             if not all_channels:
                 logger.info("No channels found")
-                return {
-                    "channels_checked": 0,
-                    "streams_removed": 0,
-                    "channels_modified": 0,
-                    "details": []
-                }
+                return False, []
             
             # Filter by profile if one is selected
             all_channels = self._filter_channels_by_profile(all_channels, "stream validation")
@@ -2015,7 +2050,13 @@ class AutomatedStreamManager:
                 # Skip channels without automation periods assigned
                 if not config:
                     continue
-                    
+                
+                # Filter by forced_period_id if provided
+                if forced_period_id:
+                    has_period = any(p.get('id') == forced_period_id for p in config.get('periods', []))
+                    if not has_period:
+                        continue
+                        
                 profile = config.get('profile')
                 
                 # Check if stream matching is enabled in the profile
@@ -2125,7 +2166,7 @@ class AutomatedStreamManager:
                        f"removed {validation_results['streams_removed']} streams from {validation_results['channels_modified']} channels")
             
             # Add changelog entry if there were changes
-            if validation_results['streams_removed'] > 0 and self.config.get("enabled_features", {}).get("changelog_tracking", True):
+            if validation_results['streams_removed'] > 0 and self.config.get("enabled_features", {}).get("changelog_tracking", True) and not skip_changelog:
                 self.changelog.add_entry("stream_validation", {
                     "channels_checked": validation_results['channels_checked'],
                     "streams_removed": validation_results['streams_removed'],
@@ -2195,13 +2236,39 @@ class AutomatedStreamManager:
             
         return datetime.now() - self.last_playlist_update >= interval
     
-    def run_automation_cycle(self):
+    def _is_period_due(self, period_id: str, period_info: dict) -> bool:
+        """Check if a specific period is due to run based on its schedule."""
+        last_run = self.period_last_run.get(period_id)
+        if not last_run:
+            return True
+            
+        schedule = period_info.get("schedule", {})
+        schedule_type = schedule.get("type", "interval")
+        
+        if schedule_type == "interval":
+            interval_mins = schedule.get("value", 60)
+            return datetime.now() - last_run >= timedelta(minutes=interval_mins)
+        elif schedule_type == "cron" and CRONITER_AVAILABLE:
+            try:
+                cron = croniter(schedule.get("value"), last_run)
+                next_run = cron.get_next(datetime)
+                return datetime.now() >= next_run
+            except Exception as e:
+                logger.warning(f"Invalid cron expression for period {period_id}, falling back to default interval: {e}")
+                interval_mins = 60
+                return datetime.now() - last_run >= timedelta(minutes=interval_mins)
+        elif schedule_type == "cron":
+             logger.warning(f"croniter not available, falling back to 60m interval for period {period_id}")
+             return datetime.now() - last_run >= timedelta(minutes=60)
+             
+        return False
+    
+    def run_automation_cycle(self, forced: bool = False, forced_period_id: str = None):
         """Run one complete automation cycle with profile support."""
-        # Check if forced run
-        forced = self.force_next_run
+        # Determine if this is a forced run (manual trigger)
+        # forced and forced_period_id are now passed as arguments
         if forced:
-            logger.info("Forcing automation cycle (manual trigger)")
-            self.force_next_run = False
+            logger.info(f"Forcing automation cycle{' for period ' + forced_period_id if forced_period_id else ''}")
             
         # 1. Check Global Automation Switch
         from automation_config_manager import get_automation_config_manager
@@ -2222,100 +2289,263 @@ class AutomatedStreamManager:
                 return
         except Exception as e:
             logger.debug(f"Could not check stream checking mode status: {e}")
+        # Global setting for playlist updates is now period-driven
+        # We don't early return here, we let the individual periods be checked below
         
-        # Only log and run if it's actually time to update OR if forced
-        if not forced and not self.should_run_playlist_update():
-            return
-        
-        logger.info("Starting automation cycle...")
+        logger.debug("Starting automation cycle...")
         
         try:
-            # 2. Determine which playlists to update based on channels with automation periods assigned
-            # Only channels with automation periods participate in automation
+            # 2. Determine which playlists to update and group channels by period
             udi = get_udi_manager()
             channels = udi.get_channels()
+            active_periods = {} # {(period_id, period_name): {profile_id, profile_name, channels: []}}
             active_profile_ids = set()
-            channels_with_periods = 0
-            channels_without_periods = 0
             
             for channel in channels:
-                # Only process channels with automation periods assigned
-                config = automation_config.get_effective_configuration(channel.get('id'), channel.get('group_id'))
-                if config:
-                    profile = config.get('profile')
-                    if profile and profile.get('id'):
-                        active_profile_ids.add(profile['id'])
-                        channels_with_periods += 1
-                else:
-                    channels_without_periods += 1
+                channel_id = channel.get('id')
+                # Get effective configuration - only channels with automation periods participate
+                config = automation_config.get_effective_configuration(channel_id, channel.get('group_id'))
+                if config and config.get('periods'):
+                    for period_info in config['periods']:
+                        p_id = period_info.get('id')
+                        if forced_period_id and p_id != forced_period_id:
+                            continue
+                            
+                        # Check if the period is actually due
+                        if not forced and not forced_period_id and not self._is_period_due(p_id, period_info):
+                            continue
+                            
+                        p_name = period_info.get('name')
+                        profile = config.get('profile')
+                        
+                        if p_id and p_name:
+                            key = (p_id, p_name)
+                            if key not in active_periods:
+                                active_periods[key] = {
+                                    'profile_id': profile.get('id') if profile else None,
+                                    'profile_name': profile.get('name') if profile else "Default",
+                                    'channels': []
+                                }
+                            active_periods[key]['channels'].append(channel)
+                            if profile and profile.get('id'):
+                                active_profile_ids.add(profile['id'])
             
-            if channels_without_periods > 0:
-                logger.info(f"{channels_without_periods} channel(s) without automation periods assigned - will be skipped")
-            
-            if not active_profile_ids:
-                logger.info("No channels with active automation periods found. Skipping cycle.")
+            if not active_periods:
+                logger.debug("No channels with active automation periods found. Skipping cycle.")
                 self.last_playlist_update = datetime.now()
                 return
             
-            logger.info(f"Processing {channels_with_periods} channel(s) with automation periods assigned")
+            channels_with_periods = sum(len(p['channels']) for p in active_periods.values())
+            logger.info(f"Processing {channels_with_periods} channel assignments across {len(active_periods)} active period(s)")
             
             # Determine playlists to update
             playlists_to_update = set()
             update_all_playlists = False
+            channels_to_quality_check = []
             
             for p_id in active_profile_ids:
                 profile = automation_config.get_profile(p_id)
                 if not profile: continue
                 
+                if profile.get('stream_checking', {}).get('enabled', False):
+                    # Collect all channels for this profile that are in the active periods
+                    for entry in active_periods.values():
+                        if entry.get('profile_id') == p_id:
+                            channels_to_quality_check.extend([ch.get('id') for ch in entry['channels']])
+
                 m3u_config = profile.get('m3u_update', {})
                 if m3u_config.get('enabled', False):
                     pf_playlists = m3u_config.get('playlists', [])
                     if not pf_playlists:
-                        # Empty list usually implies ALL playlists in this context?
-                        # Or if we want to be strict: empty means none.
-                        # Given the requirement "Elegir qué playlists", empty likely means "All" or "Default behavior".
-                        # Let's assume empty list = ALL for safety to match legacy behavior where we updated everything.
                         update_all_playlists = True
                     else:
                         playlists_to_update.update(pf_playlists)
             
             # 3. Update Playlists
-            success = False
+            refresh_success = False
+            refreshed_accounts = []
+            
+            start_time = datetime.now()
+            
             if update_all_playlists:
                 logger.info("Updating ALL playlists (requested by one or more profiles)")
-                success = self.refresh_playlists(account_id=None)
+                refresh_success, refreshed_accounts = self.refresh_playlists(account_id=None, skip_changelog=True)
             elif playlists_to_update:
                 logger.info(f"Updating {len(playlists_to_update)} specific playlists: {playlists_to_update}")
-                # We need to map playlist names/IDs. The profile likely stores IDs.
-                # refresh_playlists takes account_id.
-                success = True
+                refresh_success = True
                 for acc_id in playlists_to_update:
-                    if not self.refresh_playlists(account_id=int(acc_id)):
-                        success = False
+                    success, accs = self.refresh_playlists(account_id=int(acc_id), skip_changelog=True)
+                    if not success:
+                        refresh_success = False
+                    if accs:
+                        refreshed_accounts.extend(accs)
             else:
                 logger.info("No playlists to update based on active profile settings.")
-                # Update timestamp to prevent immediate re-execution in the next loop
                 self.last_playlist_update = datetime.now()
-                success = True # Treat as success so we continue to matching (maybe local matching?)
+                refresh_success = True
             
-            if success:
+            validation_details = []
+            assignment_details = []
+            
+            if refresh_success:
                 # Small delay to allow playlist processing
                 time.sleep(10)
                 
                 # 4. Stream Matching (Validation & Assignment)
-                # We pass the automation_config to these methods or they fetch it internally.
-                # But they iterate channels anyway, so they can check per-channel profile.
+                # Group results by channel for easier joining later
                 
                 # Validate existing streams
                 try:
-                    validation_results = self.validate_and_remove_non_matching_streams()
-                    if validation_results.get("streams_removed", 0) > 0:
-                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams")
+                    val_res = self.validate_and_remove_non_matching_streams(force=forced, forced_period_id=forced_period_id, skip_changelog=True)
+                    validation_details = val_res.get("details", [])
                 except Exception as e:
                     logger.error(f"✗ Failed to validate streams: {e}")
                 
                 # Discover and assign new streams
-                assignments = self.discover_and_assign_streams()
+                try:
+                    assign_res = self.discover_and_assign_streams(force=forced, skip_check_trigger=True, forced_period_id=forced_period_id, skip_changelog=True)
+                    assignment_details = assign_res.get("assignment_details", [])
+                except Exception as e:
+                    logger.error(f"✗ Failed to assign streams: {e}")
+
+                # 4.5. Trigger Quality Checks for all channels in the period(s)
+                if channels_to_quality_check:
+                    try:
+                        from stream_checker_service import get_stream_checker_service
+                        stream_checker = get_stream_checker_service()
+                        logger.info(f"Running synchronous quality checks for {len(channels_to_quality_check)} channels...")
+                        # Run checks synchronously and collect results
+                        check_results = stream_checker.check_channels_synchronously(
+                            channel_ids=channels_to_quality_check, 
+                            force_check=forced
+                        )
+                        logger.info(f"Synchronous quality checks completed for {len(check_results)} channels")
+                    except Exception as e:
+                        logger.error(f"✗ Failed to run quality checks: {e}")
+                        check_results = {}
+            
+            # 5. Consolidate Results by Period for Changelog
+            end_time = datetime.now()
+            duration_sec = (end_time - start_time).total_seconds()
+            duration_str = f"{int(duration_sec)}s"
+            
+            run_results = {
+                'duration': duration_str,
+                'total_channels': channels_with_periods,
+                'periods': []
+            }
+            
+            # Map channel IDs to their results
+            val_map = {str(d['channel_id']): d for d in validation_details}
+            assign_map = {str(d['channel_id']): d for d in assignment_details}
+            
+            for (p_id, p_name), p_data in active_periods.items():
+                period_entry = {
+                    'period_id': p_id,
+                    'period_name': p_name,
+                    'channels': []
+                }
+                
+                for channel in p_data['channels']:
+                    c_id = str(channel.get('id'))
+                    c_name = channel.get('name', f'Channel {c_id}')
+                    
+                    # Fetch logo URL
+                    logo_url = None
+                    logo_id = channel.get('logo_id')
+                    if logo_id:
+                        try:
+                            logo = udi.get_logo_by_id(logo_id)
+                            if logo: logo_url = logo.get('cache_url')
+                        except: pass
+                    
+                    steps = []
+                    
+                    # Step 1: Playlist Refresh (if relevant for this period's profile)
+                    profile_id = p_data['profile_id']
+                    profile = automation_config.get_profile(profile_id) if profile_id else None
+                    m3u_enabled = profile.get('m3u_update', {}).get('enabled', False) if profile else False
+                    
+                    if m3u_enabled:
+                        steps.append({
+                            'step': 'Playlist Refresh',
+                            'status': 'success' if refresh_success else ('skipped' if not refreshed_accounts else 'failed'),
+                            'details': {
+                                'accounts': refreshed_accounts
+                            }
+                        })
+                    
+                    # Step 2: Validation
+                    if c_id in val_map:
+                        v_detail = val_map[c_id]
+                        steps.append({
+                            'step': 'Validation',
+                            'status': 'success',
+                            'details': {
+                                'removed_count': v_detail.get('removed_count', 0),
+                                'streams': v_detail.get('removed_streams', [])
+                            }
+                        })
+                    
+                    # Step 3: Assignment
+                    if c_id in assign_map:
+                        a_detail = assign_map[c_id]
+                        steps.append({
+                            'step': 'Assignment',
+                            'status': 'success',
+                            'details': {
+                                'added_count': a_detail.get('stream_count', 0),
+                                'streams': a_detail.get('streams', [])
+                            }
+                        })
+                    
+                    # Step 4: Quality Check
+                    # Check if we have results for this channel
+                    if int(c_id) in check_results:
+                        c_result = check_results[int(c_id)]
+                        steps.append({
+                            'step': 'Quality Check',
+                            'status': 'success' if c_result.get('error') is None else 'failed',
+                            'details': {
+                                'dead_streams_count': c_result.get('dead_streams_count', 0),
+                                'revived_streams_count': c_result.get('revived_streams_count', 0),
+                                'skipped_streams_count': len(c_result.get('skipped_streams', [])),
+                                'dead_streams': c_result.get('dead_streams', []),
+                                'revived_streams': c_result.get('revived_streams', []),
+                                'skipped_streams': c_result.get('skipped_streams', []),
+                                'checked_streams': c_result.get('checked_streams', []),
+                                'error': c_result.get('error')
+                            }
+                        })
+
+                    
+                    if steps:
+                        period_entry['channels'].append({
+                            'channel_id': int(c_id),
+                            'channel_name': c_name,
+                            'logo_url': logo_url,
+                            'profile_id': profile_id,
+                            'profile_name': p_data['profile_name'],
+                            'steps': steps
+                        })
+                
+                if period_entry['channels']:
+                    run_results['periods'].append(period_entry)
+            
+            # Add to changelog if there's any work done
+            has_work = any(len(p['channels']) > 0 for p in run_results['periods'])
+            if has_work and self.config.get("enabled_features", {}).get("changelog_tracking", True):
+                self.changelog.add_automation_run_entry(run_results)
+            
+            # Update last run times ONLY for periods that actually had work / were due
+            for p_id_tuple in active_periods.keys():
+                # active_periods keys are (p_id, p_name)
+                pid = p_id_tuple[0]
+                self.period_last_run[pid] = datetime.now()
+                
+            # Keep legacy last_playlist_update synced for legacy backward compatibility if any
+            if active_periods:
+                self.last_playlist_update = datetime.now()
             
             logger.info("Automation cycle completed")
             
@@ -2330,10 +2560,17 @@ class AutomatedStreamManager:
         """
         return channels
         
-    def trigger_automation(self):
-        """Manually trigger an automation cycle."""
-        logger.info("Triggering manual automation cycle")
-        self.force_next_run = True
+    def trigger_automation(self, period_id=None, force=True):
+        """Manually trigger an automation cycle.
+        
+        Args:
+            period_id: Optional ID of a specific automation period to run
+            force: If True (default), forces check bypassing grace periods. 
+                   If False, respects grace periods (simulates scheduled run).
+        """
+        logger.info(f"Triggering manual automation cycle{' for period ' + period_id if period_id else ''} (force={force})")
+        self.force_next_run = force
+        self.forced_period_id = period_id
         if self.automation_thread and self.automation_thread.is_alive():
             self.automation_wake_event.set()
         else:
@@ -2370,7 +2607,15 @@ class AutomatedStreamManager:
         while self.automation_running:
             try:
                 # Run automation cycle
-                self.run_automation_cycle()
+                # Pass forced period info to cycle
+                forced = self.force_next_run
+                period_id = self.forced_period_id
+                
+                # Reset forced flags before running
+                self.force_next_run = False
+                self.forced_period_id = None
+                
+                self.run_automation_cycle(forced=forced, forced_period_id=period_id)
                 
             except Exception as e:
                 logger.error(f"Error in automation loop: {e}", exc_info=True)

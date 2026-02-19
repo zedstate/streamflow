@@ -243,6 +243,9 @@ export default function StreamChecker() {
   const inProgress = status?.queue?.in_progress || 0
   const completed = status?.queue?.completed || 0
   const failed = status?.queue?.failed || 0
+  const queued = status?.queue?.queued || 0
+  const totalBatch = queued + inProgress + completed + failed
+  const batchProgress = totalBatch > 0 ? ((completed + failed) / totalBatch) * 100 : 0
 
   return (
     <div className="space-y-6">
@@ -316,6 +319,25 @@ export default function StreamChecker() {
         </Card>
       </div>
 
+      {/* Batch Progress */}
+      {isChecking && totalBatch > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle>Batch Progress</CardTitle>
+            <CardDescription>Checking {totalBatch} channels</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{completed + failed} of {totalBatch} channels processed</span>
+                <span className="font-medium">{Math.round(batchProgress)}%</span>
+              </div>
+              <Progress value={batchProgress} className="h-2" />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Current Progress */}
       {progress && isChecking && (
         <Card>
@@ -335,26 +357,7 @@ export default function StreamChecker() {
               <p className="text-xs text-muted-foreground">{progress.step_detail}</p>
             </div>
 
-            {progress.current_stream_name && (
-              <div className="space-y-2">
-                <Label className="text-sm">
-                  {status?.parallel?.enabled ? 'Recently Completed Stream' : 'Current Stream'}
-                </Label>
-                <div className="text-sm font-mono bg-muted p-2 rounded-md">
-                  {progress.current_stream_name}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Stream {progress.current_stream}/{progress.total_streams}
-                  {status?.parallel?.enabled && inProgress > 1 && (
-                    <span className="ml-2 text-blue-600 dark:text-blue-400">
-                      ({inProgress} streams checking concurrently)
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-2 text-sm pb-2 border-b">
               <Badge variant="outline">{progress.status}</Badge>
               {status?.parallel?.enabled && (
                 <Badge variant="secondary">
@@ -362,6 +365,66 @@ export default function StreamChecker() {
                 </Badge>
               )}
             </div>
+
+            {/* Streams Detail Progress List */}
+            {progress.streams_detail && progress.streams_detail.length > 0 && (
+              <div className="mt-4">
+                <Label className="text-sm font-semibold mb-2 block">Stream Progress Tracking</Label>
+                <div className="rounded-md border max-h-64 overflow-y-auto w-full">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-muted sticky top-0 z-10 text-xs text-muted-foreground uppercase h-8">
+                      <tr>
+                        <th className="px-3 py-1 font-medium">Stream</th>
+                        <th className="px-3 py-1 font-medium">Account</th>
+                        <th className="px-3 py-1 font-medium text-center">Status</th>
+                        <th className="px-3 py-1 font-medium text-right">Specs</th>
+                        <th className="px-3 py-1 font-medium text-right">Score</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {progress.streams_detail.map((stream) => (
+                        <tr key={stream.id} className="hover:bg-muted/50 transition-colors bg-card">
+                          <td className="px-3 py-1.5 align-middle">
+                            <div className="font-medium max-w-[200px] truncate" title={stream.name}>
+                              {stream.name}
+                            </div>
+                          </td>
+                          <td className="px-3 py-1.5 align-middle">
+                            <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={stream.m3u_account}>
+                              {stream.m3u_account}
+                            </div>
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-center">
+                            {stream.status === 'pending' && <Badge variant="outline" className="text-[10px] text-muted-foreground">Pending</Badge>}
+                            {stream.status === 'checking' && <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">Checking</Badge>}
+                            {stream.status === 'completed' && <Badge variant="success" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Completed</Badge>}
+                            {stream.status === 'error' && <Badge variant="destructive" className="text-[10px]">Error</Badge>}
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
+                            {stream.status === 'completed' ? (
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span>{stream.video_codec || 'N/A'} • <span className="text-foreground">{stream.fps || 0} fps</span></span>
+                                {(stream.resolution || stream.bitrate) && (
+                                  <span className="text-[10px] text-muted-foreground/80">
+                                    {stream.resolution || 'Unknown'} {stream.bitrate ? `• ${Math.round(stream.bitrate / 1000)}kbps` : ''}
+                                    {stream.hdr_format && stream.hdr_format !== 'SDR' && (
+                                      <Badge variant="outline" className="ml-1 px-1 py-0 text-[8px] h-3 border-amber-500/30 text-amber-600 dark:text-amber-400">HDR</Badge>
+                                    )}
+                                  </span>
+                                )}
+                              </div>
+                            ) : '-'}
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-right text-xs font-mono">
+                            {stream.status === 'completed' && stream.score !== undefined ? stream.score.toFixed(2) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
