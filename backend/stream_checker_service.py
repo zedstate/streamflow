@@ -1608,12 +1608,14 @@ class StreamCheckerService:
         else:
             return self._check_channel_sequential(channel_id, skip_batch_changelog=skip_batch_changelog)
     
-    def _check_channel_concurrent(self, channel_id: int, skip_batch_changelog: bool = False):
+    def _check_channel_concurrent(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None):
         """Check and reorder streams for a specific channel using parallel thread pool.
         
         Args:
             channel_id: ID of the channel to check
             skip_batch_changelog: If True, don't add this check to the batch changelog
+            target_stream_ids: Optional list of stream IDs. If provided, ONLY these
+                               streams will be checked, bypassing all other logic.
         """
         import time as time_module
         from stream_check_utils import analyze_stream
@@ -1752,10 +1754,13 @@ class StreamCheckerService:
             
             # Identify which streams need analysis (new or unchecked)
             
-
-            
-            # FORCE check or expired immunity triggers full analysis
-            if force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
+            if target_stream_ids is not None:
+                # Targeted check mode: Evaluates newly assigned streams ONLY
+                streams_to_check = [s for s in streams if str(s['id']) in [str(ts) for ts in target_stream_ids]]
+                streams_already_checked = [s for s in streams if str(s['id']) not in [str(ts) for ts in target_stream_ids]]
+                logger.info(f"Targeted stream check: evaluating {len(streams_to_check)} specific newly assigned streams")
+                
+            elif force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
                 # If grace period is DISABLED, we check everything every time unless it's a "needs_check" trigger?
                 # Actually, if grace_period is False, users probably expect regular checks.
                 # However, we only get here if the worker picked up the channel.
@@ -2122,9 +2127,7 @@ class StreamCheckerService:
                 logo_url = None
                 logo_id = channel_data.get('logo_id')
                 if logo_id:
-                    logo = udi.get_logo_by_id(logo_id)
-                    if logo:
-                        logo_url = logo.get('cache_url') or logo.get('url')
+                    logo_url = f"/api/logos/{logo_id}"
                 
                 # Calculate channel-level averages from analyzed streams
                 averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
@@ -2268,12 +2271,14 @@ class StreamCheckerService:
             log_function_return(logger, "_check_channel_concurrent")
 
     
-    def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False):
+    def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None):
         """Check and reorder streams for a specific channel using sequential checking.
         
         Args:
             channel_id: ID of the channel to check
             skip_batch_changelog: If True, don't add this check to the batch changelog
+            target_stream_ids: Optional list of stream IDs. If provided, ONLY these
+                               streams will be checked, bypassing all other logic.
         """
         import time as time_module
         start_time = time_module.time()
@@ -2409,10 +2414,13 @@ class StreamCheckerService:
             
             # Identify which streams need analysis (new or unchecked)
             
-
-            
-            # FORCE check or expired immunity triggers full analysis
-            if force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
+            if target_stream_ids is not None:
+                # Targeted check mode: Evaluates newly assigned streams ONLY
+                streams_to_check = [s for s in streams if str(s['id']) in [str(ts) for ts in target_stream_ids]]
+                streams_already_checked = [s for s in streams if str(s['id']) not in [str(ts) for ts in target_stream_ids]]
+                logger.info(f"Targeted stream check: evaluating {len(streams_to_check)} specific newly assigned streams")
+                
+            elif force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
                 streams_to_check = streams
                 streams_already_checked = []
                 
@@ -2766,9 +2774,7 @@ class StreamCheckerService:
                     logo_url = None
                     logo_id = channel_data.get('logo_id')
                     if logo_id:
-                        logo = udi.get_logo_by_id(logo_id)
-                        if logo:
-                            logo_url = logo.get('cache_url') or logo.get('url')
+                        logo_url = f"/api/logos/{logo_id}"
                     
                     # Add to batch changelog instead of creating individual entry
                     # Only add to batch if not explicitly skipped (e.g., when called from check_single_channel)
@@ -3182,7 +3188,7 @@ class StreamCheckerService:
             logger.info(f"Marked {len(channel_ids)} channels for force check (bypasses 2-hour immunity)")
         return self.check_queue.add_channels(channel_ids, priority)
     
-    def check_channels_synchronously(self, channel_ids: List[int], force_check: bool = False) -> Dict[int, Dict]:
+    def check_channels_synchronously(self, channel_ids: List[int], force_check: bool = False, target_stream_ids: Optional[Dict[int, List[str]]] = None) -> Dict[int, Dict]:
         """Check multiple channels synchronously and return results.
         
         Using this method Bypasses the queue and worker/scheduler entirely.
@@ -3192,6 +3198,10 @@ class StreamCheckerService:
         Args:
             channel_ids: List of channel IDs to check
             force_check: If True, marks channels for force checking
+            target_stream_ids: Optional dict mapping channel_id -> list of stream_ids.
+                               If provided, only these specific streams will be evaluated.
+                               Any stream not in the list will be skipped and its existing
+                               stats cached. Used by automation for newly matched streams.
             
         Returns:
             Dict mapping channel_id to result dict (containing dead/revived streams)
@@ -3240,9 +3250,19 @@ class StreamCheckerService:
                 channel_start_time = datetime.now()
                 
                 try:
-                    # Use concurrent method directly (synchronously) but skip batch changelog
-                    # The caller (Automation Cycle) will handle reporting
-                    channel_result = self._check_channel_concurrent(channel_id, skip_batch_changelog=True)
+                    # Use specific channel-checker directly depending on concurrency setting
+                    concurrent_enabled = self.config.get('concurrent_streams.enabled', True)
+                    
+                    if target_stream_ids and channel_id in target_stream_ids:
+                        stream_id_whitelist = target_stream_ids[channel_id]
+                    else:
+                        stream_id_whitelist = None
+                        
+                    if concurrent_enabled:
+                        channel_result = self._check_channel_concurrent(channel_id, skip_batch_changelog=True, target_stream_ids=stream_id_whitelist)
+                    else:
+                        channel_result = self._check_channel_sequential(channel_id, skip_batch_changelog=True, target_stream_ids=stream_id_whitelist)
+                        
                     results[channel_id] = channel_result
                     with self.lock:
                         self.sync_batch_state['completed'] += 1
@@ -3593,12 +3613,7 @@ class StreamCheckerService:
                     logo_url = None
                     logo_id = channel.get('logo_id')
                     if logo_id:
-                        try:
-                            logo = udi.get_logo_by_id(logo_id)
-                            if logo and logo.get('cache_url'):
-                                logo_url = logo.get('cache_url')
-                        except Exception as e:
-                            logger.debug(f"Could not fetch logo for channel {channel_id}: {e}")
+                        logo_url = f"/api/logos/{logo_id}"
                     
                     self.changelog.add_single_channel_check_entry(
                         channel_id=channel_id,

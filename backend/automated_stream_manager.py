@@ -1750,12 +1750,7 @@ class AutomatedStreamManager:
                 # Get logo URL for this channel
                 logo_id = channel.get('logo_id')
                 if logo_id:
-                    try:
-                        logo = udi.get_logo_by_id(logo_id)
-                        if logo and logo.get('cache_url'):
-                            channel_logo_urls[channel_id] = logo.get('cache_url')
-                    except Exception as e:
-                        logger.debug(f"Could not fetch logo for channel {channel_id}: {e}")
+                    channel_logo_urls[channel_id] = f"/api/logos/{logo_id}"
                 
                 # Get streams for this channel from UDI
                 streams = udi.get_channel_streams(int(channel_id))
@@ -1980,7 +1975,8 @@ class AutomatedStreamManager:
             
             return {
                 "assignment_count": assignment_count,
-                "assignment_details": detailed_assignments
+                "assignment_details": detailed_assignments,
+                "assigned_stream_ids": dict(assignments)
             }
             
         except Exception as e:
@@ -1988,6 +1984,7 @@ class AutomatedStreamManager:
             return {
                 "assignment_count": {},
                 "assignment_details": [],
+                "assigned_stream_ids": {},
                 "success": False,
                 "error": str(e)
             }
@@ -2443,8 +2440,10 @@ class AutomatedStreamManager:
                 try:
                     assign_res = self.discover_and_assign_streams(force=forced, skip_check_trigger=True, forced_period_id=forced_period_id, skip_changelog=True)
                     assignment_details = assign_res.get("assignment_details", [])
+                    assigned_stream_ids = assign_res.get("assigned_stream_ids", {})
                 except Exception as e:
                     logger.error(f"✗ Failed to assign streams: {e}")
+                    assigned_stream_ids = {}
 
                 # 4.5. Trigger Quality Checks for all channels in the period(s)
                 if channels_to_quality_check:
@@ -2452,10 +2451,34 @@ class AutomatedStreamManager:
                         from stream_checker_service import get_stream_checker_service
                         stream_checker = get_stream_checker_service()
                         logger.info(f"Running synchronous quality checks for {len(channels_to_quality_check)} channels...")
+                        
+                        target_stream_ids = None
+                        _target_stream_ids = {}
+                        
+                        for ch_id in channels_to_quality_check:
+                            channel_data = udi.get_channel_by_id(ch_id)
+                            group_id = channel_data.get('channel_group_id') if channel_data else None
+                            config = automation_config.get_effective_configuration(ch_id, group_id)
+                            
+                            if config:
+                                profile = config.get('profile', {})
+                                check_all_streams = profile.get('stream_checking', {}).get('check_all_streams', False)
+                                
+                                if not check_all_streams:
+                                    # Strict validation mapping: Evaluate newly assigned streams only.
+                                    if str(ch_id) in assigned_stream_ids:
+                                        _target_stream_ids[ch_id] = assigned_stream_ids[str(ch_id)]
+                                    else:
+                                        _target_stream_ids[ch_id] = []
+                        
+                        if _target_stream_ids:
+                            target_stream_ids = _target_stream_ids
+                            
                         # Run checks synchronously and collect results
                         check_results = stream_checker.check_channels_synchronously(
                             channel_ids=channels_to_quality_check, 
-                            force_check=forced
+                            force_check=forced,
+                            target_stream_ids=target_stream_ids
                         )
                         logger.info(f"Synchronous quality checks completed for {len(check_results)} channels")
                     except Exception as e:
@@ -2492,10 +2515,7 @@ class AutomatedStreamManager:
                     logo_url = None
                     logo_id = channel.get('logo_id')
                     if logo_id:
-                        try:
-                            logo = udi.get_logo_by_id(logo_id)
-                            if logo: logo_url = logo.get('cache_url')
-                        except: pass
+                        logo_url = f"/api/logos/{logo_id}"
                     
                     steps = []
                     

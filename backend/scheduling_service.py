@@ -357,9 +357,7 @@ class SchedulingService:
             logo_id = channel.get('logo_id')
             logo_url = None
             if logo_id:
-                logo = udi.get_logo_by_id(logo_id)
-                if logo:
-                    logo_url = logo.get('cache_url') or logo.get('url')
+                logo_url = f"/api/logos/{logo_id}"
             
             # Get schedule type (default to 'check' for backward compatibility)
             schedule_type = event_data.get('schedule_type', 'check')
@@ -833,9 +831,7 @@ class SchedulingService:
                 logo_id = channel.get('logo_id')
                 logo_url = None
                 if logo_id:
-                    logo = udi.get_logo_by_id(logo_id)
-                    if logo:
-                        logo_url = logo.get('cache_url') or logo.get('url')
+                    logo_url = f"/api/logos/{logo_id}"
                 
                 channels_info.append({
                     'id': channel_id,
@@ -1026,9 +1022,7 @@ class SchedulingService:
                     logo_id = channel.get('logo_id')
                     logo_url = None
                     if logo_id:
-                        logo = udi.get_logo_by_id(logo_id)
-                        if logo:
-                            logo_url = logo.get('cache_url') or logo.get('url')
+                        logo_url = f"/api/logos/{logo_id}"
                     
                     channels_info.append({
                         'id': channel_id,
@@ -1289,9 +1283,7 @@ class SchedulingService:
                     logo_id = channel.get('logo_id') if channel else None
                     logo_url = None
                     if logo_id:
-                        logo = udi.get_logo_by_id(logo_id)
-                        if logo:
-                            logo_url = logo.get('cache_url') or logo.get('url')
+                        logo_url = f"/api/logos/{logo_id}"
                     
                     # Get schedule type from rule (default to 'check' for backward compatibility)
                     schedule_type = rule.get('schedule_type', 'check')
@@ -1525,9 +1517,7 @@ class SchedulingService:
                                     logo_id = channel.get('logo_id')
                                     logo_url = None
                                     if logo_id:
-                                        logo = udi.get_logo_by_id(logo_id)
-                                        if logo:
-                                            logo_url = logo.get('cache_url') or logo.get('url')
+                                        logo_url = f"/api/logos/{logo_id}"
                                     
                                     channels_info.append({
                                         'id': channel_id,
@@ -1559,9 +1549,7 @@ class SchedulingService:
                                     logo_id = channel.get('logo_id')
                                     logo_url = None
                                     if logo_id:
-                                        logo = udi.get_logo_by_id(logo_id)
-                                        if logo:
-                                            logo_url = logo.get('cache_url') or logo.get('url')
+                                        logo_url = f"/api/logos/{logo_id}"
                                     
                                     channels_info.append({
                                         'id': channel_id,
