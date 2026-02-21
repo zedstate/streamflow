@@ -674,18 +674,37 @@ export default function Changelog() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState(7)
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
   const [actionFilter, setActionFilter] = useState('all')
   const { toast } = useToast()
 
   useEffect(() => {
+    // Reset page when filter changes
+    setPage(1)
+  }, [days, actionFilter])
+
+  useEffect(() => {
     loadChangelog()
-  }, [days])
+  }, [days, page, actionFilter])
 
   const loadChangelog = async () => {
     try {
       setLoading(true)
-      const response = await changelogAPI.getChangelog(days)
-      setEntries(response.data || [])
+      const response = await changelogAPI.getChangelog(days, page, 50)
+
+      const responseData = response.data || {};
+      const dataArray = Array.isArray(responseData) ? responseData : (responseData.data || []);
+
+      // If we got the new paginated format, use it
+      if (responseData.total_pages !== undefined) {
+        setTotalPages(responseData.total_pages)
+      } else {
+        // Fallback array handling
+        setTotalPages(1)
+      }
+
+      setEntries(dataArray)
     } catch (err) {
       console.error('Failed to load changelog:', err)
       toast({
@@ -746,7 +765,7 @@ export default function Changelog() {
         </div>
       </div>
 
-      {loading ? (
+      {loading && entries.length === 0 ? (
         <Card>
           <CardContent className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -768,6 +787,31 @@ export default function Changelog() {
           {filteredEntries.map((entry, index) => (
             <ChangelogEntry key={index} entry={entry} />
           ))}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-4 border-t border-muted">
+              <span className="text-sm text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1 || loading}
+                  className="px-4 py-2 text-sm font-medium rounded-md border text-muted-foreground bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages || loading}
+                  className="px-4 py-2 text-sm font-medium rounded-md border text-muted-foreground bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
