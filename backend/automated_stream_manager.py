@@ -2281,7 +2281,11 @@ class AutomatedStreamManager:
         schedule_type = schedule.get("type", "interval")
         
         if schedule_type == "interval":
-            interval_mins = schedule.get("value", 60)
+            try:
+                interval_mins = int(schedule.get("value", 60))
+            except ValueError:
+                logger.warning(f"Invalid interval value for period {period_id}, using default 60")
+                interval_mins = 60
             return datetime.now() - last_run >= timedelta(minutes=interval_mins)
         elif schedule_type == "cron" and CRONITER_AVAILABLE:
             try:

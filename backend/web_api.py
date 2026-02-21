@@ -3732,7 +3732,7 @@ def trigger_automation_cycle():
             import threading
             def run_forced():
                 try:
-                    manager.run_automation_cycle(force=True, forced_period_id=period_id)
+                    manager.run_automation_cycle(forced=True, forced_period_id=period_id)
                 except Exception as e:
                     logger.error(f"Error in forced automation cycle: {e}")
             
