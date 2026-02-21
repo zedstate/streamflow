@@ -115,10 +115,9 @@ def check_wizard_complete():
     """
     try:
         config_file = CONFIG_DIR / 'automation_config.json'
-        regex_file = CONFIG_DIR / 'channel_regex_config.json'
         
         # Check if configuration files exist
-        if not config_file.exists() or not regex_file.exists():
+        if not config_file.exists():
             return False
         
         # Check if we can connect to Dispatcharr (optional - use cached result)
