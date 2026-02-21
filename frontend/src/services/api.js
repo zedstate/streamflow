@@ -52,9 +52,9 @@ export const automationAPI = {
   // Profiles
   getProfiles: () => api.get('/automation/profiles'),
   createProfile: (profile) => api.post('/automation/profiles', profile),
-  getProfile: (profileId) => api.get(`/automation/profiles/${profileId}`),
-  updateProfile: (profileId, profile) => api.put(`/automation/profiles/${profileId}`, profile),
-  deleteProfile: (profileId) => api.delete(`/automation/profiles/${profileId}`),
+  getProfile: (profileId) => api.get(`/ automation / profiles / ${profileId} `),
+  updateProfile: (profileId, profile) => api.put(`/ automation / profiles / ${profileId} `, profile),
+  deleteProfile: (profileId) => api.delete(`/ automation / profiles / ${profileId} `),
   bulkDeleteProfiles: (profileIds) => api.post('/automation/profiles/bulk-delete', { profile_ids: profileIds }),
 
   // Assignments
@@ -65,11 +65,11 @@ export const automationAPI = {
   // Automation Periods
   getPeriods: () => api.get('/automation/periods'),
   createPeriod: (period) => api.post('/automation/periods', period),
-  getPeriod: (periodId) => api.get(`/automation/periods/${periodId}`),
-  updatePeriod: (periodId, period) => api.put(`/automation/periods/${periodId}`, period),
-  deletePeriod: (periodId) => api.delete(`/automation/periods/${periodId}`),
+  getPeriod: (periodId) => api.get(`/ automation / periods / ${periodId} `),
+  updatePeriod: (periodId, period) => api.put(`/ automation / periods / ${periodId} `, period),
+  deletePeriod: (periodId) => api.delete(`/ automation / periods / ${periodId} `),
   assignPeriodToChannels: (periodId, channelIds, profileId, replace = false) =>
-    api.post(`/automation/periods/${periodId}/assign-channels`, { channel_ids: channelIds, profile_id: profileId, replace }),
+    api.post(`/ automation / periods / ${periodId}/assign-channels`, { channel_ids: channelIds, profile_id: profileId, replace }),
   removePeriodFromChannels: (periodId, channelIds) =>
     api.post(`/automation/periods/${periodId}/remove-channels`, { channel_ids: channelIds }),
   getPeriodChannels: (periodId) => api.get(`/automation/periods/${periodId}/channels`),
@@ -152,7 +152,7 @@ export const streamCheckerAPI = {
 };
 
 export const changelogAPI = {
-  getChangelog: (days = 7) => api.get(`/changelog?days=${days}`),
+  getChangelog: (days = 7, page = 1, limit = 50) => api.get(`/changelog`, { params: { days, page, limit } }),
 };
 
 export const deadStreamsAPI = {

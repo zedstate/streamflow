@@ -1927,6 +1927,8 @@ def get_changelog():
     """Get recent changelog entries from both automation and stream checker."""
     try:
         days = request.args.get('days', 7, type=int)
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 50, type=int)
         
         # Get automation changelog entries
         manager = get_automation_manager()
@@ -1945,7 +1947,20 @@ def get_changelog():
         merged_changelog = automation_changelog + stream_checker_changelog
         merged_changelog.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         
-        return jsonify(merged_changelog)
+        # Apply pagination
+        total = len(merged_changelog)
+        total_pages = (total + limit - 1) // limit if limit > 0 else 0
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_data = merged_changelog[start_idx:end_idx] if limit > 0 else merged_changelog
+        
+        return jsonify({
+            'data': paginated_data,
+            'page': page,
+            'limit': limit,
+            'total': total,
+            'total_pages': total_pages
+        })
     except Exception as e:
         logger.error(f"Error getting changelog: {e}")
         return jsonify({"error": str(e)}), 500

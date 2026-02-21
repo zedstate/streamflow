@@ -2535,7 +2535,7 @@ class AutomatedStreamManager:
                     logo_url = None
                     logo_id = channel.get('logo_id')
                     if logo_id:
-                        logo_url = f"/api/logos/{logo_id}"
+                        logo_url = f"/api/channels/logos/{logo_id}/cache"
                     
                     steps = []
                     
@@ -2595,9 +2595,29 @@ class AutomatedStreamManager:
                                 'error': c_result.get('error')
                             }
                         })
-
                     
-                    if steps:
+                    # Filter out channels with zero impact
+                    # A channel has impact if:
+                    # 1. Validation removed streams
+                    # 2. Assignment added streams
+                    # 3. Quality check found dead, revived, skipped, or actively checked streams
+                    # 4. Playlist Refresh was explicitly triggered for this channel's accounts and was successful
+                    has_impact = False
+                    for step in steps:
+                        if step['step'] == 'Validation' and step['details'].get('removed_count', 0) > 0:
+                            has_impact = True
+                        elif step['step'] == 'Assignment' and step['details'].get('added_count', 0) > 0:
+                            has_impact = True
+                        elif step['step'] == 'Quality Check':
+                            d = step['details']
+                            if d.get('dead_streams_count', 0) > 0 or d.get('revived_streams_count', 0) > 0 \
+                               or d.get('skipped_streams_count', 0) > 0 or len(d.get('checked_streams', [])) > 0:
+                                has_impact = True
+                        elif step['step'] == 'Playlist Refresh' and step['status'] != 'skipped':
+                            # Even if streams didn't change, the act of refreshing the playlist is worth logging
+                            has_impact = True
+
+                    if steps and has_impact:
                         period_entry['channels'].append({
                             'channel_id': int(c_id),
                             'channel_name': c_name,
