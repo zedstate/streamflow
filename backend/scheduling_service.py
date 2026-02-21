@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Any
 from logging_config import setup_logging
 from udi import get_udi_manager
 from dispatcharr_config import get_dispatcharr_config
+from api_utils import fetch_data_from_url
 
 logger = setup_logging(__name__)
 
@@ -192,24 +193,19 @@ class SchedulingService:
             
             # Fetch fresh data
             base_url = self._get_base_url()
-            token = self._get_auth_token()
             
-            if not base_url or not token:
-                logger.error("Missing Dispatcharr configuration")
+            if not base_url:
+                logger.error("Missing Dispatcharr configuration (base_url)")
                 return []
             
             try:
                 url = f"{base_url}/api/epg/grid/"
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json"
-                }
-                
                 logger.info(f"Fetching EPG grid data from {url}")
-                response = requests.get(url, headers=headers, timeout=30)
-                response.raise_for_status()
                 
-                data = response.json()
+                data = fetch_data_from_url(url)
+                if data is None:
+                    logger.error("Failed to fetch EPG grid data")
+                    return []
                 
                 # Handle different response formats from Dispatcharr API
                 # According to swagger, it should be an array, but handle edge cases

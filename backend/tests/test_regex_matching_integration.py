@@ -185,7 +185,7 @@ class TestRegexMatchingIntegration(unittest.TestCase):
                     'regex_pattern': '^Breaking News',
                     'minutes_before': 5
                 }
-                with patch('scheduling_service.requests.get'):
+                with patch('scheduling_service.fetch_data_from_url'):
                     self.service.create_auto_create_rule(rule_data)
             except Exception as e:
                 errors.append(e)

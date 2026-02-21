@@ -108,12 +108,9 @@ class TestEPGAutoRefresh(unittest.TestCase):
                     mock_udi.get_logo_by_id.return_value = None
                     mock_udi_factory.return_value = mock_udi
                     
-                    # Mock requests.get to return EPG data
-                    with patch('scheduling_service.requests.get') as mock_get:
-                        mock_response = Mock()
-                        mock_response.json.return_value = mock_programs
-                        mock_response.raise_for_status = Mock()
-                        mock_get.return_value = mock_response
+                    # Mock fetch_data_from_url to return EPG data
+                    with patch('scheduling_service.fetch_data_from_url') as mock_fetch:
+                        mock_fetch.return_value = mock_programs
                         
                         # Initialize service (this loads the rule)
                         service = get_scheduling_service()
@@ -255,11 +252,8 @@ class TestEPGAutoRefresh(unittest.TestCase):
                     mock_udi_factory.return_value = mock_udi
                     
                     # Mock requests
-                    with patch('scheduling_service.requests.get') as mock_get:
-                        mock_response = Mock()
-                        mock_response.json.return_value = mock_programs
-                        mock_response.raise_for_status = Mock()
-                        mock_get.return_value = mock_response
+                    with patch('scheduling_service.fetch_data_from_url') as mock_fetch:
+                        mock_fetch.return_value = mock_programs
                         
                         # Initialize service and fetch EPG
                         service = get_scheduling_service()

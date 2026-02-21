@@ -1454,11 +1454,33 @@ def handle_global_automation_settings():
             if not updates:
                 return jsonify({"error": "No data provided"}), 400
                 
-            config_manager.update_global_settings(settings=updates)
-            
-            # Return updated settings
-            settings = config_manager.get_global_settings()
-            return jsonify(settings)
+            # Get current settings before update to detect changes
+            old_settings = config_manager.get_global_settings()
+            old_regular_enabled = old_settings.get('regular_automation_enabled', False)
+                
+            if config_manager.update_global_settings(settings=updates):
+                # Return updated settings
+                new_settings = config_manager.get_global_settings()
+                new_regular_enabled = new_settings.get('regular_automation_enabled', False)
+                
+                # Control automation service lifecycle if regular_automation_enabled changed
+                if old_regular_enabled != new_regular_enabled and check_wizard_complete():
+                    manager = get_automation_manager()
+                    
+                    if new_regular_enabled:
+                        # Start automation service if not already running
+                        if not manager.automation_running:
+                            manager.start_automation()
+                            logger.info("Automation service started (Enable Regular Automation toggled ON via /settings)")
+                    else:
+                        # Stop automation service if running
+                        if manager.automation_running:
+                            manager.stop_automation()
+                            logger.info("Automation service stopped (Enable Regular Automation toggled OFF via /settings)")
+                
+                return jsonify(new_settings)
+            else:
+                return jsonify({"error": "Failed to update global settings"}), 500
         except Exception as e:
             logger.error(f"Error updating global automation settings: {e}")
             return jsonify({"error": str(e)}), 500
