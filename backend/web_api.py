@@ -3997,6 +3997,13 @@ def handle_automation_periods():
                 return jsonify({"error": "Period name is required"}), 400
             if 'schedule' not in data:
                 return jsonify({"error": "Schedule is required"}), 400
+            
+            schedule = data['schedule']
+            if schedule.get('type') == 'cron':
+                if not CRONITER_AVAILABLE:
+                    return jsonify({"error": "Cron scheduling is not available because the 'croniter' package is missing"}), 400
+                if not croniter.is_valid(schedule.get('value', '')):
+                    return jsonify({"error": "Invalid cron expression"}), 400
                 
             period_id = automation_config.create_period(data)
             if period_id:
@@ -4031,6 +4038,14 @@ def handle_automation_period(period_id):
             data = request.json
             if not data:
                 return jsonify({"error": "No data provided"}), 400
+                
+            if 'schedule' in data:
+                schedule = data['schedule']
+                if schedule.get('type') == 'cron':
+                    if not CRONITER_AVAILABLE:
+                        return jsonify({"error": "Cron scheduling is not available because the 'croniter' package is missing"}), 400
+                    if not croniter.is_valid(schedule.get('value', '')):
+                        return jsonify({"error": "Invalid cron expression"}), 400
                 
             if automation_config.update_period(period_id, data):
                 period = automation_config.get_period(period_id)

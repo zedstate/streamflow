@@ -59,7 +59,6 @@ export default function AutomationPeriods() {
 
   const handleEdit = (period) => {
     setCurrentPeriod({ ...period })
-    setEditDialogOpen(true)
   }
 
   const handleSave = async () => {
@@ -70,6 +69,18 @@ export default function AutomationPeriods() {
         variant: "destructive"
       })
       return
+    }
+
+    if (currentPeriod.schedule?.type === 'cron') {
+      const cronRegex = /^(\*|([0-5]?\d)(-[0-5]?\d)?(,\d+)*(\/\d+)?) (\*|([01]?\d|2[0-3])(-[01]?\d|2[0-3])?(,\d+)*(\/\d+)?) (\*|(0?[1-9]|[12]\d|3[01])(-(0?[1-9]|[12]\d|3[01]))?(,\d+)*(\/\d+)?) (\*|([1-9]|1[012])(-([1-9]|1[012]))?(,\d+)*(\/\d+)?) (\*|([0-6])(-[0-6])?(,\d+)*(\/\d+)?)$/;
+      if (!cronRegex.test(currentPeriod.schedule.value)) {
+        toast({
+          title: "Validation Error",
+          description: "Invalid cron expression format (must be 5 fields)",
+          variant: "destructive"
+        })
+        return
+      }
     }
 
     try {
