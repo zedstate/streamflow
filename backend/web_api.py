@@ -4354,6 +4354,20 @@ def get_upcoming_automation_events():
         # Get cached or fresh events
         result = events_scheduler.get_cached_events(hours_ahead, max_events, force_refresh)
         
+        # Check global settings
+        from automation_config_manager import get_automation_config_manager
+        config_manager = get_automation_config_manager()
+        global_settings = config_manager.get_global_settings()
+        automation_enabled = global_settings.get('regular_automation_enabled', False)
+        
+        # Inject the enabled status into the payload
+        result['automation_enabled'] = automation_enabled
+        
+        if not automation_enabled:
+            # If globally disabled, don't return any events
+            result['events'] = []
+            return jsonify(result), 200
+        
         # Filter by period if requested
         if period_id_filter:
             result['events'] = [e for e in result['events'] if e.get('period_id') == period_id_filter]

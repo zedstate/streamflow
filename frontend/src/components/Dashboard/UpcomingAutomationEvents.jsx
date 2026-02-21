@@ -15,17 +15,18 @@ export default function UpcomingAutomationEvents() {
   const [periodFilter, setPeriodFilter] = useState('all')
   const [timeRangeFilter, setTimeRangeFilter] = useState('24')
   const [cachedAt, setCachedAt] = useState(null)
+  const [automationEnabled, setAutomationEnabled] = useState(true)
   const { toast } = useToast()
 
   useEffect(() => {
     loadData()
     loadPeriods()
-    
+
     // Auto-refresh every 5 minutes
     const interval = setInterval(() => {
       loadData(false) // Don't force refresh
     }, 300000)
-    
+
     return () => clearInterval(interval)
   }, [timeRangeFilter, periodFilter])
 
@@ -36,13 +37,14 @@ export default function UpcomingAutomationEvents() {
       } else {
         setLoading(true)
       }
-      
+
       const hours = parseInt(timeRangeFilter)
       const periodId = periodFilter !== 'all' ? periodFilter : null
-      
+
       const response = await automationAPI.getUpcomingEvents(hours, 100, periodId, forceRefresh)
       setEvents(response.data.events || [])
       setCachedAt(response.data.cached_at)
+      setAutomationEnabled(response.data.automation_enabled ?? true)
     } catch (err) {
       console.error('Failed to load upcoming events:', err)
       toast({
@@ -75,12 +77,12 @@ export default function UpcomingAutomationEvents() {
     const diff = date - now
     const hours = Math.floor(diff / (1000 * 60 * 60))
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    
+
     if (hours < 0) return 'Past'
     if (hours === 0 && minutes < 1) return 'Now'
     if (hours === 0) return `In ${minutes}m`
     if (hours < 24) return `In ${hours}h ${minutes}m`
-    
+
     const days = Math.floor(hours / 24)
     const remainingHours = hours % 24
     return `In ${days}d ${remainingHours}h`
@@ -104,12 +106,12 @@ export default function UpcomingAutomationEvents() {
       today: [],     // Within 24 hours
       upcoming: []   // Beyond 24 hours
     }
-    
+
     events.forEach((event, index) => {
       const eventTime = new Date(event.time)
       const diffMs = eventTime - now
       const diffHours = diffMs / (1000 * 60 * 60)
-      
+
       if (index === 0) {
         groups.next.push(event)
       } else if (diffHours <= 1) {
@@ -120,16 +122,15 @@ export default function UpcomingAutomationEvents() {
         groups.upcoming.push(event)
       }
     })
-    
+
     return groups
   }
 
   const renderEvent = (event, isNext = false) => (
     <div
       key={`${event.period_id}-${event.time}`}
-      className={`flex items-start justify-between p-3 border rounded-lg ${
-        isNext ? 'border-primary bg-primary/5' : 'hover:bg-accent/50'
-      } transition-colors`}
+      className={`flex items-start justify-between p-3 border rounded-lg ${isNext ? 'border-primary bg-primary/5' : 'hover:bg-accent/50'
+        } transition-colors`}
     >
       <div className="flex-1 space-y-1">
         <div className="flex items-center gap-2">
@@ -217,7 +218,7 @@ export default function UpcomingAutomationEvents() {
               </SelectContent>
             </Select>
           </div>
-          
+
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
@@ -239,8 +240,16 @@ export default function UpcomingAutomationEvents() {
           </div>
         </div>
 
-        {/* Events List */}
-        {events.length === 0 ? (
+        {/* Global Disabled State */}
+        {!automationEnabled ? (
+          <div className="text-center py-12">
+            <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50 text-muted-foreground" />
+            <p className="text-muted-foreground mb-2">Automation is Globally Disabled</p>
+            <p className="text-sm text-muted-foreground">
+              Enable "Regular Automation" in Automation Settings to resume schedules.
+            </p>
+          </div>
+        ) : events.length === 0 ? (
           <div className="text-center py-12">
             <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50 text-muted-foreground" />
             <p className="text-muted-foreground mb-2">No upcoming automation events</p>

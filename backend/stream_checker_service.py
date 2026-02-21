@@ -503,7 +503,9 @@ class ChannelUpdateTracker:
                 group_id = channel_data.get('channel_group_id') if channel_data else None
                 
                 # Get effective profile
-                profile = automation_config.get_effective_profile(cid, group_id)
+                # Get effective profile via configuration
+                config = automation_config.get_effective_configuration(cid, group_id)
+                profile = config.get('profile') if config else None
                 
                 if profile and profile.get('stream_checking', {}).get('enabled', False):
                     filtered_channels.append(cid)
@@ -1108,7 +1110,9 @@ class StreamCheckerService:
                     channel_group_id = ch.get('channel_group_id')
                     
                     # Get effective profile
-                    profile = automation_config.get_effective_profile(cid, channel_group_id)
+                    # Get effective profile via configuration
+                    config = automation_config.get_effective_configuration(cid, channel_group_id)
+                    profile = config.get('profile') if config else None
                     
                     # Check if stream checking is enabled in the profile
                     if profile and profile.get('stream_checking', {}).get('enabled', False):
@@ -1175,7 +1179,8 @@ class StreamCheckerService:
                 udi = get_udi_manager()
                 channel = udi.get_channel_by_id(channel_id)
                 group_id = channel.get('channel_group_id') if channel else None
-                profile = automation_config.get_effective_profile(channel_id, group_id)
+                config = automation_config.get_effective_configuration(channel_id, group_id)
+                profile = config.get('profile') if config else None
                 
                 if profile:
                     stream_checking = profile.get('stream_checking', {})
@@ -1650,7 +1655,8 @@ class StreamCheckerService:
             channel = udi.get_channel_by_id(channel_id)
             group_id = channel.get('channel_group_id') if channel else None
             
-            profile = automation_config.get_effective_profile(channel_id, group_id)
+            config = automation_config.get_effective_configuration(channel_id, group_id)
+            profile = config.get('profile') if config else None
             if profile:
                 profile_stream_checking = profile.get('stream_checking', {})
                 stream_limit = profile_stream_checking.get('stream_limit', 0)
@@ -2310,7 +2316,8 @@ class StreamCheckerService:
             channel = udi.get_channel_by_id(channel_id)
             group_id = channel.get('channel_group_id') if channel else None
             
-            profile = automation_config.get_effective_profile(channel_id, group_id)
+            config = automation_config.get_effective_configuration(channel_id, group_id)
+            profile = config.get('profile') if config else None
             if profile:
                 profile_stream_checking = profile.get('stream_checking', {})
                 stream_limit = profile_stream_checking.get('stream_limit', 0)
@@ -3356,7 +3363,8 @@ class StreamCheckerService:
             
             # channel dict is available in local scope
             channel_group_id = channel.get('channel_group_id')
-            profile = automation_config.get_effective_profile(channel_id, channel_group_id)
+            config = automation_config.get_effective_configuration(channel_id, channel_group_id)
+            profile = config.get('profile') if config else None
             
             matching_enabled = False
             checking_enabled = False
