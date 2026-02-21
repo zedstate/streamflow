@@ -2610,8 +2610,14 @@ class AutomatedStreamManager:
                             has_impact = True
                         elif step['step'] == 'Quality Check':
                             d = step['details']
+                            # Count streams that were actively checked (not from cache)
+                            active_checks = 0
+                            for cs in d.get('checked_streams', []):
+                                if not cs.get('from_cache', False):
+                                    active_checks += 1
+                                    
                             if d.get('dead_streams_count', 0) > 0 or d.get('revived_streams_count', 0) > 0 \
-                               or d.get('skipped_streams_count', 0) > 0 or len(d.get('checked_streams', [])) > 0:
+                               or d.get('skipped_streams_count', 0) > 0 or active_checks > 0:
                                 has_impact = True
                         elif step['step'] == 'Playlist Refresh' and step['status'] != 'skipped':
                             # Even if streams didn't change, the act of refreshing the playlist is worth logging
