@@ -587,37 +587,38 @@ class RegexChannelMatcher:
         
         search_name = stream_name if case_sensitive else stream_name.lower()
         
-        with self.lock:
-            for channel_id, config in self.channel_patterns.get("patterns", {}).items():
-                if not isinstance(config, dict):
-                    continue
-                
-                # Determine priority order
-                # Default: TVG first (if enabled)
-                priority_order = ['tvg', 'regex']
-                if channel_match_priorities:
-                    # Look up by string ID since config keys are stringified
-                    mapped_order = channel_match_priorities.get(str(channel_id))
-                    if mapped_order:
-                        priority_order = mapped_order
-                
-                matched_channel = False
-                
-                # Check based on priority order
-                # We stop checking a channel if one method matches (optimization and precedence)
-                for match_type in priority_order:
-                    if match_type == 'tvg':
-                        # Check for TVG-ID match if enabled and not already matched
-                        if not matched_channel and stream_tvg_id and channel_tvg_ids and config.get("match_by_tvg_id", False):
-                            channel_tvg_id = channel_tvg_ids.get(str(channel_id))
-                            if channel_tvg_id and stream_tvg_id == channel_tvg_id:
-                                matches.append(channel_id)
-                                matched_channel = True
-                                break # Skip other match types for this channel
-                                
-                    elif match_type == 'regex':
-                        if matched_channel: 
-                            continue
+        # Read operations on dicts are thread-safe in Python
+        # Removing the lock here prevents deadlocks and lock contention during parallel matching
+        for channel_id, config in self.channel_patterns.get("patterns", {}).items():
+            if not isinstance(config, dict):
+                continue
+            
+            # Determine priority order
+            # Default: TVG first (if enabled)
+            priority_order = ['tvg', 'regex']
+            if channel_match_priorities:
+                # Look up by string ID since config keys are stringified
+                mapped_order = channel_match_priorities.get(str(channel_id))
+                if mapped_order:
+                    priority_order = mapped_order
+            
+            matched_channel = False
+            
+            # Check based on priority order
+            # We stop checking a channel if one method matches (optimization and precedence)
+            for match_type in priority_order:
+                if match_type == 'tvg':
+                    # Check for TVG-ID match if enabled and not already matched
+                    if not matched_channel and stream_tvg_id and channel_tvg_ids and config.get("match_by_tvg_id", False):
+                        channel_tvg_id = channel_tvg_ids.get(str(channel_id))
+                        if channel_tvg_id and stream_tvg_id == channel_tvg_id:
+                            matches.append(channel_id)
+                            matched_channel = True
+                            break # Skip other match types for this channel
+                            
+                elif match_type == 'regex':
+                    if matched_channel: 
+                        continue
                             
                         if not config.get("enabled", True):
                             continue
@@ -1771,14 +1772,28 @@ class AutomatedStreamManager:
             
             # Log progress info
             total_streams = len(all_streams)
-            # Use parallel processing for faster matching
-            # Limit workers to avoid system thrashing and log spam. 
-            # 8 workers is a sweet spot for regex CPU bound work on typical systems without causing GIL thrashing.
-            max_workers = min(8, os.cpu_count() or 4)
-            # Batch size for streams
-            batch_size = max(100, total_streams // max_workers)
             
-            logger.info(f"Processing {total_streams} streams for pattern matching (Parallel, {max_workers} workers)...")
+            # Use parallel processing for faster matching
+            # Limit workers to avoid system thrashing, but scale with streams
+            # For < 1000 streams: 2-4 workers is plenty
+            # For 1000-5000: 4-6 workers
+            # For 5000-20000: 8 workers
+            # For > 20000: Up to 16 workers (if CPU permits) for massive playlists
+            base_workers = os.cpu_count() or 4
+            if total_streams < 1000:
+                max_workers = min(4, base_workers)
+            elif total_streams < 5000:
+                max_workers = min(6, base_workers)
+            elif total_streams < 20000:
+                max_workers = min(8, base_workers)
+            else:
+                max_workers = min(16, base_workers)
+                
+            # Batch size for streams - calculate smaller batches for more frequent progress updates
+            # At least 100 batches to get 1% progress increments, or min 50 streams per batch
+            batch_size = max(50, total_streams // (max_workers * 4))
+            
+            logger.info(f"Processing {total_streams} streams for pattern matching (Parallel, {max_workers} workers, {batch_size} streams per batch)...")
             
             # Get dead stream removal config once
             dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
@@ -1787,7 +1802,7 @@ class AutomatedStreamManager:
             batches = [all_streams[i:i + batch_size] for i in range(0, total_streams, batch_size)]
             
             completed_count = 0
-            last_log_pct = 0
+            last_log_pct = -1
             
             # Process batches in parallel
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1813,8 +1828,9 @@ class AutomatedStreamManager:
                         
                         # Log progress monotonically
                         current_pct = int((completed_count / total_streams) * 100)
-                        if current_pct >= last_log_pct + 10 or completed_count == total_streams:
-                             logger.info(f"  Progress: {completed_count}/{total_streams} streams processed ({current_pct}%)")
+                        # Log every 5% for better visibility as requested
+                        if current_pct >= last_log_pct + 5 or completed_count == total_streams:
+                             logger.info(f"  Progress: {completed_count}/{total_streams} streams matched ({current_pct}%)")
                              last_log_pct = current_pct
                              
                     except Exception as e:
