@@ -2091,6 +2091,7 @@ class AutomatedStreamManager:
             automation_config = get_automation_config_manager()
             
             matching_enabled_channel_ids = []
+            channel_validation_settings = {}
             for channel in all_channels:
                 channel_id = channel.get('id')
                 channel_group_id = channel.get('channel_group_id') # Ensure we use correct key for group ID from UDI
@@ -2112,13 +2113,20 @@ class AutomatedStreamManager:
                 
                 # Check if stream matching is enabled in the profile
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
+                validate_enabled = profile and profile.get('stream_matching', {}).get('validate_existing_streams', False)
+                allowed_playlists = profile.get('stream_matching', {}).get('playlists', []) if profile else []
                 
                 # Global Action Override: Include if global action affected is True and force is True
                 if force and profile and profile.get('global_action', {}).get('affected', False):
                     matching_enabled = True
+                    validate_enabled = True # Force validation if global action dictates
                     
                 if matching_enabled:
                     matching_enabled_channel_ids.append(channel_id)
+                    channel_validation_settings[channel_id] = {
+                        "validate_enabled": validate_enabled,
+                        "allowed_playlists": allowed_playlists
+                    }
             
             # Exclude channels in active monitoring sessions (coordination with monitoring system)
             from stream_session_manager import get_session_manager
@@ -2163,7 +2171,7 @@ class AutomatedStreamManager:
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_batch = {
-                    executor.submit(self._validate_channels_batch, batch, stream_lookup, matching_enabled_channel_ids): batch 
+                    executor.submit(self._validate_channels_batch, batch, stream_lookup, matching_enabled_channel_ids, channel_validation_settings): batch 
                     for batch in batches
                 }
                 
