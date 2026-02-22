@@ -86,14 +86,26 @@ export default function AutomationProfileEditor() {
                 try {
                     const profileResponse = await automationAPI.getProfile(profileId)
                     if (profileResponse.data) {
-                        // Merge with defaults to ensure scoring_weights exists for older profiles
+                        // Merge with defaults to ensure all config matrices exist for older profiles
                         const loadedProfile = profileResponse.data
                         setProfile({
+                            ...DEFAULT_PROFILE,
                             ...loadedProfile,
-                            scoring_weights: loadedProfile.scoring_weights || DEFAULT_PROFILE.scoring_weights,
+                            m3u_update: {
+                                ...DEFAULT_PROFILE.m3u_update,
+                                ...(loadedProfile.m3u_update || {})
+                            },
                             stream_matching: {
                                 ...DEFAULT_PROFILE.stream_matching,
-                                ...loadedProfile.stream_matching
+                                ...(loadedProfile.stream_matching || {})
+                            },
+                            stream_checking: {
+                                ...DEFAULT_PROFILE.stream_checking,
+                                ...(loadedProfile.stream_checking || {})
+                            },
+                            scoring_weights: {
+                                ...DEFAULT_PROFILE.scoring_weights,
+                                ...(loadedProfile.scoring_weights || {})
                             }
                         })
                     } else {

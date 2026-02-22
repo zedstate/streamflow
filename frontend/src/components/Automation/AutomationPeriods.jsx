@@ -59,6 +59,7 @@ export default function AutomationPeriods() {
 
   const handleEdit = (period) => {
     setCurrentPeriod({ ...period })
+    setEditDialogOpen(true)
   }
 
   const handleSave = async () => {
