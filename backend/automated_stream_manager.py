@@ -2466,6 +2466,7 @@ class AutomatedStreamManager:
                     assigned_stream_ids = {}
 
                 # 4.5. Trigger Quality Checks for all channels in the period(s)
+                check_results = {}
                 if channels_to_quality_check:
                     try:
                         from stream_checker_service import get_stream_checker_service
