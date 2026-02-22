@@ -152,7 +152,7 @@ export const streamCheckerAPI = {
 };
 
 export const changelogAPI = {
-  getChangelog: (days = 7, page = 1, limit = 50) => api.get(`/changelog`, { params: { days, page, limit } }),
+  getChangelog: (days = 7, page = 1, limit = 10) => api.get(`/changelog`, { params: { days, page, limit } }),
 };
 
 export const deadStreamsAPI = {

@@ -1928,7 +1928,7 @@ def get_changelog():
     try:
         days = request.args.get('days', 7, type=int)
         page = request.args.get('page', 1, type=int)
-        limit = request.args.get('limit', 50, type=int)
+        limit = request.args.get('limit', 10, type=int)
         
         # Get automation changelog entries
         manager = get_automation_manager()

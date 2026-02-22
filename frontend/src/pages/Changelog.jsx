@@ -691,7 +691,7 @@ export default function Changelog() {
   const loadChangelog = async () => {
     try {
       setLoading(true)
-      const response = await changelogAPI.getChangelog(days, page, 50)
+      const response = await changelogAPI.getChangelog(days, page, 10)
 
       const responseData = response.data || {};
       const dataArray = Array.isArray(responseData) ? responseData : (responseData.data || []);
