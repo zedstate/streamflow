@@ -256,6 +256,8 @@ class AutomationConfigManager:
                 current["stream_matching"] = profile_data["stream_matching"]
             if "stream_checking" in profile_data:
                 current["stream_checking"] = profile_data["stream_checking"]
+            if "scoring_weights" in profile_data:
+                current["scoring_weights"] = profile_data["scoring_weights"]
             
             return self._save_config()
 
@@ -273,7 +275,20 @@ class AutomationConfigManager:
             for g in groups_to_update:
                 del self._config["group_assignments"][g]
             
+            # Also clean up channel_period_assignments - remove references to the deleted profile
+            for channel_id in list(self._config["channel_period_assignments"].keys()):
+                period_assignments = self._config["channel_period_assignments"][channel_id]
+                if isinstance(period_assignments, dict):
+                    # Remove any period entries that point to the deleted profile
+                    periods_to_remove = [period_id for period_id, prof_id in period_assignments.items() if prof_id == pid]
+                    for period_id in periods_to_remove:
+                        del period_assignments[period_id]
+                    # Remove the channel entry entirely if no periods left
+                    if not period_assignments:
+                        del self._config["channel_period_assignments"][channel_id]
+            
             del self._config["profiles"][pid]
+            logger.info(f"Deleted profile {pid} and cleaned up all assignments")
             return self._save_config()
 
     # --- Assignments ---
