@@ -120,8 +120,7 @@ class AutomationConfigManager:
                 },
                 "stream_matching": {
                     "enabled": True,
-                    "validate_existing_streams": False,
-                    "playlists": []
+                    "validate_existing_streams": False
                 },
                 "stream_checking": {
                     "enabled": True,
@@ -210,7 +209,6 @@ class AutomationConfigManager:
                 "m3u_update": profile_data.get("m3u_update", {"enabled": False, "playlists": []}),
                 "stream_matching": profile_data.get("stream_matching", {
                     "enabled": False, 
-                    "playlists": [], 
                     "validate_existing_streams": False
                 }),
                 "stream_checking": profile_data.get("stream_checking", {

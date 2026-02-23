@@ -28,7 +28,6 @@ const DEFAULT_PROFILE = {
     },
     stream_matching: {
         enabled: true,
-        playlists: [],
         validate_existing_streams: false
     },
     stream_checking: {
@@ -309,15 +308,7 @@ export default function AutomationProfileEditor() {
                                             }
                                         }))
                                     } else if (activeStep === 'stream_matching' && checked) {
-                                        // When enabling stream matching, tick every playlist by default
-                                        setProfile(prev => ({
-                                            ...prev,
-                                            stream_matching: {
-                                                ...prev.stream_matching,
-                                                enabled: true,
-                                                playlists: m3uAccounts.map(a => a.id)
-                                            }
-                                        }))
+                                        updateProfile('stream_matching.enabled', true)
                                     } else {
                                         updateProfile(`${activeStep}.enabled`, checked)
                                     }
@@ -401,37 +392,10 @@ export default function AutomationProfileEditor() {
                                         />
                                         <div className="space-y-0.5">
                                             <Label htmlFor="validate_streams" className="cursor-pointer font-medium">Validate Existing Streams</Label>
-                                            <p className="text-[10px] text-muted-foreground">Remove streams that no longer match the channel's Regex or allowed Playlists.</p>
+                                            <p className="text-[10px] text-muted-foreground">Remove streams that no longer match the channel's Regex rules.</p>
                                         </div>
                                     </div>
 
-
-                                    <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
-                                        <Label className="text-sm font-semibold">Source Playlists</Label>
-                                        <p className="text-xs text-muted-foreground mb-4">Select which accounts to pull streams from for matching. Leave empty to match from all.</p>
-
-                                        <div className="grid gap-3 max-h-[250px] overflow-y-auto">
-                                            {m3uAccounts.map(account => (
-                                                <div key={account.id} className="flex items-center space-x-3 p-2 hover:bg-muted/50 rounded-md transition-colors">
-                                                    <Checkbox
-                                                        id={`stream-matching-${account.id}`}
-                                                        checked={profile.stream_matching.playlists?.includes(account.id)}
-                                                        onCheckedChange={(checked) => {
-                                                            const current = profile.stream_matching.playlists || []
-                                                            let newPlaylists = []
-                                                            if (checked) {
-                                                                newPlaylists = [...current, account.id]
-                                                            } else {
-                                                                newPlaylists = current.filter(id => id !== account.id)
-                                                            }
-                                                            updateProfile('stream_matching.playlists', newPlaylists)
-                                                        }}
-                                                    />
-                                                    <Label htmlFor={`stream-matching-${account.id}`} className="flex-1 cursor-pointer font-medium">{account.name}</Label>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
                                 </div>
                             ) : (
                                 <div className="p-8 border-2 border-dashed rounded-lg text-center opacity-50">

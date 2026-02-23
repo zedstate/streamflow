@@ -1312,7 +1312,6 @@ class AutomatedStreamManager:
             return False, []
     def _match_streams_batch(self, streams: List[Dict], channel_streams: Dict[str, set], 
                              dead_stream_removal_enabled: bool,
-                             channel_to_allowed_playlists: Dict[str, List[int]],
                              channel_to_revive_enabled: Dict[str, bool] = None,
                              channel_tvg_map: Dict[str, str] = None,
                              channel_to_match_priorities: Dict[str, List[str]] = None) -> Tuple[Dict[str, List[str]], Dict[str, List[Dict]]]:
@@ -1324,7 +1323,6 @@ class AutomatedStreamManager:
             streams: List of stream dictionaries to process
             channel_streams: Dict of existing channel streams {channel_id: {stream_ids}}
             dead_stream_removal_enabled: Whether to skip dead streams
-            channel_to_allowed_playlists: Mapping of channel IDs to their allowed playlist names
             channel_to_revive_enabled: Mapping of channel IDs to their Stream Revival setting
             channel_tvg_map: Mapping of channel IDs to their TVG-ID (optional)
             channel_to_match_priorities: Mapping of channel IDs to priority order (optional)
@@ -1395,12 +1393,6 @@ class AutomatedStreamManager:
             )
             
             for channel_id in matching_channels:
-                # Profile-level playlist filter for stream matching
-                allowed_playlists = channel_to_allowed_playlists.get(channel_id)
-                if allowed_playlists is not None and len(allowed_playlists) > 0:
-                    if stream_m3u_account is None or stream_m3u_account not in allowed_playlists:
-                        # Stream's M3U account not allowed for matching in this channel's profile
-                        continue
                 # Check if stream is already in this channel
                 if channel_id in channel_streams and stream_id not in channel_streams[channel_id]:
                     assignments[channel_id].append(stream_id)
@@ -1463,24 +1455,6 @@ class AutomatedStreamManager:
             # Get settings for this channel
             settings = channel_validation_settings.get(channel_id, {})
             validate_enabled = settings.get("validate_enabled", False)
-            allowed_playlists = settings.get("allowed_playlists", [])
-            
-            # If validation is disabled for this channel, we skip checking streams
-            # UNLESS the caller forced it (which is handled outside this function by checking force flag)
-            # But wait, this function returns candidates for removal.
-            # If we return candidate removals, the caller decides whether to apply them.
-            # So we should probably perform the check regardless? 
-            # OR we optimize by skipping if we know we won't apply it.
-            # The caller passes `channel_validation_settings`. If the caller invoked this with `force=True`, 
-            # they might override the enablement check. 
-            # Let's assume this function blindly finds non-matching streams, 
-            # BUT we need to respect the playlist filter logic here.
-            
-            # Optimization: If the caller isn't going to use the result (validation disabled and not forced),
-            # we shouldn't waste time. But the caller (impl method) iterates results and checks flags there.
-            # To be safe and keep logic simple, we check everything unless explicitly told not to?
-            # Actually, `validate_existing_streams` is now per profile. 
-            # Unlike global setting (which was forceable), here we have fine-grained control.
             
             # Get streams for this channel
             channel_streams = udi.get_channel_streams(channel_id)
@@ -1507,19 +1481,7 @@ class AutomatedStreamManager:
                 stream_name = full_stream.get('name', stream_name_in_channel)
                 stream_m3u_account = full_stream.get('m3u_account')
                 
-                # 1. Check Playlist Validity (if configured)
-                # If profile has specific playlists, stream MUST be from one of them
-                # This is part of the new "Validate Existing Streams" requirement
-                if allowed_playlists and stream_m3u_account not in allowed_playlists:
-                    # Stream is from a playlist not in the allowed list for this profile
-                    streams_to_remove.append({
-                        "id": stream_id,
-                        "name": stream_name,
-                        "reason": "playlist_mismatch"
-                    })
-                    continue
-
-                # 2. Check Regex/TVG-ID Validity
+                # Check Regex/TVG-ID Validity
                 # Check if stream still matches this channel
                 stream_tvg_id = full_stream.get('tvg_id')
                 matching_channels = self.regex_matcher.match_stream_to_channels(
@@ -1658,10 +1620,10 @@ class AutomatedStreamManager:
             from automation_config_manager import get_automation_config_manager
             automation_config = get_automation_config_manager()
             matching_enabled_channel_ids = []
-            channel_to_allowed_playlists = {}
             channel_to_revive_enabled = {}
             channel_tvg_map = {}
             channel_to_match_priorities = {}
+            
             
             for channel in all_channels:
                 if not isinstance(channel, dict) or 'id' not in channel:
@@ -1695,16 +1657,13 @@ class AutomatedStreamManager:
                 
                 if matching_enabled:
                     matching_enabled_channel_ids.append(channel_id)
-                    # Store playlist filter for this channel
-                    channel_to_allowed_playlists[str(channel_id)] = profile.get('stream_matching', {}).get('playlists', [])
                     # Store match priority order
                     channel_to_match_priorities[str(channel_id)] = profile.get('stream_matching', {}).get('match_priority_order', ['tvg', 'regex'])
                     
-                # Check if revive is enabled (needs to be checked even if matching is disabled?)
-                # Usually revive only makes sense if we are managing streams for the channel
+                # Check if revive is enabled
                 if profile and profile.get('stream_checking', {}).get('allow_revive', False):
                     channel_to_revive_enabled[str(channel_id)] = True
-            
+
             # Filter channels to only those with matching enabled
             filtered_channels = [ch for ch in all_channels if ch.get('id') in matching_enabled_channel_ids]
             
@@ -1731,8 +1690,7 @@ class AutomatedStreamManager:
                 logger.info("No channels available for stream assignment (all filtered or in monitoring)")
                 return {}
             
-            # Removed redundant loop that was re-building maps (channel_to_allowed_playlists etc)
-            # These maps are already built in the initial channel loop above
+
 
             
             # Create a map of existing channel streams
@@ -1808,7 +1766,7 @@ class AutomatedStreamManager:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_batch = {
                     executor.submit(self._match_streams_batch, batch, channel_streams, 
-                                   dead_stream_removal_enabled, channel_to_allowed_playlists,
+                                   dead_stream_removal_enabled,
                                    channel_to_revive_enabled, channel_tvg_map, channel_to_match_priorities): batch 
                     for batch in batches
                 }
@@ -2114,7 +2072,6 @@ class AutomatedStreamManager:
                 # Check if stream matching is enabled in the profile
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
                 validate_enabled = profile and profile.get('stream_matching', {}).get('validate_existing_streams', False)
-                allowed_playlists = profile.get('stream_matching', {}).get('playlists', []) if profile else []
                 
                 # Global Action Override: Include if global action affected is True and force is True
                 if force and profile and profile.get('global_action', {}).get('affected', False):
@@ -2124,8 +2081,7 @@ class AutomatedStreamManager:
                 if matching_enabled:
                     matching_enabled_channel_ids.append(channel_id)
                     channel_validation_settings[channel_id] = {
-                        "validate_enabled": validate_enabled,
-                        "allowed_playlists": allowed_playlists
+                        "validate_enabled": validate_enabled
                     }
             
             # Exclude channels in active monitoring sessions (coordination with monitoring system)
