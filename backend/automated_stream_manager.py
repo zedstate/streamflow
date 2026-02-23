@@ -617,72 +617,72 @@ class RegexChannelMatcher:
                             break # Skip other match types for this channel
                             
                 elif match_type == 'regex':
-                    if matched_channel: 
+                    if matched_channel:
                         continue
-                            
-                        if not config.get("enabled", True):
+                    
+                    if not config.get("enabled", True):
+                        continue
+                    
+                    channel_name = config.get("name", "")
+                    
+                    # Support both new format (regex_patterns) and old format (regex) for backward compatibility
+                    regex_patterns = config.get("regex_patterns")
+                    if regex_patterns is None:
+                        # Fallback to old format
+                        old_regex = config.get("regex", [])
+                        old_m3u_accounts = config.get("m3u_accounts")
+                        regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
+                    
+                    regex_matched = False
+                    for pattern_obj in regex_patterns:
+                        # Handle both dict and string patterns for flexibility
+                        if isinstance(pattern_obj, dict):
+                            pattern = pattern_obj.get("pattern", "")
+                            pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                        else:
+                            # Legacy string format
+                            pattern = pattern_obj
+                            pattern_m3u_accounts = None
+                        
+                        if not pattern:
                             continue
                         
-                        channel_name = config.get("name", "")
-                        
-                        # Support both new format (regex_patterns) and old format (regex) for backward compatibility
-                        regex_patterns = config.get("regex_patterns")
-                        if regex_patterns is None:
-                            # Fallback to old format
-                            old_regex = config.get("regex", [])
-                            old_m3u_accounts = config.get("m3u_accounts")
-                            regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
-                        
-                        regex_matched = False
-                        for pattern_obj in regex_patterns:
-                            # Handle both dict and string patterns for flexibility
-                            if isinstance(pattern_obj, dict):
-                                pattern = pattern_obj.get("pattern", "")
-                                pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
-                            else:
-                                # Legacy string format
-                                pattern = pattern_obj
-                                pattern_m3u_accounts = None
-                            
-                            if not pattern:
+                        # Check if this regex pattern applies to the stream's M3U account
+                        if pattern_m3u_accounts is not None and len(pattern_m3u_accounts) > 0:
+                            # Pattern is limited to specific M3U accounts
+                            if stream_m3u_account is None or stream_m3u_account not in pattern_m3u_accounts:
+                                # Stream's M3U account is not in the allowed list, skip this pattern
                                 continue
-                            
-                            # Check if this regex pattern applies to the stream's M3U account
-                            if pattern_m3u_accounts is not None and len(pattern_m3u_accounts) > 0:
-                                # Pattern is limited to specific M3U accounts
-                                if stream_m3u_account is None or stream_m3u_account not in pattern_m3u_accounts:
-                                    # Stream's M3U account is not in the allowed list, skip this pattern
-                                    continue
-                            
-                            # SAFETY CHECK: If match_by_tvg_id is enabled, IGNORE catch-all regexes
-                            # This prevents the issue where a lingering ".*" causes unwanted matches
-                            # despite the user enabling TVG matching.
-                            if config.get("match_by_tvg_id", False):
-                                is_catch_all = pattern == ".*" or pattern == "^.*$" or pattern == ".+" or pattern == "^.+$"
-                                if is_catch_all:
-                                    # logger.debug(f"Ignoring catch-all regex '{pattern}' for channel {channel_id} because match_by_tvg_id is enabled")
-                                    continue
-
-                            # Substitute channel name variable if present
-                            substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
-                            
-                            search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
-                            
-                            # Convert literal spaces in pattern to flexible whitespace regex
-                            search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
-                            
-                            try:
-                                if re.search(search_pattern, search_name):
-                                    matches.append(channel_id)
-                                    matched_channel = True
-                                    regex_matched = True
-                                    # logger.debug(f"Stream '{stream_name}' matched channel {channel_id} with pattern '{pattern}'")
-                                    break  # Only match once per channel
-                            except re.error as e:
-                                logger.error(f"Invalid regex pattern '{pattern}' for channel {channel_id}: {e}")
                         
-                        if regex_matched:
-                            break # Skip other match types for this channel
+                        # SAFETY CHECK: If match_by_tvg_id is enabled, IGNORE catch-all regexes
+                        # This prevents the issue where a lingering ".*" causes unwanted matches
+                        # despite the user enabling TVG matching.
+                        if config.get("match_by_tvg_id", False):
+                            is_catch_all = pattern == ".*" or pattern == "^.*$" or pattern == ".+" or pattern == "^.+$"
+                            if is_catch_all:
+                                # logger.debug(f"Ignoring catch-all regex '{pattern}' for channel {channel_id} because match_by_tvg_id is enabled")
+                                continue
+
+                        # Substitute channel name variable if present
+                        substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
+                        
+                        search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
+                        
+                        # Convert literal spaces in pattern to flexible whitespace regex
+                        search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
+                        
+                        try:
+                            if re.search(search_pattern, search_name):
+                                matches.append(channel_id)
+                                matched_channel = True
+                                regex_matched = True
+                                # logger.debug(f"Stream '{stream_name}' matched channel {channel_id} with pattern '{pattern}'")
+                                break  # Only match once per channel
+                        except re.error as e:
+                            logger.error(f"Invalid regex pattern '{pattern}' for channel {channel_id}: {e}")
+                    
+                    if regex_matched:
+                        break  # Skip other match types for this channel
         
         return matches
     
@@ -1405,7 +1405,8 @@ class AutomatedStreamManager:
 
     def _validate_channels_batch(self, channels: List[Dict], stream_lookup: Dict[int, Dict], 
                                matching_enabled_channel_ids: List[str],
-                               channel_validation_settings: Dict[str, Dict] = None) -> Dict[str, Any]:
+                               channel_validation_settings: Dict[str, Dict] = None,
+                               full_channel_tvg_map: Dict[str, str] = None) -> Dict[str, Any]:
         """
         Process a batch of channels for stream validation.
         This method is designed to be run in a separate thread.
@@ -1415,6 +1416,7 @@ class AutomatedStreamManager:
             stream_lookup: Dict of all streams {stream_id: stream_data}
             matching_enabled_channel_ids: List of channel IDs where matching is enabled
             channel_validation_settings: Dict of channel ID -> validation settings
+            full_channel_tvg_map: Dict mapping channel_id -> tvg_id for ALL channels (not just the batch)
             
         Returns:
             Dict containing partial validation results
@@ -1432,11 +1434,14 @@ class AutomatedStreamManager:
             channel_validation_settings = {}
         
         
-        # Build TVG-ID map for validation
-        channel_tvg_map = {}
-        for ch in channels:
-            if isinstance(ch, dict) and ch.get('tvg_id'):
-                channel_tvg_map[str(ch.get('id'))] = ch.get('tvg_id')
+        # Use the full channel TVG-ID map passed in from the impl, which covers ALL channels.
+        # A batch-scoped map causes false negatives for cross-batch TVG lookups (Bug 2 fix).
+        channel_tvg_map = full_channel_tvg_map if full_channel_tvg_map is not None else {}
+        if not channel_tvg_map:
+            # Defensive fallback: build from the batch if no global map was provided
+            for ch in channels:
+                if isinstance(ch, dict) and ch.get('tvg_id'):
+                    channel_tvg_map[str(ch.get('id'))] = ch.get('tvg_id')
                 
         for channel in channels:
             channel_id = channel.get('id')
@@ -1505,7 +1510,8 @@ class AutomatedStreamManager:
                     "channel_name": channel_name,
                     "removed_count": len(streams_to_remove),
                     "removed_streams": streams_to_remove,
-                    "kept_ids": streams_to_keep
+                    "kept_ids": streams_to_keep,
+                    "validate_enabled": validate_enabled
                 })
                 
         return results
@@ -2112,6 +2118,14 @@ class AutomatedStreamManager:
             all_streams = udi.get_streams(log_result=False)
             stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
             
+            # Build the full TVG-ID map from ALL channels upfront so that cross-batch TVG
+            # lookups inside _validate_channels_batch work correctly (Bug 2 fix).
+            full_channel_tvg_map = {
+                str(ch.get('id')): ch.get('tvg_id')
+                for ch in all_channels
+                if isinstance(ch, dict) and ch.get('tvg_id')
+            }
+            
             # Parallel validation for faster processing
             # Limit workers to avoid system thrashing.
             max_workers = min(8, os.cpu_count() or 4)
@@ -2127,7 +2141,9 @@ class AutomatedStreamManager:
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_batch = {
-                    executor.submit(self._validate_channels_batch, batch, stream_lookup, matching_enabled_channel_ids, channel_validation_settings): batch 
+                    executor.submit(self._validate_channels_batch, batch, stream_lookup,
+                                    matching_enabled_channel_ids, channel_validation_settings,
+                                    full_channel_tvg_map): batch 
                     for batch in batches
                 }
                 
@@ -2144,8 +2160,12 @@ class AutomatedStreamManager:
                             kept_ids = detail["kept_ids"]
                             removed_streams = detail["removed_streams"]
                             
-                            # Only apply updates if enabled
-                            if dead_stream_removal_enabled or force:
+                            # Only apply updates if this channel's profile has validate_existing_streams
+                            # enabled, OR if this is a forced run (e.g. global action).
+                            # Bug 3 fix: previously gated on dead_stream_removal_enabled which ignored
+                            # the per-profile validate_enabled setting entirely.
+                            channel_validate_enabled = detail.get("validate_enabled", False)
+                            if channel_validate_enabled or force:
                                 try:
                                     from api_utils import update_channel_streams
                                     # Update channel with kept streams
@@ -2164,8 +2184,8 @@ class AutomatedStreamManager:
                                     logger.error(f"Failed to update channel {channel_id}: {update_err}")
                             else:
                                 if len(removed_streams) > 0:
-                                    # Log but don't count as removed since we didn't update
-                                    logger.debug(f"Found {len(removed_streams)} non-matching streams in channel {channel_id}, but removal is disabled")
+                                    # Log but don't apply — validate_existing_streams is disabled for this channel
+                                    logger.debug(f"Found {len(removed_streams)} non-matching streams in channel {channel_id}, but validate_existing_streams is disabled for its profile")
                         
                         completed_count += len(future_to_batch[future])
                         # Log less frequently
