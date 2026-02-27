@@ -4668,8 +4668,11 @@ def get_stream_session(session_id):
                     'm3u_account': stream_info.m3u_account,
                     'hdr_format': stream_info.hdr_format,
                     'status': stream_info.status,
+                    'status_reason': getattr(stream_info, 'status_reason', None),
+                    'last_loop_time': getattr(stream_info, 'last_loop_time', None),
                     'is_quarantined': stream_info.is_quarantined,
                     'reliability_score': stream_info.reliability_score,
+                    'current_speed': stream_info.metrics_history[-1].speed if stream_info.metrics_history else 0.0,
                     'rank': stream_info.rank,
                     'screenshot_path': stream_info.screenshot_path,
                     'last_screenshot_time': stream_info.last_screenshot_time,
@@ -4951,7 +4954,7 @@ def get_stream_metrics(session_id, stream_id):
 
 
 # Serve screenshots
-@app.route('/data/screenshots/<filename>')
+@app.route('/api/data/screenshots/<filename>')
 def serve_screenshot(filename):
     """Serve screenshot files."""
     try:
@@ -4980,7 +4983,7 @@ def get_alive_screenshots(session_id):
                     screenshots_data.append({
                         'stream_id': stream_info.stream_id,
                         'stream_name': stream_info.name,
-                        'screenshot_url': f"/data/screenshots/{Path(stream_info.screenshot_path).name}",
+                        'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}",
                         'reliability_score': stream_info.reliability_score,
                         'm3u_account': stream_info.m3u_account
                     })
@@ -5111,21 +5114,34 @@ def handle_session_settings():
         
         if request.method == 'GET':
             return jsonify({
-                "review_duration": session_manager.get_review_duration()
+                "review_duration": session_manager.get_review_duration(),
+                "loop_review_duration": session_manager.get_loop_review_duration()
             })
             
         elif request.method == 'POST':
             data = request.json
             duration = data.get('review_duration')
+            loop_duration = data.get('loop_review_duration')
+            
+            updated = {}
             if duration is not None:
                 try:
                     val = float(duration)
-                    if val < 0:
-                        return jsonify({"error": "Duration must be positive"}), 400
-                    session_manager.set_review_duration(val)
-                    return jsonify({"message": "Settings updated", "review_duration": val})
-                except ValueError:
-                    return jsonify({"error": "Invalid duration"}), 400
+                    if val >= 0:
+                        session_manager.set_review_duration(val)
+                        updated['review_duration'] = val
+                except ValueError: pass
+                
+            if loop_duration is not None:
+                try:
+                    val = float(loop_duration)
+                    if val >= 0:
+                        session_manager.set_loop_review_duration(val)
+                        updated['loop_review_duration'] = val
+                except ValueError: pass
+            
+            if updated:
+                return jsonify({"message": "Settings updated", **updated})
             
             return jsonify({"error": "No settings provided"}), 400
             

@@ -4,3 +4,5 @@ pandas
 flask
 flask-cors
 croniter
+Pillow
+imagehash

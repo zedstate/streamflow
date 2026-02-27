@@ -511,7 +511,7 @@ def update_channel_streams(
     try:
         response = patch_request(url, data)
         if response and response.status_code in [200, 204]:
-            logger.info(
+            logger.debug(
                 f"Successfully updated channel {channel_id} with "
                 f"{len(filtered_stream_ids)} streams"
             )

@@ -48,17 +48,26 @@ class FFmpegStreamMonitor:
     without significant CPU/memory overhead.
     """
     
-    def __init__(self, url: str, on_stats_update: Optional[Callable[[FFmpegStats], None]] = None):
+    def __init__(self, url: str, stream_id: Optional[int] = None, on_stats_update: Optional[Callable[[FFmpegStats], None]] = None):
         """
         Initialize stream monitor.
         
         Args:
             url: Stream URL to monitor
+            stream_id: Optional stream ID for unique UDP port assignment
             on_stats_update: Optional callback for stats updates
         """
         self.url = url
+        self.stream_id = stream_id
         self.on_stats_update = on_stats_update
         self.stats = FFmpegStats(url=url)
+        
+        # UDP ports for Primary-Sidecar routing
+        self.port_a = None
+        self.port_b = None
+        if stream_id is not None:
+            self.port_a = 10000 + stream_id
+            self.port_b = 20000 + stream_id
         
         self._process: Optional[subprocess.Popen] = None
         self._monitor_thread: Optional[threading.Thread] = None
@@ -84,17 +93,34 @@ class FFmpegStreamMonitor:
                     self.stats.error_message = "Invalid URL"
                     return False
                 
+                # Prepare FFmpeg command
+                cmd = [
+                    'ffmpeg',
+                    '-hide_banner', # Reduce log spam
+                    '-nostdin',     # Disable interactive stdin
+                    '-i', self.url,
+                    '-c', 'copy',  # Copy codec (no re-encoding)
+                ]
+                
+                # Use robust multi-output routing if stream_id is provided, otherwise fallback to null muxer
+                if self.port_a and self.port_b:
+                    # Duplicate to two local UDP ports + null output for stats
+                    # We repeat mappings and codecs for EACH output to ensure all destinations receive content
+                    # Note: We use -f mpegts for UDP and -f null for telemetry stats
+                    cmd.extend([
+                        '-map', '0', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{self.port_a}',
+                        '-map', '0', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{self.port_b}',
+                        '-map', '0', '-c', 'copy', '-f', 'null', '-'
+                    ])
+                else:
+                    cmd.extend(['-f', 'null', '-'])
+                
                 # Start FFmpeg process
                 self._process = subprocess.Popen(
-                    [
-                        'ffmpeg',
-                        '-i', self.url,
-                        '-c', 'copy',  # Copy codec (no re-encoding)
-                        '-f', 'null',   # Null muxer (no output)
-                        '-'
-                    ],
+                    cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    stdin=subprocess.DEVNULL, # Explicitly redirect stdin to prevent terminal-related issues
                     universal_newlines=True,
                     bufsize=1
                 )

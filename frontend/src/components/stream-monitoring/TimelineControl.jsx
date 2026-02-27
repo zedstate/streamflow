@@ -1,21 +1,20 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, ChevronLeft, ChevronRight, SkipForward } from "lucide-react";
+import { Play, Pause, SkipForward } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 
 /**
  * TimelineControl component
  * 
- * A video-editor style timeline with a time ruler, scrubbable playhead, and potential for tracks.
+ * A video-editor style timeline with a time ruler, scrubbable playhead, and status-based subway lanes.
  */
-export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, events = [], zoomLevel = 60, onZoomChange }) {
+export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, streams = [], zoomLevel = 60, onZoomChange }) {
     const [isPlaying, setIsPlaying] = useState(false);
-    // const [zoomLevel, setZoomLevel] = useState(1); // Removed: driven by props now
     const containerRef = useRef(null);
     const playbackRef = useRef(null);
     const [isDragging, setIsDragging] = useState(false);
+    const [hoveredStreamId, setHoveredStreamId] = useState(null);
 
     // Calculate total duration
     const duration = Math.max(1, maxTime - minTime);
@@ -41,31 +40,16 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
 
     // Handle mouse events for scrubbing
     const handleMouseDown = (e) => {
-        setIsDragging(true);
-        setIsPlaying(false);
-        updateTimeFromMouse(e);
-    };
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const y = e.clientY - rect.top;
 
-    const handleMouseMove = (e) => {
-        if (isDragging) {
+        if (y < 30 || e.shiftKey) {
+            setIsDragging(true);
+            setIsPlaying(false);
             updateTimeFromMouse(e);
         }
     };
-
-    const handleMouseUp = () => {
-        setIsDragging(false);
-    };
-
-    useEffect(() => {
-        if (isDragging) {
-            window.addEventListener('mousemove', handleMouseMove);
-            window.addEventListener('mouseup', handleMouseUp);
-        }
-        return () => {
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
-        };
-    }, [isDragging]);
 
     const updateTimeFromMouse = (e) => {
         if (!containerRef.current) return;
@@ -76,188 +60,382 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
         onTimeChange(Math.floor(newTime));
     };
 
-    // Format time for display (HH:MM:SS)
+    useEffect(() => {
+        const handleMouseMove = (e) => { if (isDragging) updateTimeFromMouse(e); };
+        const handleMouseUp = () => { setIsDragging(false); };
+        if (isDragging) {
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+        }
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging]);
+
     const formatTime = (timestamp) => {
         if (!timestamp) return '--:--:--';
         const date = new Date(timestamp * 1000);
         return date.toLocaleTimeString('en-US', { hour12: false });
     };
 
-    // Calculate position percentage for an item
-    const getPosition = (time) => {
-        // If live, always pin to end to prevent jitter
-        if (isLive && time === currentTime) return 100;
+    const getXPosition = (time) => ((time - minTime) / duration) * 100;
 
-        const relativeTime = Math.max(0, Math.min(time - minTime, duration));
-        return (relativeTime / duration) * 100;
-    };
+    const SECTION_HEIGHT = 60;
 
-    // Calculate ticks based on zoom level
-    const ticks = useMemo(() => {
-        // Dynamic tick interval based on zoom level to avoid crowding
-        const tickCount = 10;
-        const interval = duration / tickCount;
-        const generatedTicks = [];
+    // 1. Build Historical World State (Cumulative & Forward-Filled)
+    // This pre-calculates the section capacities and offsets at every event point
+    // to provide STABLE vertical positions during scrolling.
+    const worldHistory = useMemo(() => {
+        const events = new Map();
 
-        for (let i = 0; i <= tickCount; i++) {
-            const time = minTime + (i * interval);
-            generatedTicks.push({
-                time,
-                label: formatTime(time),
-                percent: (i / tickCount) * 100
+        // Normalize status helper
+        const normSt = (s) => (s === 'quarantine' || s === 'quarantined' ? 'quarantined' : s);
+
+        // Collect all timestamps where counts might change
+        streams.forEach(s => {
+            s.metrics_history?.forEach(m => {
+                const ts = m.timestamp;
+                if (!events.has(ts)) {
+                    events.set(ts, { stable: 0, review: 0, quarantined: 0 });
+                }
             });
-        }
-        return generatedTicks;
-    }, [minTime, duration]);
-
-    // Zoom levels mapping (index -> seconds)
-    // Ordered from Zoom Out (1h) to Zoom In (30s) so slider UP = Zoom In (smaller time window)
-    const zoomLevels = [3600, 1800, 600, 300, 60, 30];
-
-    // Find closest index for current zoomLevel
-    const currentZoomIndex = useMemo(() => {
-        let closestIndex = 0;
-        let minDiff = Infinity;
-        zoomLevels.forEach((level, index) => {
-            const diff = Math.abs(level - zoomLevel);
-            if (diff < minDiff) {
-                minDiff = diff;
-                closestIndex = index;
+            if (s.last_status_change) {
+                const ts = s.last_status_change;
+                if (!events.has(ts)) {
+                    events.set(ts, { stable: 0, review: 0, quarantined: 0 });
+                }
             }
         });
-        return closestIndex;
-    }, [zoomLevel]);
 
-    const displayValue = zoomLevels[currentZoomIndex];
+        const sortedTs = Array.from(events.keys()).sort((a, b) => a - b);
 
-    const handleZoomChange = (val) => {
-        const index = val[0];
-        if (onZoomChange && zoomLevels[index]) {
-            onZoomChange(zoomLevels[index]);
+        // Pre-calculate counts at each event point
+        const result = sortedTs.map(ts => {
+            const counts = { stable: 0, review: 0, quarantined: 0 };
+            streams.forEach(s => {
+                // Determine status AT this exact historical timestamp
+                const m = s.metrics_history?.findLast(x => x.timestamp <= ts);
+                // Fallback: If no metric BEFORE ts, use 'stable' unless ts >= last_status_change
+                const status = normSt(m ? m.status : (ts >= s.last_status_change ? s.status : 'stable'));
+                counts[status]++;
+            });
+            return {
+                ts,
+                counts,
+                offsets: { stable: 0, review: counts.stable, quarantined: counts.stable + counts.review }
+            };
+        });
+
+        // Current world state (Live fallback)
+        const nowCounts = { stable: 0, review: 0, quarantined: 0 };
+        streams.forEach(s => nowCounts[normSt(s.status)]++);
+        const nowState = {
+            ts: Date.now() / 1000 + 3600, // Into the future
+            counts: nowCounts,
+            offsets: { stable: 0, review: nowCounts.stable, quarantined: nowCounts.stable + nowCounts.review }
+        };
+
+        return result.length > 0 ? result : [nowState];
+    }, [streams]);
+
+    const getYAt = (ts, status, rank) => {
+        // Forward-fill lookup: Find the state record at or before ts
+        let state = null;
+        for (let i = worldHistory.length - 1; i >= 0; i--) {
+            if (worldHistory[i].ts <= ts) {
+                state = worldHistory[i];
+                break;
+            }
         }
+        if (!state) state = worldHistory[0];
+
+        const normalizedStatus = status === 'quarantine' ? 'quarantined' : status;
+        const base = { stable: 0, review: SECTION_HEIGHT, quarantined: SECTION_HEIGHT * 2 }[normalizedStatus] ?? (SECTION_HEIGHT * 2);
+
+        const count = state.counts[normalizedStatus] || 1;
+        const offset = state.offsets[normalizedStatus] || 0;
+        const spacing = SECTION_HEIGHT / (count + 1);
+        const relativeRank = Math.max(1, rank - offset);
+
+        return base + (relativeRank * spacing);
     };
 
+    // 2. Prepare Single-Path Subway Lanes
+    const streamPaths = useMemo(() => {
+        if (!streams || !streams.length) return [];
+
+        return streams.map(stream => {
+            const fullHistory = stream.metrics_history || [];
+
+            // Build a list of historical markers
+            const markers = fullHistory
+                .filter(h => h.timestamp >= minTime - 300 && h.timestamp <= maxTime + 300)
+                .map(m => ({
+                    ts: m.timestamp,
+                    status: m.status,
+                    rank: m.rank || stream.rank || 1
+                }));
+
+            // CRITICAL: Normalize status for transitions
+            const currentStatus = stream.status === 'quarantine' ? 'quarantined' : stream.status;
+
+            // Handle status change event
+            if (stream.last_status_change && stream.last_status_change >= minTime - 3600) {
+                // Add a point RIGHT AT the status change with the NEW status
+                markers.push({
+                    ts: stream.last_status_change,
+                    status: currentStatus,
+                    rank: stream.rank || 1,
+                    isBoundary: true // Mark as an event boundary
+                });
+            }
+
+            // Ensure we have a start point
+            if (!markers.length || markers[0].ts > minTime) {
+                markers.push({
+                    ts: minTime - 300,
+                    status: markers.length > 0 ? markers[0].status : currentStatus,
+                    rank: markers.length > 0 ? markers[0].rank : (stream.rank || 1)
+                });
+            }
+
+            // Sort markers by timestamp
+            markers.sort((a, b) => a.ts - b.ts);
+
+            // Deduplicate at same ts
+            const points = [];
+            markers.forEach(p => {
+                if (points.length > 0 && Math.abs(points[points.length - 1].ts - p.ts) < 0.1) {
+                    points[points.length - 1] = p;
+                } else {
+                    points.push(p);
+                }
+            });
+
+            // Convert to SVG points
+            const svgPoints = points.map(p => ({
+                x: getXPosition(p.ts),
+                y: getYAt(p.ts, p.status, p.rank),
+                status: p.status,
+                ts: p.ts
+            }));
+
+            // Final extension to playhead - Anchor it to current rank and status
+            const finalY = getYAt(maxTime, currentStatus, stream.rank || 1);
+            svgPoints.push({
+                x: getXPosition(maxTime),
+                y: finalY,
+                status: currentStatus,
+                ts: maxTime
+            });
+
+            // Transition logic: Crisp bend BEFORE the destination point
+            const transitionSec = 2.5; // Fixed 2.5s transition window for crispness
+
+            let d = `M ${svgPoints[0].x} ${svgPoints[0].y}`;
+            for (let j = 1; j < svgPoints.length; j++) {
+                const p1 = svgPoints[j - 1];
+                const p2 = svgPoints[j];
+
+                if (Math.abs(p1.y - p2.y) < 0.1) {
+                    // Straight horizontal line
+                    d += ` L ${p2.x} ${p2.y}`;
+                } else {
+                    // Lane change bend
+                    // We draw horizontal at p1.y until transitionSec before p2.ts
+                    const switchX = getXPosition(p2.ts - transitionSec);
+                    const clampedSwitchX = Math.max(p1.x, switchX);
+
+                    d += ` L ${clampedSwitchX} ${p1.y} L ${p2.x} ${p2.y}`;
+                }
+            }
+
+            return {
+                streamId: stream.stream_id,
+                name: stream.name,
+                path: d
+            };
+        });
+    }, [streams, worldHistory, minTime, maxTime, duration]);
+
+    const ticks = useMemo(() => {
+        const generated = [];
+        for (let i = 0; i <= 10; i++) {
+            const t = minTime + (i * duration / 10);
+            generated.push({ label: formatTime(t), percent: i * 10 });
+        }
+        return generated;
+    }, [minTime, duration]);
+
+    const zoomLevels = [3600, 1800, 600, 300, 60, 30];
+    const currentZoomIndex = useMemo(() => {
+        let idx = 0, diff = Infinity;
+        zoomLevels.forEach((l, i) => {
+            const d = Math.abs(l - zoomLevel);
+            if (d < diff) { diff = d; idx = i; }
+        });
+        return idx;
+    }, [zoomLevel]);
+
+    const handleZoomChange = (val) => {
+        if (onZoomChange && zoomLevels[val[0]]) onZoomChange(zoomLevels[val[0]]);
+    };
+
+    // Calculate viewport overlap for the shaded rect
+    const viewportStart = Math.max(minTime, currentTime - zoomLevel);
+    const viewportX = getXPosition(viewportStart);
+    const viewportWidth = getXPosition(currentTime) - viewportX;
+
     return (
-        <Card className="border-t sticky bottom-0 z-50 bg-background/95 backdrop-blur shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+        <Card className="border-t sticky bottom-0 z-50 bg-zinc-950/95 backdrop-blur shadow-[0_-4px_10px_rgba(0,0,0,0.5)]">
             <div className="flex flex-row">
                 <div className="flex-1 flex flex-col">
-                    {/* Toolbar */}
-                    <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
-                        <div className="flex items-center gap-2">
-                            <div className="flex items-center bg-background rounded-md border px-2 py-1">
-                                <span className={`text-xs font-bold mr-2 ${isLive ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`}>
+                    <div className="flex items-center justify-between px-4 py-1.5 border-b border-white/5 bg-zinc-900/50">
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center bg-zinc-800/50 rounded-md border border-white/5 px-2 py-0.5">
+                                <span className={`text-[10px] font-bold mr-2 ${isLive ? 'text-red-500 animate-pulse' : 'text-zinc-500'}`}>
                                     {isLive ? 'LIVE' : 'REC'}
                                 </span>
-                                <span className="font-mono text-sm tabular-nums text-foreground">
+                                <span className="font-mono text-xs tabular-nums text-white/90">
                                     {formatTime(currentTime)}
                                 </span>
                             </div>
                             {!isLive && (
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-7 text-xs gap-1 hover:text-primary hover:bg-primary/10"
-                                    onClick={onLiveClick}
-                                >
-                                    <SkipForward className="h-3 w-3" />
-                                    Return to Live
+                                <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 hover:text-primary hover:bg-primary/10" onClick={onLiveClick}>
+                                    <SkipForward className="h-3 w-3" /> Return to Live
                                 </Button>
                             )}
                         </div>
-
                         <div className="flex items-center gap-1">
-                            <Button
-                                variant="secondary"
-                                size="icon"
-                                className="h-8 w-8 rounded-full"
-                                onClick={() => setIsPlaying(!isPlaying)}
-                            >
+                            <Button variant="secondary" size="icon" className="h-7 w-7 rounded-full bg-zinc-800 hover:bg-zinc-700" onClick={() => setIsPlaying(!isPlaying)}>
                                 {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
                             </Button>
                         </div>
-
-                        <div className="w-24"></div> {/* Spacer for balance */}
+                        <div className="flex items-center gap-2 min-w-[200px] justify-end">
+                            {hoveredStreamId && (
+                                <div className="text-[11px] font-medium text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 animate-in fade-in slide-in-from-right-2">
+                                    {streams.find(s => s.stream_id === hoveredStreamId)?.name || 'Stream'}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
-                    {/* Timeline Area */}
-                    <div
-                        ref={containerRef}
-                        className="relative h-24 w-full cursor-pointer select-none overflow-hidden bg-zinc-900/5 dark:bg-zinc-950/50"
-                        onMouseDown={handleMouseDown}
-                    >
+                    <div ref={containerRef} className="relative h-[210px] w-full cursor-crosshair select-none overflow-hidden bg-black" onMouseDown={handleMouseDown}>
                         {/* Ruler */}
-                        <div className="absolute top-0 left-0 right-0 h-6 border-b border-white/5 bg-background/50">
-                            {ticks.map((tick, i) => (
-                                <div
-                                    key={i}
-                                    className="absolute top-0 bottom-0 pointer-events-none border-l border-zinc-400/30 dark:border-zinc-600/50"
-                                    style={{ left: `${tick.percent}%` }}
-                                >
-                                    <span className="absolute left-1 top-1 text-[9px] text-muted-foreground font-mono">
-                                        {tick.label}
+                        <div className="absolute top-0 left-0 right-0 h-[30px] border-b border-white/10 bg-zinc-900/90 backdrop-blur-sm z-20">
+                            {ticks.map((t, i) => (
+                                <div key={i} className="absolute top-0 bottom-0 pointer-events-none border-l border-white/5" style={{ left: `${t.percent}%` }}>
+                                    <span className="absolute left-1 top-1.5 text-[9px] text-zinc-500 font-mono">
+                                        {t.label}
                                     </span>
                                 </div>
                             ))}
                         </div>
 
-                        {/* Visible Zone Indicator (Green Box) */}
-                        {zoomLevel && (
-                            <div
-                                className="absolute top-6 bottom-0 z-0 bg-green-500/5 border-x border-dashed border-green-500/30 pointer-events-none"
-                                style={{
-                                    left: `${getPosition(currentTime - zoomLevel)}%`,
-                                    width: `${getPosition(currentTime) - getPosition(currentTime - zoomLevel)}%`
-                                }}
-                            />
-                        )}
-
-                        {/* Event Markers */}
-                        {events && events.map((event, i) => (
-                            <div
-                                key={i}
-                                className={cn(
-                                    "absolute top-6 bottom-0 w-[2px] z-10 opacity-70 hover:opacity-100 hover:z-20 transition-opacity",
-                                    event.color === 'yellow' && "bg-yellow-500",
-                                    event.color === 'green' && "bg-green-500",
-                                    event.color === 'blue' && "bg-blue-500"
-                                )}
-                                style={{ left: `${getPosition(event.time)}%` }}
-                                title={`${event.type}: ${event.description}`}
-                            />
-                        ))}
-
-                        {/* Tracks Area (Visual placeholder for now) */}
-                        <div className="absolute top-6 bottom-0 left-0 right-0 p-1 opacity-50">
-                            <div className="h-full w-full bg-stripe-pattern opacity-10"></div>
+                        {/* Section Labels Overlay (HTML to prevent stretching) */}
+                        <div className="absolute top-[30px] bottom-0 left-0 right-0 pointer-events-none flex flex-col z-10">
+                            <div className="flex-1 flex items-center justify-end px-4">
+                                <span className="text-[10px] uppercase font-black text-green-500/40 tracking-widest">Stable</span>
+                            </div>
+                            <div className="flex-1 flex items-center justify-end px-4 border-t border-white/5">
+                                <span className="text-[10px] uppercase font-black text-blue-500/40 tracking-widest">Review</span>
+                            </div>
+                            <div className="flex-1 flex items-center justify-end px-4 border-t border-white/5">
+                                <span className="text-[10px] uppercase font-black text-yellow-500/40 tracking-widest">Quarantine</span>
+                            </div>
                         </div>
 
-                        {/* Playhead / Cursor */}
-                        <div
-                            className="absolute top-0 bottom-0 w-[1px] bg-red-500 z-30 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.5)]"
-                            style={{ left: `${getPosition(currentTime)}%` }}
-                        >
-                            <div className="absolute -top-[1px] -left-[4px] w-[9px] h-[9px] bg-red-500 transform rotate-45 rounded-[1px] shadow-sm"></div>
-                            <div className="absolute bottom-0 -left-[2px] w-[4px] h-[4px] bg-red-500 rounded-full"></div>
+                        {/* SVG Layer with Integrated Background */}
+                        <svg viewBox="0 0 100 180" preserveAspectRatio="none" className="absolute top-[30px] left-0 w-full h-[180px] pointer-events-none overflow-visible">
+                            <defs>
+                                <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                                    <feGaussianBlur stdDeviation="0.8" result="blur" />
+                                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                                </filter>
+
+                                <linearGradient id="subwayGradient" x1="0" y1="0" x2="0" y2="180" gradientUnits="userSpaceOnUse">
+                                    <stop offset="0%" stopColor="#22c55e" />
+                                    <stop offset="33.3%" stopColor="#22c55e" />
+                                    <stop offset="33.3%" stopColor="#3b82f6" />
+                                    <stop offset="66.6%" stopColor="#3b82f6" />
+                                    <stop offset="66.6%" stopColor="#eab308" />
+                                    <stop offset="100%" stopColor="#eab308" />
+                                </linearGradient>
+                            </defs>
+
+                            {/* SVG Background Rects - Perfectly in Sync with Grid */}
+                            <g className="bg-zones">
+                                <rect x="0" y="0" width="100" height="60" fill="#22c55e" fillOpacity="0.1" />
+                                <rect x="0" y="60" width="100" height="60" fill="#3b82f6" fillOpacity="0.1" />
+                                <rect x="0" y="120" width="100" height="60" fill="#eab308" fillOpacity="0.1" />
+
+                                <line x1="0" y1="60" x2="100" y2="60" stroke="white" strokeOpacity="0.1" vectorEffect="non-scaling-stroke" />
+                                <line x1="0" y1="120" x2="100" y2="120" stroke="white" strokeOpacity="0.1" vectorEffect="non-scaling-stroke" />
+                            </g>
+
+                            {/* Viewport Overlay (Currently visible window in charts) */}
+                            <rect
+                                x={viewportX}
+                                y="0"
+                                width={viewportWidth}
+                                height="180"
+                                fill="white"
+                                fillOpacity="0.07"
+                                stroke="white"
+                                strokeOpacity="0.15"
+                                strokeWidth="0.5"
+                                vectorEffect="non-scaling-stroke"
+                            />
+
+                            {/* Subway Paths */}
+                            {streamPaths.map((stream) => (
+                                <g key={stream.streamId}
+                                    className="transition-opacity duration-300"
+                                    style={{ opacity: hoveredStreamId && hoveredStreamId !== stream.streamId ? 0.15 : 1 }}
+                                >
+                                    <path
+                                        d={stream.path}
+                                        fill="none"
+                                        stroke="url(#subwayGradient)"
+                                        strokeWidth={hoveredStreamId === stream.streamId ? 2.5 : 1.3}
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        vectorEffect="non-scaling-stroke"
+                                        style={{
+                                            filter: hoveredStreamId === stream.streamId ? 'url(#glow)' : 'none',
+                                        }}
+                                        className="transition-all duration-300"
+                                    />
+                                    <path
+                                        d={stream.path}
+                                        fill="none"
+                                        stroke="transparent"
+                                        strokeWidth={12}
+                                        vectorEffect="non-scaling-stroke"
+                                        className="pointer-events-auto cursor-pointer"
+                                        onMouseEnter={() => setHoveredStreamId(stream.streamId)}
+                                        onMouseLeave={() => setHoveredStreamId(null)}
+                                    />
+                                </g>
+                            ))}
+                        </svg>
+
+                        {/* Playhead */}
+                        <div className="absolute top-0 bottom-0 w-[1.5px] bg-red-600 z-30 pointer-events-none shadow-[0_0_15px_rgba(220,38,38,0.8)]" style={{ left: `${getXPosition(currentTime)}%` }}>
+                            <div className="absolute top-0 -left-[5px] w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[8px] border-t-red-600"></div>
+                            <div className="absolute top-[30px] bottom-0 -left-[10px] w-[20px] bg-red-600/5"></div>
                         </div>
                     </div>
                 </div>
 
-                {/* Vertical Zoom Slider */}
-                <div className="w-12 border-l bg-muted/10 flex flex-col items-center justify-center py-2 gap-2">
-                    <span className="text-[9px] text-muted-foreground font-bold whitespace-nowrap select-none">ZOOM</span>
-                    <div className="h-20 py-2">
-                        <Slider
-                            orientation="vertical"
-                            min={0}
-                            max={zoomLevels.length - 1}
-                            step={1}
-                            value={[currentZoomIndex]}
-                            onValueChange={handleZoomChange}
-                            className="h-full"
-                        />
+                <div className="w-12 border-l border-white/5 bg-zinc-900 flex flex-col items-center justify-center py-2 gap-2">
+                    <span className="text-[8px] text-zinc-500 font-black tracking-tighter uppercase whitespace-nowrap">Scale</span>
+                    <div className="h-40 py-2">
+                        <Slider orientation="vertical" min={0} max={zoomLevels.length - 1} step={1} value={[currentZoomIndex]} onValueChange={handleZoomChange} className="h-full" />
                     </div>
-                    <span className="text-[9px] font-mono text-muted-foreground w-full text-center truncate px-0.5">
-                        {displayValue < 60 ? `${displayValue}s` : `${Math.round(displayValue / 60)}m`}
+                    <span className="text-[9px] font-mono text-zinc-400 w-full text-center truncate px-0.5">
+                        {zoomLevels[currentZoomIndex] < 60 ? `${zoomLevels[currentZoomIndex]}s` : `${Math.round(zoomLevels[currentZoomIndex] / 60)}m`}
                     </span>
                 </div>
             </div>

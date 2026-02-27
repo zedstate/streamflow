@@ -649,7 +649,7 @@ class UDIManager:
         Returns:
             True if refresh successful
         """
-        logger.info(f"Refreshing channel {channel_id}...")
+        logger.debug(f"Refreshing channel {channel_id}...")
         try:
             channel = self.fetcher.fetch_channel_by_id(channel_id)
             if channel:
@@ -671,7 +671,7 @@ class UDIManager:
                     # Update storage
                     self.storage.update_channel(channel_id, channel)
                 
-                logger.info(f"Channel {channel_id} refreshed successfully")
+                logger.debug(f"Channel {channel_id} refreshed successfully")
                 return True
             else:
                 logger.warning(f"Failed to refresh channel {channel_id}: channel not found")

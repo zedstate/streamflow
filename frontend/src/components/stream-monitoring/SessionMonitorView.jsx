@@ -62,6 +62,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         fps: closest.fps,
         reliability_score: closest.reliability_score !== undefined ? closest.reliability_score : stream.reliability_score,
         status: closest.status || stream.status, // Fallback if status wasn't recorded in old history
+        status_reason: closest.status_reason || stream.status_reason,
         is_quarantined: (closest.status || stream.status) === 'quarantined',
         is_alive: closest.is_alive,
         rank: closest.rank
@@ -482,9 +483,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                 <TabsTrigger value="live">Live Streams</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="screenshots">
+              <TabsContent value="screenshots" className="min-w-0">
                 {aliveScreenshots.length > 0 ? (
-                  <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800">
+                  <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800 pb-2">
                     <div className="flex gap-4 pb-4">
                       {aliveScreenshots.map((screenshot) => (
                         <div key={screenshot.stream_id} className="flex-none w-80">
@@ -669,6 +670,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
             isLive={isLive}
             onLiveClick={handleLiveClick}
             events={timelineEvents}
+            streams={session.streams || []}
             zoomLevel={zoomLevel}
             onZoomChange={setZoomLevel}
           />
@@ -733,6 +735,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
             <TableHead>Name</TableHead>
             <TableHead>Quality</TableHead>
             <TableHead>FPS</TableHead>
+            <TableHead>Speed</TableHead>
             <TableHead>Bitrate</TableHead>
             {!showQuarantined && (
               <>
@@ -758,6 +761,16 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                         <Radio className="h-3 w-3 text-green-600 dark:text-green-400" />
                       </div>
                     )}
+                    {stream.status === 'quarantined' && (
+                      <Badge variant="destructive" className="text-[10px] px-1 py-0 h-4 uppercase font-bold">
+                        Dead
+                      </Badge>
+                    )}
+                    {stream.status === 'review' && stream.status_reason === 'looping' && (
+                      <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20 text-[10px] px-1 py-0 h-4 uppercase font-bold">
+                        Looping
+                      </Badge>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell>
@@ -771,6 +784,11 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                   </div>
                 </TableCell>
                 <TableCell>{stream.fps ? `${stream.fps.toFixed(0)} fps` : 'N/A'}</TableCell>
+                <TableCell>
+                  <span className={`font-mono ${(stream.speed || stream.current_speed || 0) < 0.9 ? 'text-orange-500' : 'text-green-500'}`}>
+                    {(stream.speed || stream.current_speed || 0).toFixed(2)}x
+                  </span>
+                </TableCell>
                 <TableCell>{formatBitrate(stream.bitrate)}</TableCell>
                 {!showQuarantined && (
                   <>
@@ -830,7 +848,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
               </TableRow>
               {!showQuarantined && (
                 <TableRow>
-                  <TableCell colSpan={8} className="bg-muted/30 p-2">
+                  <TableCell colSpan={9} className="bg-muted/30 p-2">
                     <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
                   </TableCell>
                 </TableRow>

@@ -61,6 +61,7 @@ class StreamMetrics:
     buffering: bool = False
     reliability_score: float = 50.0
     status: str = 'review'
+    status_reason: Optional[str] = None
     rank: Optional[int] = None
 
     
@@ -88,6 +89,8 @@ class StreamInfo:
     screenshot_path: Optional[str] = None
     # Low speed tracking for auto-quarantine
     low_speed_start_time: Optional[float] = None  # When speed first dropped below threshold
+    status_reason: Optional[str] = None  # e.g., 'looping', 'dead', 'timeout'
+    last_loop_time: Optional[float] = None  # When a loop was last detected
     
     @property
     def is_quarantined(self) -> bool:
@@ -261,6 +264,7 @@ class StreamSessionManager:
         
         # Track last stream list refresh time
         self._last_streams_refresh = 0
+        self.loop_review_duration = 600.0  # Default 10 minutes
         logger.info("StreamSessionManager initialized")
 
         self._load_sessions()
@@ -272,7 +276,8 @@ class StreamSessionManager:
                 with open(self.settings_file, 'r') as f:
                     data = json.load(f)
                     self.review_duration = data.get('review_duration', DEFAULT_REVIEW_DURATION)
-                    logger.info(f"Loaded session settings: review_duration={self.review_duration}s")
+                    self.loop_review_duration = data.get('loop_review_duration', 600.0)
+                    logger.info(f"Loaded session settings: review_duration={self.review_duration}s, loop_review_duration={self.loop_review_duration}s")
         except Exception as e:
             logger.error(f"Failed to load session settings: {e}")
 
@@ -280,7 +285,8 @@ class StreamSessionManager:
         """Save session settings."""
         try:
             data = {
-                'review_duration': self.review_duration
+                'review_duration': self.review_duration,
+                'loop_review_duration': self.loop_review_duration
             }
             with open(self.settings_file, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -294,6 +300,14 @@ class StreamSessionManager:
         self.review_duration = float(duration)
         self.save_settings()
         logger.info(f"Updated review duration to {self.review_duration}s")
+
+    def get_loop_review_duration(self) -> float:
+        return self.loop_review_duration
+
+    def set_loop_review_duration(self, duration: float):
+        self.loop_review_duration = float(duration)
+        self.save_settings()
+        logger.info(f"Updated loop review duration to {self.loop_review_duration}s")
     
     def _load_sessions(self):
         """Load sessions from persistent storage"""

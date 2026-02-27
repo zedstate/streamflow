@@ -78,18 +78,20 @@ class StreamScreenshotService:
             process = subprocess.Popen(
                 [
                     'ffmpeg',
-                    '-y',  # Overwrite output files
-                    '-analyzeduration', '10000000', # 10s of analysis for better probe
-                    '-probesize', '10000000',      # 10MB probe size
-                    '-i', url,
-                    '-ss', '00:00:01',  # Seek 1 second in (avoid black frames)
-                    '-vframes', '1',  # Capture 1 frame
+                    '-hide_banner',
+                    '-nostdin',   # Disable interactive stdin
+                    '-y',         # Overwrite output files
+                    '-analyzeduration', '3000000', # 3s analysis is enough for snapshots
+                    '-probesize', '3000000',       # 3MB probe size
+                    '-i', f"{url}{'?' if '?' not in url else '&'}timeout=5000000",
+                    '-vframes', '1',  # Capture 1 frame immediately
                     '-q:v', str(SCREENSHOT_QUALITY),  # JPEG quality
                     '-f', 'image2',
                     str(output_path)
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL, # Explicitly redirect stdin
                 universal_newlines=True
             )
             
@@ -106,7 +108,8 @@ class StreamScreenshotService:
             if process.returncode == 0 and output_path.exists():
                 # Return relative path
                 relative_path = f"screenshots/{filename}"
-                logger.debug(f"Captured screenshot for stream {stream_id}: {relative_path}")
+                size = output_path.stat().st_size
+                logger.debug(f"Successfully captured screenshot for stream {stream_id} ({size} bytes): {relative_path}")
                 
                 # Parse stats if requested
                 if extract_stats and stderr:
@@ -132,6 +135,9 @@ class StreamScreenshotService:
                             pass
                             
                     # 3. FPS
+                    fps_match = re.search(r'(\d+(?:\.\d+)?)\s+fps', stderr)
+                    if fps_match:
+                        try:
                             stats['fps'] = float(fps_match.group(1))
                         except ValueError:
                             pass
@@ -155,7 +161,7 @@ class StreamScreenshotService:
                                 stats['hdr_format'] = 'Dolby Vision'
                             
                     if stats:
-                        logger.info(f"Extracted stats from screenshot probe for stream {stream_id}: {stats}")
+                        logger.debug(f"Extracted stats from screenshot probe for stream {stream_id}: {stats}")
                 
                 return relative_path, stats
             else:
