@@ -491,7 +491,15 @@ export default function AutomationProfileEditor() {
                                                         />
                                                     </div>
                                                     <div className="space-y-2">
-                                                        <Label className="text-xs">Minimum Minimum HDR Format</Label>
+                                                        <Label className="text-xs">Bitrate (kbps)</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={profile.stream_checking.min_bitrate}
+                                                            onChange={(e) => updateProfile('stream_checking.min_bitrate', parseInt(e.target.value) || 0)}
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <Label className="text-xs">Minimum HDR Format</Label>
                                                         <Select
                                                             value={profile.stream_checking.require_hdr || 'any'}
                                                             onValueChange={(val) => updateProfile('stream_checking.require_hdr', val)}

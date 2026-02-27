@@ -199,6 +199,7 @@ export default function AutomationProfileStudio() {
                                 <TableHead className="text-center">Matching</TableHead>
                                 <TableHead className="text-center">Checking</TableHead>
                                 <TableHead>Min Res</TableHead>
+                                <TableHead>Min Bitrate</TableHead>
                                 <TableHead className="text-right">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -233,6 +234,9 @@ export default function AutomationProfileStudio() {
                                     </TableCell>
                                     <TableCell>
                                         <span className="text-sm">{profile.stream_checking?.min_resolution || 'Any'}</span>
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="text-sm">{profile.stream_checking?.min_bitrate ? `${profile.stream_checking.min_bitrate} kbps` : 'Any'}</span>
                                     </TableCell>
                                     <TableCell className="text-right">
                                         <div className="flex justify-end gap-1">
