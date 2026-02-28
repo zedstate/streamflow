@@ -68,6 +68,12 @@ class SidecarLoopDetector:
                     
                     self.buffer.append((timestamp, h))
                     
+                    # Detect loop
+                    detected_duration = self.detect_loop()
+                    if detected_duration:
+                        # Log with high visibility for monitoring
+                        logger.warning(f"!!! LOOP DETECTED: {detected_duration:.2f}s !!!")
+                    
                 except Exception as e:
                     logger.error(f"Error processing frame: {e}")
                     continue
@@ -174,8 +180,10 @@ class SidecarLoopDetector:
         """Fallback simple hash if imagehash not installed"""
         # Very crude average hash
         img = img.convert('L').resize((8, 8), Image.Resampling.LANCZOS)
-        avg = sum(img.getdata()) / 64
-        return sum(1 << i for i, v in enumerate(img.getdata()) if v > avg)
+        pixels = list(img.getdata())
+        avg = sum(pixels) / 64
+        hash_val = sum(1 << i for i, v in enumerate(pixels) if v > avg)
+        return SidecarHash(hash_val)
 
 class SidecarHash:
     """Helper to simulate imagehash behavior if not present"""
