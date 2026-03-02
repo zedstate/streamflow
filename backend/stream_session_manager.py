@@ -93,6 +93,7 @@ class StreamInfo:
     status_reason: Optional[str] = None  # e.g., 'looping', 'dead', 'timeout'
     last_loop_time: Optional[float] = None  # When a loop was last detected
     last_logo_status: str = 'PENDING'
+    display_logo_status: str = 'PENDING'
     consecutive_logo_misses: int = 0
     loop_duration: Optional[float] = None
     last_loop_log_time: float = 0.0

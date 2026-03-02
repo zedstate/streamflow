@@ -870,15 +870,17 @@ class StreamMonitoringService:
             stream_info.rank = rank
             
             # Ensure we have a metrics entry at this timestamp for ALL streams (Heartbeat)
-            # This is critical for the frontend timeline to track rank stability
+            # This is critical for the frontend timeline and graphs to stay current
             last_metric = stream_info.metrics_history[-1] if stream_info.metrics_history else None
             
-            if not last_metric:
+            # If the last metric isn't from this exact evaluation cycle, add a heartbeat
+            if not last_metric or abs(last_metric.timestamp - current_time) > 0.1:
                 # Add a "heartbeat" metric entry for streams that didn't get one in step 1
                 # (Monitors only add metrics if they have a decisive tick)
+                # For quarantined streams, speed is 0.0 and is_alive is False
                 metrics = StreamMetrics(
                     timestamp=current_time,
-                    speed=0.0,
+                    speed=0.0, # Zero speed for non-monitored/quarantined streams
                     bitrate=stream_info.bitrate or 0,
                     fps=stream_info.fps or 0,
                     is_alive=not stream_info.is_quarantined,
@@ -1041,6 +1043,7 @@ class StreamMonitoringService:
                     info = session.streams.get(sid)
                     if info:
                         info.last_logo_status = status
+                        info.display_logo_status = status
                         if status == "FAILED":
                             # If logo mismatch, record it so it can be shown in UI if quarantined later
                             info.status_reason = 'logo-mismatch'

@@ -820,12 +820,12 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                   <div className="flex flex-col gap-1">
                     <Badge
                       variant="outline"
-                      className={`text-[10px] px-1 py-0 h-4 uppercase font-bold ${stream.last_logo_status === 'SUCCESS' ? 'bg-green-500/10 text-green-600 border-green-500/20' :
-                        stream.last_logo_status === 'FAILED' ? 'bg-red-500/10 text-red-600 border-red-500/20' :
+                      className={`text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center ${stream.display_logo_status === 'SUCCESS' ? 'bg-green-500/10 text-green-600 border-green-500/20' :
+                        stream.display_logo_status === 'FAILED' ? 'bg-red-500/10 text-red-600 border-red-500/20' :
                           'bg-gray-500/10 text-gray-600 border-gray-500/20'
                         }`}
                     >
-                      {stream.last_logo_status || 'PENDING'}
+                      {stream.display_logo_status || 'PENDING'}
                     </Badge>
                     {stream.consecutive_logo_misses > 0 && (
                       <span className="text-[10px] text-red-500 font-medium">
@@ -858,13 +858,13 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                     <TableCell>
                       <div className="flex gap-2">
                         <Button
-                          size="sm"
+                          size="icon"
                           variant="outline"
                           onClick={() => onQuarantine(stream.stream_id)}
-                          className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950"
+                          className="h-8 w-8 text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950"
+                          title="Quarantine"
                         >
-                          <Ban className="h-3 w-3 mr-1" />
-                          Quarantine
+                          <Ban className="h-4 w-4" />
                         </Button>
                       </div>
                     </TableCell>
@@ -892,7 +892,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
               </TableRow>
               {!showQuarantined && (
                 <TableRow>
-                  <TableCell colSpan={9} className="bg-muted/30 p-2">
+                  <TableCell colSpan={10} className="bg-muted/30 p-2">
                     <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
                   </TableCell>
                 </TableRow>
