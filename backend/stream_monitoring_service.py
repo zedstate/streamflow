@@ -16,6 +16,7 @@ import threading
 import time
 import subprocess
 from typing import Dict, Optional
+import concurrent.futures
 
 from logging_config import setup_logging
 from stream_session_manager import (
@@ -981,15 +982,25 @@ class StreamMonitoringService:
             ).start()
                 
     def _capture_screenshot_batch(self, session_id: str, stream_ids: list[int]):
-        """Capture multiple screenshots and log a summary"""
+        """Capture multiple screenshots and log a summary in parallel"""
         success_count = 0
         logo_results = {}
-        for stream_id in stream_ids:
-            success, logo_status = self._capture_screenshot(session_id, stream_id)
-            if success:
-                success_count += 1
-            if logo_status:
-                logo_results[stream_id] = logo_status
+        
+        # Helper for threaded execution
+        def capture_and_verify(stream_id):
+            success, status = self._capture_screenshot(session_id, stream_id)
+            return stream_id, success, status
+            
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(stream_ids), 8)) as executor:
+            # Submit all captures
+            future_to_stream = {executor.submit(capture_and_verify, sid): sid for sid in stream_ids}
+            
+            for future in concurrent.futures.as_completed(future_to_stream):
+                stream_id, success, status = future.result()
+                if success:
+                    success_count += 1
+                if status:
+                    logo_results[stream_id] = status
                 
         # Apply all logo statuses synchronously so cross-stream consensus triggers simultaneously
         if logo_results:
