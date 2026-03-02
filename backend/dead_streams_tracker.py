@@ -46,6 +46,8 @@ class DeadStreamsTracker:
         """
         if self.tracker_file.exists():
             try:
+                if self.tracker_file.stat().st_size == 0:
+                    return {}
                 with open(self.tracker_file, 'r') as f:
                     return json.load(f)
             except (json.JSONDecodeError, FileNotFoundError) as e:

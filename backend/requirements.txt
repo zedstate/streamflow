@@ -6,3 +6,5 @@ flask-cors
 croniter
 Pillow
 imagehash
+imutils
+opencv-python-headless

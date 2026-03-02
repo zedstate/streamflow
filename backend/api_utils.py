@@ -350,17 +350,18 @@ def fetch_data_from_url(url: str) -> Optional[Any]:
         log_exception(logger, e, f"fetch_data_from_url ({url})")
         return None
 
-def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
+def patch_request(url: str, payload: Dict[str, Any], max_retries: int = 2) -> requests.Response:
     """
     Send a PATCH request with authentication and retry logic.
     
     Makes an authenticated PATCH request to the specified URL. If the
     request fails with a 401 error, automatically refreshes the token
-    and retries once.
+    and retries once. Handle 5xx errors and network issues with retries.
     
     Parameters:
         url (str): The URL to send the PATCH request to.
         payload (Dict[str, Any]): The JSON payload to send.
+        max_retries (int): Maximum attempts for transient 500 errors.
         
     Returns:
         requests.Response: The response object from the request.
@@ -368,43 +369,58 @@ def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     Raises:
         requests.exceptions.RequestException: If request fails.
     """
-    try:
-        resp = requests.patch(
-            url, json=payload, headers=_get_auth_headers(), timeout=30
-        )
-        resp.raise_for_status()
-        return resp
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            if _refresh_token():
-                logger.info("Retrying PATCH request with new token...")
-                resp = requests.patch(
-                    url, json=payload, headers=_get_auth_headers(), timeout=30
-                )
-                resp.raise_for_status()
-                return resp
-            else:
-                raise
-        else:
-            logger.error(
-                f"Error patching data to {url}: {e.response.text}"
+    retries = 0
+    while retries <= max_retries:
+        try:
+            resp = requests.patch(
+                url, json=payload, headers=_get_auth_headers(), timeout=30
             )
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                if _refresh_token():
+                    logger.info("Retrying PATCH request with new token...")
+                    resp = requests.patch(
+                        url, json=payload, headers=_get_auth_headers(), timeout=30
+                    )
+                    resp.raise_for_status()
+                    return resp
+                else:
+                    raise
+            elif e.response.status_code >= 500 and retries < max_retries:
+                logger.warning(f"Got HTTP {e.response.status_code} patching data to {url}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            else:
+                logger.error(
+                    f"Error patching data to {url}: {e.response.text}"
+                )
+                raise
+        except requests.exceptions.RequestException as e:
+            if retries < max_retries:
+                logger.warning(f"Network error patching data to {url}: {e}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            logger.error(f"Error patching data to {url}: {e}")
             raise
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error patching data to {url}: {e}")
-        raise
 
-def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
+def post_request(url: str, payload: Dict[str, Any], max_retries: int = 2) -> requests.Response:
     """
     Send a POST request with authentication and retry logic.
     
     Makes an authenticated POST request to the specified URL. If the
     request fails with a 401 error, automatically refreshes the token
-    and retries once.
+    and retries once. Handle 5xx errors and network issues with retries.
     
     Parameters:
         url (str): The URL to send the POST request to.
         payload (Dict[str, Any]): The JSON payload to send.
+        max_retries (int): Maximum attempts for transient 500 errors.
         
     Returns:
         requests.Response: The response object from the request.
@@ -412,31 +428,45 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     Raises:
         requests.exceptions.RequestException: If request fails.
     """
-    try:
-        resp = requests.post(
-            url, json=payload, headers=_get_auth_headers(), timeout=30
-        )
-        resp.raise_for_status()
-        return resp
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            if _refresh_token():
-                logger.info("Retrying POST request with new token...")
-                resp = requests.post(
-                    url, json=payload, headers=_get_auth_headers(), timeout=30
-                )
-                resp.raise_for_status()
-                return resp
-            else:
-                raise
-        else:
-            logger.error(
-                f"Error posting data to {url}: {e.response.text}"
+    retries = 0
+    while retries <= max_retries:
+        try:
+            resp = requests.post(
+                url, json=payload, headers=_get_auth_headers(), timeout=30
             )
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                if _refresh_token():
+                    logger.info("Retrying POST request with new token...")
+                    resp = requests.post(
+                        url, json=payload, headers=_get_auth_headers(), timeout=30
+                    )
+                    resp.raise_for_status()
+                    return resp
+                else:
+                    raise
+            elif e.response.status_code >= 500 and retries < max_retries:
+                logger.warning(f"Got HTTP {e.response.status_code} posting data to {url}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            else:
+                logger.error(
+                    f"Error posting data to {url}: {e.response.text}"
+                )
+                raise
+        except requests.exceptions.RequestException as e:
+            if retries < max_retries:
+                logger.warning(f"Network error posting data to {url}: {e}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            logger.error(f"Error posting data to {url}: {e}")
             raise
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error posting data to {url}: {e}")
-        raise
 
 def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
     """

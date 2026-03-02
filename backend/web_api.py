@@ -19,7 +19,7 @@ from typing import Dict, Any
 from dataclasses import asdict
 from werkzeug.utils import secure_filename
 
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, make_response
 from flask_cors import CORS
 
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
@@ -4675,6 +4675,7 @@ def get_stream_session(session_id):
                     'current_speed': stream_info.metrics_history[-1].speed if stream_info.metrics_history else 0.0,
                     'rank': stream_info.rank,
                     'screenshot_path': stream_info.screenshot_path,
+                    'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}" if stream_info.screenshot_path else None,
                     'last_screenshot_time': stream_info.last_screenshot_time,
                     'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0,
                     'metrics_history': [asdict(m) for m in stream_info.metrics_history] if stream_info.metrics_history else []
@@ -4959,7 +4960,11 @@ def serve_screenshot(filename):
     """Serve screenshot files."""
     try:
         screenshots_dir = CONFIG_DIR / 'screenshots'
-        return send_from_directory(screenshots_dir, filename)
+        response = make_response(send_from_directory(screenshots_dir, filename))
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     except Exception as e:
         logger.error(f"Error serving screenshot {filename}: {e}")
         return jsonify({"error": "Screenshot not found"}), 404
@@ -4983,7 +4988,7 @@ def get_alive_screenshots(session_id):
                     screenshots_data.append({
                         'stream_id': stream_info.stream_id,
                         'stream_name': stream_info.name,
-                        'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}",
+                        'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}",
                         'reliability_score': stream_info.reliability_score,
                         'm3u_account': stream_info.m3u_account
                     })

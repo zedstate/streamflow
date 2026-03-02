@@ -26,24 +26,33 @@ class SidecarLoopDetector:
     Sidecar loop detector that reads PPM frames from a pipe and detects content loops.
     """
     
-    def __init__(self, pipe):
+    def __init__(self, pipe, stream_id: Optional[int] = None):
         """
         Initialize the loop detector.
         
         Args:
             pipe: A file-like object (e.g., subprocess.stdout) yielding raw PPM frames.
+            stream_id: Stream ID for logging context.
         """
         self.pipe = pipe
+        self.stream_id = stream_id
         self.buffer = collections.deque(maxlen=BUFFER_MAXLEN)
         self.last_frame_time = 0.0
+        self.last_log_time = 0.0
         self.is_closed = False
+        self._is_looping = False
+        
+    def is_looping(self) -> bool:
+        """Returns True if the detector currently assesses the stream is continuously looping."""
+        return self._is_looping
         
     def run(self):
         """
         Continuously read from the pipe and process frames.
         This should be run in a separate thread.
         """
-        logger.info("SidecarLoopDetector worker started")
+        stream_ctx = f"stream {self.stream_id}" if self.stream_id else "unknown stream"
+        logger.info(f"SidecarLoopDetector worker started for {stream_ctx}")
         try:
             while not self.is_closed:
                 frame_data = self._read_ppm_frame()
@@ -71,20 +80,25 @@ class SidecarLoopDetector:
                     # Detect loop
                     detected_duration = self.detect_loop()
                     if detected_duration:
-                        # Log with high visibility for monitoring
-                        logger.warning(f"!!! LOOP DETECTED: {detected_duration:.2f}s !!!")
+                        self._is_looping = True
+                        # Debounce logging to prevent spam (e.g., max once per minute)
+                        if timestamp - self.last_log_time > 60.0:
+                            logger.warning(f"Loop detected in {stream_ctx}. Duration: {detected_duration:.2f}s")
+                            self.last_log_time = timestamp
+                    else:
+                        self._is_looping = False
                     
                 except Exception as e:
                     logger.error(f"Error processing frame: {e}")
                     continue
                     
         except EOFError:
-            logger.info("SidecarLoopDetector pipe reached EOF")
+            logger.info(f"SidecarLoopDetector pipe reached EOF for {stream_ctx}")
         except Exception as e:
-            logger.error(f"SidecarLoopDetector unexpected error: {e}", exc_info=True)
+            logger.error(f"SidecarLoopDetector unexpected error for {stream_ctx}: {e}", exc_info=True)
         finally:
             self.is_closed = True
-            logger.info("SidecarLoopDetector worker stopped")
+            logger.info(f"SidecarLoopDetector worker stopped for {stream_ctx}")
 
     def detect_loop(self) -> Optional[float]:
         """

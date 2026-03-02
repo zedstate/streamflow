@@ -10,14 +10,14 @@ def test_ffmpeg_robust_routing():
     port_a = 15000
     port_b = 25000
     
-    # Robust multi-output command without 'tee' muxer
+    # Robust multi-output command with fifo
     # Note: We repeat -map 0 for each output to be safe
     cmd = [
         'ffmpeg',
         '-hide_banner',
         '-i', url,
-        '-map', '0', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{port_a}',
-        '-map', '0', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{port_b}',
+        '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{port_a}',
+        '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{port_b}',
         '-map', '0', '-c', 'copy', '-f', 'null', '-'
     ]
     
@@ -89,4 +89,3 @@ def test_ffmpeg_robust_routing():
 
 if __name__ == "__main__":
     test_ffmpeg_robust_routing()
-吐

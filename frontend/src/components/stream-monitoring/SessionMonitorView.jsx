@@ -397,10 +397,10 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       {/* Header with Channel Logo and EPG Info */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between min-w-0 gap-4">
+        <div className="flex items-center gap-4 min-w-0">
           <Button variant="ghost" size="icon" onClick={onBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
@@ -414,9 +414,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
               />
             </div>
           )}
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">{session.channel_name}</h1>
-            <p className="text-muted-foreground mt-1">
+          <div className="min-w-0">
+            <h1 className="text-3xl font-bold tracking-tight truncate">{session.channel_name}</h1>
+            <p className="text-muted-foreground mt-1 truncate">
               Session Monitor - {session.is_active ? 'Active' : 'Inactive'}
             </p>
           </div>
@@ -471,7 +471,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
       {/* Live Stream Preview */}
       {activeStreams.length > 0 && (
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle>Live Stream Preview</CardTitle>
             <CardDescription>View screenshots and live streams from active streams</CardDescription>
@@ -483,36 +483,38 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                 <TabsTrigger value="live">Live Streams</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="screenshots" className="min-w-0">
+              <TabsContent value="screenshots" className="mt-0 outline-none">
                 {aliveScreenshots.length > 0 ? (
-                  <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800 pb-2">
-                    <div className="flex gap-4 pb-4">
-                      {aliveScreenshots.map((screenshot) => (
-                        <div key={screenshot.stream_id} className="flex-none w-80">
-                          <Card>
-                            <CardContent className="p-4">
-                              <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
-                                <img
-                                  src={screenshot.screenshot_url}
-                                  alt={screenshot.stream_name}
-                                  className="w-full h-full object-contain"
-                                  onError={(e) => {
-                                    e.target.src = FALLBACK_IMAGE_SVG;
-                                  }}
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
-                                  {screenshot.stream_name}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  Stream ID: {screenshot.stream_id}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </div>
-                      ))}
+                  <div className="w-full relative overflow-hidden">
+                    <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800 pb-2">
+                      <div className="flex gap-4 pb-4">
+                        {aliveScreenshots.map((screenshot) => (
+                          <div key={screenshot.stream_id} className="flex-none w-80">
+                            <Card>
+                              <CardContent className="p-4">
+                                <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
+                                  <img
+                                    src={screenshot.screenshot_url}
+                                    alt={screenshot.stream_name}
+                                    className="w-full h-full object-contain"
+                                    onError={(e) => {
+                                      e.target.src = FALLBACK_IMAGE_SVG;
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
+                                    {screenshot.stream_name}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Stream ID: {screenshot.stream_id}
+                                  </p>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 ) : (

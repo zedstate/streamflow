@@ -3,6 +3,12 @@ Stream Monitoring Service
 
 Orchestrates continuous stream monitoring, reliability scoring, and screenshot capture
 for active monitoring sessions.
+
+Includes a resilient, computer-vision-based Logo Verification system utilizing a 4-Pillar Architecture:
+1. Edge Density Checking: Detects black screens or whip-pans before processing.
+2. Multi-Corner Fallback: Checks Top-Right quadrant, falls back to Top-Left if needed.
+3. Cross-Stream Consensus: Evaluates all streams. If all fail, a 'Global Pardon' is granted for commercial breaks.
+4. Sliding Window Penalty: Outlier streams are penalized (-30 points) after 4 consecutive logo misses.
 """
 
 import logging
@@ -194,48 +200,56 @@ class StreamMonitoringService:
             stream_id: Stream ID to remove
             reason: Reason for removal (for logging)
         """
-        try:
-            session = self.session_manager.get_session(session_id)
-            if not session:
-                logger.warning(f"Session {session_id} not found when removing stream {stream_id}")
-                return
-            
-            stream_info = session.streams.get(stream_id)
-            if not stream_info:
-                logger.warning(f"Stream info {stream_id} not found when removing stream")
-                return
-
-            # Mark as dead in tracker
-            self.dead_streams_tracker.mark_as_dead(
-                stream_url=stream_info.url,
-                stream_id=stream_id,
-                stream_name=stream_info.name,
-                channel_id=session.channel_id
-            )
-            
-            # Remove from channel (but not delete from UDI)
-            udi = get_udi_manager()
-            channel = udi.get_channel_by_id(session.channel_id)
-            
-            if channel:
-                current_streams = channel.get('streams', [])
-                if stream_id in current_streams:
-                    new_streams = [sid for sid in current_streams if sid != stream_id]
-                    from api_utils import update_channel_streams
-                    success = update_channel_streams(session.channel_id, new_streams)
-                    
-                    if success:
-                        logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel {session.channel_id}")
-                        udi.refresh_channel_by_id(session.channel_id)
+        def _execute_removal():
+            try:
+                session = self.session_manager.get_session(session_id)
+                if not session:
+                    logger.warning(f"Session {session_id} not found when removing stream {stream_id}")
+                    return
+                
+                stream_info = session.streams.get(stream_id)
+                if not stream_info:
+                    logger.warning(f"Stream info {stream_id} not found when removing stream")
+                    return
+    
+                # Mark as dead in tracker
+                self.dead_streams_tracker.mark_as_dead(
+                    stream_url=stream_info.url,
+                    stream_id=stream_id,
+                    stream_name=stream_info.name,
+                    channel_id=session.channel_id
+                )
+                
+                # Remove from channel (but not delete from UDI)
+                udi = get_udi_manager()
+                channel = udi.get_channel_by_id(session.channel_id)
+                
+                if channel:
+                    current_streams = channel.get('streams', [])
+                    if stream_id in current_streams:
+                        new_streams = [sid for sid in current_streams if sid != stream_id]
+                        from api_utils import update_channel_streams
+                        success = update_channel_streams(session.channel_id, new_streams)
+                        
+                        if success:
+                            logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel {session.channel_id}")
+                            udi.refresh_channel_by_id(session.channel_id)
+                        else:
+                            logger.warning(f"Failed to update channel {session.channel_id} to remove {reason} stream {stream_id}")
                     else:
-                        logger.warning(f"Failed to update channel {session.channel_id} to remove {reason} stream {stream_id}")
+                        logger.info(f"{reason} stream {stream_id} was not in channel {session.channel_id} streams list")
                 else:
-                    logger.info(f"{reason} stream {stream_id} was not in channel {session.channel_id} streams list")
-            else:
-                logger.warning(f"Channel {session.channel_id} not found, could not remove {reason} stream {stream_id}")
+                    logger.warning(f"Channel {session.channel_id} not found, could not remove {reason} stream {stream_id}")
+    
+            except Exception as e:
+                logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
 
-        except Exception as e:
-            logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
+        # Offload external REST patching to a daemon thread to prevent evaluate_session_streams from blocking
+        threading.Thread(
+            target=_execute_removal,
+            daemon=True,
+            name=f"RemoveDispatcharr-{stream_id}"
+        ).start()
     
     def _manage_quarantine_lifecycle(self, session) -> bool:
         """
@@ -552,7 +566,7 @@ class StreamMonitoringService:
             name=f"SidecarStderr-{stream_id}"
         ).start()
         
-        detector = SidecarLoopDetector(proc.stdout)
+        detector = SidecarLoopDetector(proc.stdout, stream_id=stream_id)
         
         # Start detector thread
         thread = threading.Thread(
@@ -603,7 +617,14 @@ class StreamMonitoringService:
             stream_info.bitrate = int(stats.bitrate)
 
     def _evaluate_session_streams(self, session_id: str, force_update: bool = False):
-        """Evaluate and score all streams in a session"""
+        """
+        Evaluate and score all streams in a session.
+        
+        Logo Verification Architecture (Cross-Stream Consensus):
+        - Evaluates logo presence across all active streams.
+        - Grants a 'Global Pardon' if all streams fail logo checks (assuming commercial break).
+        - Penalizes outlier streams (missing logo when others have it).
+        """
         session = self.session_manager.get_session(session_id)
         if not session:
             return
@@ -611,11 +632,41 @@ class StreamMonitoringService:
         current_time = time.time()
         session_monitors = self.monitors.get(session_id, {})
         
+        # === Pillar 3: Cross-Stream Consensus ===
+        active_logo_statuses = {}
+        for stream_id in session_monitors:
+            stream_info = session.streams.get(stream_id)
+            # Only consider streams that have a decisive status
+            if stream_info and stream_info.last_logo_status in ("SUCCESS", "FAILED"):
+                active_logo_statuses[stream_id] = stream_info.last_logo_status
+                
+        global_pardon = False
+        if active_logo_statuses:
+            if all(status == "FAILED" for status in active_logo_statuses.values()):
+                global_pardon = True
+                logger.debug(f"Logo Consensus: Global Pardon for session {session_id} (Commercial Break likely)")
+        
+        # Log the batched verification statuses perfectly concisely
+        if active_logo_statuses:
+            batch_log = ", ".join([f"{sid}: {status}" for sid, status in active_logo_statuses.items()])
+            logger.info(f"Logo verify batch results for session {session_id}: [{batch_log}]")
+        
         # 1. Update stats for streams with active monitors
         for stream_id, monitor in list(session_monitors.items()):
             stream_info = session.streams.get(stream_id)
             if not stream_info:
                 continue
+            
+            # === Pillar 4: The Sliding Window Penalty ===
+            if stream_id in active_logo_statuses:
+                if not global_pardon:
+                    if active_logo_statuses[stream_id] == "FAILED":
+                        stream_info.consecutive_logo_misses += 1
+                    elif active_logo_statuses[stream_id] == "SUCCESS":
+                        stream_info.consecutive_logo_misses = 0
+                
+                # Reset status back to PENDING so we don't double-count until next screenshot
+                stream_info.last_logo_status = "PENDING"
             
             stats = monitor.get_stats()
             
@@ -635,6 +686,23 @@ class StreamMonitoringService:
                 is_healthy = stats.is_alive and not monitor.is_buffering()
                 scoring_window.add_measurement(is_healthy, stats.speed)
                 current_score = scoring_window.get_score()
+                
+                # Apply sliding window penalty for logo misses
+                if stream_info.consecutive_logo_misses >= 4:
+                    current_score = 0.0
+                    if stream_info.consecutive_logo_misses % 4 == 0:
+                        logger.warning(f"Stream {stream_id} downgraded to 0 points for {stream_info.consecutive_logo_misses} consecutive logo misses (Wrong Channel Expected)")
+                
+                # Check for Sidecar LOOP detection
+                sidecar_data = self.sidecars.get(session_id, {}).get(stream_id)
+                if sidecar_data:
+                    _, detector = sidecar_data
+                    if detector and detector.is_looping():
+                        current_score = max(0.0, current_score - 50.0)
+                        stream_info.status_reason = 'looping'
+                        stream_info.last_loop_time = current_time
+                        logger.warning(f"Stream {stream_id} penalized -50 points for active loop detection.")
+                
                 stream_info.reliability_score = current_score
 
             # Create metrics entry (will be finalized with rank later)
@@ -873,22 +941,35 @@ class StreamMonitoringService:
         
         current_time = time.time()
         interval = session.screenshot_interval_seconds
-        streams_to_capture = []
         
+        # Step 1: Check if ANY stream is due for a screenshot
+        any_stream_due = False
         for stream_id, stream_info in session.streams.items():
             if stream_info.is_quarantined:
                 continue
             
-            # Check if we need a screenshot
             time_since_screenshot = current_time - stream_info.last_screenshot_time
-            
-            # Readiness Gate: MUST have a monitor AND speed > 0
             monitor = self.monitors.get(session_id, {}).get(stream_id)
             is_ready = monitor and monitor.get_stats().speed > 0
+            
             if is_ready and time_since_screenshot >= interval:
-                streams_to_capture.append(stream_id)
-                # Update timestamp to avoid duplicate attempts
-                stream_info.last_screenshot_time = current_time
+                any_stream_due = True
+                break
+                
+        # Step 2: If any are due, grab ALL ready streams to synchronize their monitoring intervals natively
+        streams_to_capture = []
+        if any_stream_due:
+            for stream_id, stream_info in session.streams.items():
+                if stream_info.is_quarantined:
+                    continue
+                    
+                monitor = self.monitors.get(session_id, {}).get(stream_id)
+                is_ready = monitor and monitor.get_stats().speed > 0
+                
+                if is_ready:
+                    streams_to_capture.append(stream_id)
+                    # Reset timestamps so they all evaluate exactly identically next cycle
+                    stream_info.last_screenshot_time = current_time
         
         if streams_to_capture:
             # Capture screenshots in background
@@ -902,24 +983,38 @@ class StreamMonitoringService:
     def _capture_screenshot_batch(self, session_id: str, stream_ids: list[int]):
         """Capture multiple screenshots and log a summary"""
         success_count = 0
+        logo_results = {}
         for stream_id in stream_ids:
-            if self._capture_screenshot(session_id, stream_id):
+            success, logo_status = self._capture_screenshot(session_id, stream_id)
+            if success:
                 success_count += 1
+            if logo_status:
+                logo_results[stream_id] = logo_status
+                
+        # Apply all logo statuses synchronously so cross-stream consensus triggers simultaneously
+        if logo_results:
+            session = self.session_manager.get_session(session_id)
+            if session:
+                for sid, status in logo_results.items():
+                    info = session.streams.get(sid)
+                    if info:
+                        info.last_logo_status = status
         
         if success_count > 0:
             logger.info(f"Captured screenshots and updated stats for {success_count} streams in session {session_id}")
     
-    def _capture_screenshot(self, session_id: str, stream_id: int) -> bool:
-        """Capture a screenshot for a stream. Returns True if screenshot or stats captured."""
+    def _capture_screenshot(self, session_id: str, stream_id: int) -> tuple[bool, str | None]:
+        """Capture a screenshot for a stream. Returns (success_bool, logo_status_str_or_none)"""
         session = self.session_manager.get_session(session_id)
         if not session:
-            return False
+            return False, None
         
         stream_info = session.streams.get(stream_id)
         if not stream_info:
-            return False
+            return False, None
             
         success = False
+        logo_status = None
         try:
             # Determine probe URL: use sidecar UDP loopback if available
             probe_url = stream_info.url
@@ -940,6 +1035,16 @@ class StreamMonitoringService:
                 stream_info.screenshot_path = path
                 logger.debug(f"Captured screenshot for stream {stream_id}: {path}")
                 success = True
+                
+                # Synchronous logo verification so we can batch them atomically 
+                if session.logo_id:
+                    try:
+                        from logo_verification_service import verify_logo
+                        status = verify_logo(path, session.logo_id)
+                        if status != "SKIPPED":
+                            logo_status = status
+                    except Exception as e:
+                        logger.error(f"Error in sync logo verify: {e}")
             
             # Update stream info with probed stats
             if stats:
@@ -962,10 +1067,11 @@ class StreamMonitoringService:
                     logger.debug(f"Updated stream {stream_id} stats from screenshot probe: {', '.join(updated_fields)}")
                     success = True
             
-            return success
+            return success, logo_status
         except Exception as e:
-            logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
-            return False
+            logger.error(f"Screenshot capture failed for stream {stream_id}: {e}")
+            
+        return success, logo_status
 
 
 # Global instance accessor

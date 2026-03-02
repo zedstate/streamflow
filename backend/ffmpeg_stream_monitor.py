@@ -105,11 +105,12 @@ class FFmpegStreamMonitor:
                 # Use robust multi-output routing if stream_id is provided, otherwise fallback to null muxer
                 if self.port_a and self.port_b:
                     # Duplicate to two local UDP ports + null output for stats
-                    # We repeat mappings and codecs for EACH output to ensure all destinations receive content
-                    # Note: We use -f mpegts for UDP and -f null for telemetry stats
+                    # We use the 'fifo' pseudo-muxer to decouple network sending from the main thread.
+                    # Setting drop_pkts_on_overflow=1 ensures FFmpeg drops UDP packets instead of blocking
+                    # the main quality evaluation loop when periodic screenshot consumers are inactive.
                     cmd.extend([
-                        '-map', '0', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{self.port_a}',
-                        '-map', '0', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{self.port_b}',
+                        '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
+                        '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:

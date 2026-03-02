@@ -91,6 +91,8 @@ class StreamInfo:
     low_speed_start_time: Optional[float] = None  # When speed first dropped below threshold
     status_reason: Optional[str] = None  # e.g., 'looping', 'dead', 'timeout'
     last_loop_time: Optional[float] = None  # When a loop was last detected
+    last_logo_status: str = 'PENDING'
+    consecutive_logo_misses: int = 0
     
     @property
     def is_quarantined(self) -> bool:
@@ -142,6 +144,7 @@ class SessionInfo:
     epg_event_description: Optional[str] = None
     # Channel logo
     channel_logo_url: Optional[str] = None
+    logo_id: Optional[int] = None
     channel_tvg_id: Optional[str] = None
     # Auto-creation source (for tracking if created by rules)
     auto_created: bool = False
@@ -487,6 +490,7 @@ class StreamSessionManager:
             epg_event_end=epg_event_end,
             epg_event_description=epg_event_description,
             channel_logo_url=channel_logo_url,
+            logo_id=logo_id,
             channel_tvg_id=channel_tvg_id,
             match_by_tvg_id=match_by_tvg_id,
             **kwargs

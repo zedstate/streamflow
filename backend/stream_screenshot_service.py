@@ -165,12 +165,12 @@ class StreamScreenshotService:
                 
                 return relative_path, stats
             else:
-                logger.warning(f"Screenshot failed for stream {stream_id}, exit code: {process.returncode}")
+                logger.debug(f"Screenshot failed or stream offline ({stream_id}), exit code: {process.returncode}")
                 # Try to parse stats even on failure if we got stderr (might be useful for debugging)
                 return None, {}
                 
         except Exception as e:
-            logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
+            logger.debug(f"Error capturing screenshot for stream {stream_id}: {e}")
             return None, {}
     
     def get_screenshot_path(self, stream_id: int) -> Optional[str]:
