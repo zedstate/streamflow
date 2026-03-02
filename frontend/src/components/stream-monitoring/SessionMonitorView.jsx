@@ -486,7 +486,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
               <TabsContent value="screenshots" className="mt-0 outline-none">
                 {aliveScreenshots.length > 0 ? (
                   <div className="w-full relative overflow-hidden">
-                    <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800 pb-2">
+                    <div className="overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800" style={{ maxWidth: 'calc(100vw - 400px)' }}>
                       <div className="flex gap-4 pb-4">
                         {aliveScreenshots.map((screenshot) => (
                           <div key={screenshot.stream_id} className="flex-none w-80">
@@ -739,10 +739,16 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
             <TableHead>FPS</TableHead>
             <TableHead>Speed</TableHead>
             <TableHead>Bitrate</TableHead>
-            {!showQuarantined && (
+            <TableHead>Logo Verify</TableHead>
+            {!showQuarantined ? (
               <>
                 <TableHead>Reliability</TableHead>
                 {isReview && <TableHead>Time into Stable</TableHead>}
+                <TableHead>Actions</TableHead>
+              </>
+            ) : (
+              <>
+                <TableHead>Score</TableHead>
                 <TableHead>Actions</TableHead>
               </>
             )}
@@ -810,6 +816,24 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                   </span>
                 </TableCell>
                 <TableCell>{formatBitrate(stream.bitrate)}</TableCell>
+                <TableCell>
+                  <div className="flex flex-col gap-1">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] px-1 py-0 h-4 uppercase font-bold ${stream.last_logo_status === 'SUCCESS' ? 'bg-green-500/10 text-green-600 border-green-500/20' :
+                        stream.last_logo_status === 'FAILED' ? 'bg-red-500/10 text-red-600 border-red-500/20' :
+                          'bg-gray-500/10 text-gray-600 border-gray-500/20'
+                        }`}
+                    >
+                      {stream.last_logo_status || 'PENDING'}
+                    </Badge>
+                    {stream.consecutive_logo_misses > 0 && (
+                      <span className="text-[10px] text-red-500 font-medium">
+                        Misses: {stream.consecutive_logo_misses}
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
                 {!showQuarantined && (
                   <>
                     <TableCell>
