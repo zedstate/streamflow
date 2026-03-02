@@ -727,7 +727,8 @@ class StreamMonitoringService:
                 reliability_score=current_score,
                 status=stream_info.status,
                 status_reason=getattr(stream_info, 'status_reason', None),
-                loop_duration=getattr(stream_info, 'loop_duration', None)
+                loop_duration=getattr(stream_info, 'loop_duration', None),
+                display_logo_status=getattr(stream_info, 'display_logo_status', 'PENDING')
             )
             stream_info.metrics_history.append(metrics)
             
@@ -888,7 +889,8 @@ class StreamMonitoringService:
                     reliability_score=stream_info.reliability_score,
                     status=stream_info.status,
                     rank=rank, # Anchor the rank now
-                    status_reason=getattr(stream_info, 'status_reason', None)
+                    status_reason=getattr(stream_info, 'status_reason', None),
+                    display_logo_status=getattr(stream_info, 'display_logo_status', 'PENDING')
                 )
                 stream_info.metrics_history.append(metrics)
                 while len(stream_info.metrics_history) > session.window_size:

@@ -64,6 +64,7 @@ class StreamMetrics:
     status_reason: Optional[str] = None
     rank: Optional[int] = None
     loop_duration: Optional[float] = None
+    display_logo_status: str = 'PENDING'
 
     
 

@@ -65,7 +65,8 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         status_reason: closest.status_reason || stream.status_reason,
         is_quarantined: (closest.status || stream.status) === 'quarantined',
         is_alive: closest.is_alive,
-        rank: closest.rank
+        rank: closest.rank,
+        display_logo_status: closest.display_logo_status || stream.display_logo_status
       };
     }
 
@@ -820,12 +821,12 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                   <div className="flex flex-col gap-1">
                     <Badge
                       variant="outline"
-                      className={`text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center ${stream.display_logo_status === 'SUCCESS' ? 'bg-green-500/10 text-green-600 border-green-500/20' :
+                      className={`text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center leading-none ${stream.display_logo_status === 'SUCCESS' ? 'bg-green-500/10 text-green-600 border-green-500/20' :
                         stream.display_logo_status === 'FAILED' ? 'bg-red-500/10 text-red-600 border-red-500/20' :
                           'bg-gray-500/10 text-gray-600 border-gray-500/20'
                         }`}
                     >
-                      {stream.display_logo_status || 'PENDING'}
+                      <span className="mt-[0.5px]">{stream.display_logo_status || 'PENDING'}</span>
                     </Badge>
                     {stream.consecutive_logo_misses > 0 && (
                       <span className="text-[10px] text-red-500 font-medium">
