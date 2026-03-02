@@ -768,12 +768,30 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                         Dead
                       </Badge>
                     )}
-                    {stream.status === 'review' && stream.status_reason === 'looping' && (
+                    {(stream.status === 'review' || stream.status === 'quarantined') && stream.status_reason === 'looping' && (
                       <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20 text-[10px] px-1 py-0 h-4 uppercase font-bold">
-                        Looping
+                        Looping {stream.loop_duration ? `(${stream.loop_duration.toFixed(1)}s)` : ''}
+                      </Badge>
+                    )}
+                    {stream.status === 'quarantined' && stream.status_reason === 'logo-mismatch' && (
+                      <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20 text-[10px] px-1 py-0 h-4 uppercase font-bold">
+                        Logo Mismatch
                       </Badge>
                     )}
                   </div>
+                  {stream.status === 'quarantined' && stream.status_reason === 'logo-mismatch' && stream.screenshot_url && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      <p className="mb-1">Last seen:</p>
+                      <div className="w-24 aspect-video bg-black rounded overflow-hidden">
+                        <img
+                          src={stream.screenshot_url}
+                          alt="Logo mismatch screenshot"
+                          className="w-full h-full object-contain cursor-pointer transition-transform hover:scale-105"
+                          onClick={() => window.open(stream.screenshot_url, '_blank')}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">

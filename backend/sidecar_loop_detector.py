@@ -41,10 +41,15 @@ class SidecarLoopDetector:
         self.last_log_time = 0.0
         self.is_closed = False
         self._is_looping = False
+        self._loop_duration = 0.0
         
     def is_looping(self) -> bool:
         """Returns True if the detector currently assesses the stream is continuously looping."""
         return self._is_looping
+
+    def get_loop_duration(self) -> float:
+        """Returns the duration of the last detected loop."""
+        return self._loop_duration
         
     def run(self):
         """
@@ -81,12 +86,14 @@ class SidecarLoopDetector:
                     detected_duration = self.detect_loop()
                     if detected_duration:
                         self._is_looping = True
+                        self._loop_duration = detected_duration
                         # Debounce logging to prevent spam (e.g., max once per minute)
                         if timestamp - self.last_log_time > 60.0:
                             logger.warning(f"Loop detected in {stream_ctx}. Duration: {detected_duration:.2f}s")
                             self.last_log_time = timestamp
                     else:
                         self._is_looping = False
+                        self._loop_duration = 0.0
                     
                 except Exception as e:
                     logger.error(f"Error processing frame: {e}")

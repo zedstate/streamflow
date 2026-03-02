@@ -63,6 +63,7 @@ class StreamMetrics:
     status: str = 'review'
     status_reason: Optional[str] = None
     rank: Optional[int] = None
+    loop_duration: Optional[float] = None
 
     
 
@@ -93,6 +94,9 @@ class StreamInfo:
     last_loop_time: Optional[float] = None  # When a loop was last detected
     last_logo_status: str = 'PENDING'
     consecutive_logo_misses: int = 0
+    loop_duration: Optional[float] = None
+    last_loop_log_time: float = 0.0
+    last_logo_log_time: float = 0.0
     
     @property
     def is_quarantined(self) -> bool:

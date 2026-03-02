@@ -74,7 +74,7 @@ class StreamMonitoringService:
     _lock = threading.Lock()
     
     def __new__(cls):
-        if cls._instance is None:
+        if a._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
@@ -691,18 +691,27 @@ class StreamMonitoringService:
                 # Apply sliding window penalty for logo misses
                 if stream_info.consecutive_logo_misses >= 4:
                     current_score = 0.0
+                    # Only log every 4 misses, and debounce to once per minute to avoid evaluation loop spam
                     if stream_info.consecutive_logo_misses % 4 == 0:
-                        logger.warning(f"Stream {stream_id} downgraded to 0 points for {stream_info.consecutive_logo_misses} consecutive logo misses (Wrong Channel Expected)")
+                        if current_time - getattr(stream_info, 'last_logo_log_time', 0.0) > 60.0:
+                            logger.warning(f"Stream {stream_id} downgraded to 0 points for {stream_info.consecutive_logo_misses} consecutive logo misses (Wrong Channel Expected)")
+                            stream_info.last_logo_log_time = current_time
                 
                 # Check for Sidecar LOOP detection
                 sidecar_data = self.sidecars.get(session_id, {}).get(stream_id)
                 if sidecar_data:
                     _, detector = sidecar_data
                     if detector and detector.is_looping():
+                        duration = detector.get_loop_duration()
                         current_score = max(0.0, current_score - 50.0)
                         stream_info.status_reason = 'looping'
+                        stream_info.loop_duration = duration
                         stream_info.last_loop_time = current_time
-                        logger.warning(f"Stream {stream_id} penalized -50 points for active loop detection.")
+                        
+                        # Debounce logging to prevent spam
+                        if current_time - getattr(stream_info, 'last_loop_log_time', 0.0) > 60.0:
+                            logger.warning(f"Stream {stream_id} penalized -50 points for active loop detection ({duration:.2f}s).")
+                            stream_info.last_loop_log_time = current_time
                 
                 stream_info.reliability_score = current_score
 
@@ -710,16 +719,20 @@ class StreamMonitoringService:
             metrics_bitrate = stream_info.bitrate if (stream_info.bitrate and stream_info.bitrate > 0) else stats.bitrate
             metrics_fps = stream_info.fps if (stream_info.fps and stream_info.fps > 0) else stats.fps
             
+            # If the stream is dead, forcefully set speed to 0.0 to prevent stale data in graphs
+            metrics_speed = stats.speed if stats.is_alive else 0.0
+            
             metrics = StreamMetrics(
                 timestamp=current_time,
-                speed=stats.speed,
+                speed=metrics_speed,
                 bitrate=metrics_bitrate,
                 fps=metrics_fps,
                 is_alive=stats.is_alive,
                 buffering=monitor.is_buffering(),
                 reliability_score=current_score,
                 status=stream_info.status,
-                status_reason=getattr(stream_info, 'status_reason', None)
+                status_reason=getattr(stream_info, 'status_reason', None),
+                loop_duration=getattr(stream_info, 'loop_duration', None)
             )
             stream_info.metrics_history.append(metrics)
             
@@ -783,9 +796,9 @@ class StreamMonitoringService:
                             logger.error(f"Failed to start sidecar for stream {stream_id}: {e}")
 
         # 2. Re-rank all streams (even those without monitors)
-        self._update_monitoring_ranks(session_id, force_update)
+        self._update_monitoring_ranks(session_id, current_time, force_update)
 
-    def _update_monitoring_ranks(self, session_id: str, force_update: bool = False):
+    def _update_monitoring_ranks(self, session_id: str, current_time: float, force_update: bool = False):
         """Calculate and apply ranks for ALL streams in a session, including heartbeats."""
         session = self.session_manager.get_session(session_id)
         if not session:
@@ -848,7 +861,6 @@ class StreamMonitoringService:
                         logger.error(f"Hysteresis fail-safe: {e}")
 
         # Final Rank Assignment & Heartbeat Metrics
-        current_time = time.time()
         for rank, stream_info in enumerate(final_sorted_streams, start=1):
             stream_info.rank = rank
             
@@ -856,8 +868,9 @@ class StreamMonitoringService:
             # This is critical for the frontend timeline to track rank stability
             last_metric = stream_info.metrics_history[-1] if stream_info.metrics_history else None
             
-            if not last_metric or abs(last_metric.timestamp - current_time) > 0.1:
+            if not last_metric:
                 # Add a "heartbeat" metric entry for streams that didn't get one in step 1
+                # (Monitors only add metrics if they have a decisive tick)
                 metrics = StreamMetrics(
                     timestamp=current_time,
                     speed=0.0,
@@ -898,10 +911,23 @@ class StreamMonitoringService:
         if new_order_ids != current_stream_ids or force_update:
             msg = f"Enforcing new stream order count={len(new_order_ids)} for session {session_id}"
             logger.debug(msg)
-            from api_utils import update_channel_streams
-            if update_channel_streams(session.channel_id, new_order_ids):
-                udi.refresh_channel_by_id(session.channel_id)
-                self.last_switch_times[session_id] = current_time
+            
+            def _execute_sync():
+                try:
+                    from api_utils import update_channel_streams
+                    if update_channel_streams(session.channel_id, new_order_ids):
+                        udi.refresh_channel_by_id(session.channel_id)
+                        self.last_switch_times[session_id] = current_time
+                except Exception as e:
+                    logger.error(f"Error syncing rank to Dispatcharr: {e}")
+
+            # Offload synchronous network call to a background thread to prevent
+            # blocking the main evaluation loop and causing time drift
+            threading.Thread(
+                target=_execute_sync,
+                daemon=True,
+                name=f"RankSync-{session_id}"
+            ).start()
     
     def _calculate_monitoring_sort_key(self, info):
         """Calculate sort key for stream monitoring ranking."""
@@ -1010,6 +1036,13 @@ class StreamMonitoringService:
                     info = session.streams.get(sid)
                     if info:
                         info.last_logo_status = status
+                        if status == "FAILED":
+                            # If logo mismatch, record it so it can be shown in UI if quarantined later
+                            info.status_reason = 'logo-mismatch'
+                        elif status == "SUCCESS":
+                            # Reset reason if it was logo-mismatch but now it passed
+                            if info.status_reason == 'logo-mismatch':
+                                info.status_reason = None
         
         if success_count > 0:
             logger.info(f"Captured screenshots and updated stats for {success_count} streams in session {session_id}")
