@@ -688,14 +688,9 @@ class StreamMonitoringService:
                 scoring_window.add_measurement(is_healthy, stats.speed)
                 current_score = scoring_window.get_score()
                 
-                # Apply sliding window penalty for logo misses
+                # Penalty points for logo misses (will trigger quarantine below if threshold reached)
                 if stream_info.consecutive_logo_misses >= 4:
                     current_score = 0.0
-                    # Only log every 4 misses, and debounce to once per minute to avoid evaluation loop spam
-                    if stream_info.consecutive_logo_misses % 4 == 0:
-                        if current_time - getattr(stream_info, 'last_logo_log_time', 0.0) > 60.0:
-                            logger.warning(f"Stream {stream_id} downgraded to 0 points for {stream_info.consecutive_logo_misses} consecutive logo misses (Wrong Channel Expected)")
-                            stream_info.last_logo_log_time = current_time
                 
                 # Check for Sidecar LOOP detection
                 sidecar_data = self.sidecars.get(session_id, {}).get(stream_id)
@@ -740,7 +735,17 @@ class StreamMonitoringService:
             while len(stream_info.metrics_history) > session.window_size:
                 stream_info.metrics_history.pop(0)
             
-            # Check for death/timeout/slow-speed
+            # Check for death/timeout/slow-speed/logo-mismatch
+            if stream_info.consecutive_logo_misses >= 4:
+                logger.warning(f"Stream {stream_id} auto-quarantined for {stream_info.consecutive_logo_misses} consecutive logo misses (Wrong Channel Expected)")
+                stream_info.status_reason = 'logo-mismatch'
+                monitor.stop()
+                if stream_id in self.monitors.get(session_id, {}):
+                    del self.monitors[session_id][stream_id]
+                self.session_manager.quarantine_stream(session_id, stream_id)
+                self._remove_stream_from_dispatcharr(session_id, stream_id, "logo-mismatch")
+                continue
+
             if not stats.is_alive:
                 logger.warning(f"Stream {stream_id} is dead in session {session_id}, quarantining")
                 stream_info.status_reason = 'dead'
