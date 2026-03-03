@@ -2602,7 +2602,7 @@ class AutomatedStreamManager:
                                     active_checks += 1
                                     
                             if d.get('dead_streams_count', 0) > 0 or d.get('revived_streams_count', 0) > 0 \
-                               or d.get('skipped_streams_count', 0) > 0 or active_checks > 0:
+                               or active_checks > 0:
                                 has_impact = True
 
                     if steps and has_impact:
