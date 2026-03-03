@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
  * 
  * A video-editor style timeline with a time ruler, scrubbable playhead, and status-based subway lanes.
  */
-export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, streams = [], zoomLevel = 60, onZoomChange }) {
+export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, streams = [], zoomLevel = 60, onZoomChange, adPeriods = [] }) {
     const [isPlaying, setIsPlaying] = useState(false);
     const containerRef = useRef(null);
     const playbackRef = useRef(null);
@@ -90,20 +90,34 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
         const events = new Map();
 
         // Normalize status helper
-        const normSt = (s) => (s === 'quarantine' || s === 'quarantined' ? 'quarantined' : s);
+        const normSt = (s, reason) => {
+            const base = (s === 'quarantine' || s === 'quarantined' ? 'quarantined' : s);
+            if (base !== 'quarantined') return base;
+            if (reason === 'logo-mismatch') return 'quarantined-logo';
+            if (reason === 'looping') return 'quarantined-loop';
+            return 'quarantined-dead';
+        };
+
+        const getKeys = () => ({
+            stable: 0,
+            review: 0,
+            'quarantined-logo': 0,
+            'quarantined-loop': 0,
+            'quarantined-dead': 0
+        });
 
         // Collect all timestamps where counts might change
         streams.forEach(s => {
             s.metrics_history?.forEach(m => {
                 const ts = m.timestamp;
                 if (!events.has(ts)) {
-                    events.set(ts, { stable: 0, review: 0, quarantined: 0 });
+                    events.set(ts, getKeys());
                 }
             });
             if (s.last_status_change) {
                 const ts = s.last_status_change;
                 if (!events.has(ts)) {
-                    events.set(ts, { stable: 0, review: 0, quarantined: 0 });
+                    events.set(ts, getKeys());
                 }
             }
         });
@@ -112,34 +126,49 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
 
         // Pre-calculate counts at each event point
         const result = sortedTs.map(ts => {
-            const counts = { stable: 0, review: 0, quarantined: 0 };
+            const counts = getKeys();
             streams.forEach(s => {
                 // Determine status AT this exact historical timestamp
                 const m = s.metrics_history?.findLast(x => x.timestamp <= ts);
                 // Fallback: If no metric BEFORE ts, use 'stable' unless ts >= last_status_change
-                const status = normSt(m ? m.status : (ts >= s.last_status_change ? s.status : 'stable'));
+                const status = normSt(
+                    m ? m.status : (ts >= s.last_status_change ? s.status : 'stable'),
+                    m ? m.status_reason : s.status_reason
+                );
                 counts[status]++;
             });
             return {
                 ts,
                 counts,
-                offsets: { stable: 0, review: counts.stable, quarantined: counts.stable + counts.review }
+                offsets: {
+                    stable: 0,
+                    review: counts.stable,
+                    'quarantined-logo': counts.stable + counts.review,
+                    'quarantined-loop': counts.stable + counts.review + counts['quarantined-logo'],
+                    'quarantined-dead': counts.stable + counts.review + counts['quarantined-logo'] + counts['quarantined-loop']
+                }
             };
         });
 
         // Current world state (Live fallback)
-        const nowCounts = { stable: 0, review: 0, quarantined: 0 };
-        streams.forEach(s => nowCounts[normSt(s.status)]++);
+        const nowCounts = getKeys();
+        streams.forEach(s => nowCounts[normSt(s.status, s.status_reason)]++);
         const nowState = {
             ts: Date.now() / 1000 + 3600, // Into the future
             counts: nowCounts,
-            offsets: { stable: 0, review: nowCounts.stable, quarantined: nowCounts.stable + nowCounts.review }
+            offsets: {
+                stable: 0,
+                review: nowCounts.stable,
+                'quarantined-logo': nowCounts.stable + nowCounts.review,
+                'quarantined-loop': nowCounts.stable + nowCounts.review + nowCounts['quarantined-logo'],
+                'quarantined-dead': nowCounts.stable + nowCounts.review + nowCounts['quarantined-logo'] + nowCounts['quarantined-loop']
+            }
         };
 
         return result.length > 0 ? result : [nowState];
     }, [streams]);
 
-    const getYAt = (ts, status, rank) => {
+    const getYAt = (ts, status, rank, reason) => {
         // Forward-fill lookup: Find the state record at or before ts
         let state = null;
         for (let i = worldHistory.length - 1; i >= 0; i--) {
@@ -150,12 +179,34 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
         }
         if (!state) state = worldHistory[0];
 
-        const normalizedStatus = status === 'quarantine' ? 'quarantined' : status;
-        const base = { stable: 0, review: SECTION_HEIGHT, quarantined: SECTION_HEIGHT * 2 }[normalizedStatus] ?? (SECTION_HEIGHT * 2);
+        const normalizedStatus = (status === 'quarantine' || status === 'quarantined') ? 'quarantined' : status;
 
-        const count = state.counts[normalizedStatus] || 1;
-        const offset = state.offsets[normalizedStatus] || 0;
-        const spacing = SECTION_HEIGHT / (count + 1);
+        let effectiveStatus = normalizedStatus;
+        let base = 0;
+        let zoneHeight = SECTION_HEIGHT;
+
+        if (normalizedStatus === 'stable') {
+            base = 0;
+        } else if (normalizedStatus === 'review') {
+            base = SECTION_HEIGHT;
+        } else {
+            // Quarantined subsections
+            zoneHeight = SECTION_HEIGHT / 3;
+            if (reason === 'logo-mismatch') {
+                effectiveStatus = 'quarantined-logo';
+                base = SECTION_HEIGHT * 2;
+            } else if (reason === 'looping') {
+                effectiveStatus = 'quarantined-loop';
+                base = SECTION_HEIGHT * 2 + zoneHeight;
+            } else {
+                effectiveStatus = 'quarantined-dead';
+                base = SECTION_HEIGHT * 2 + zoneHeight * 2;
+            }
+        }
+
+        const count = state.counts[effectiveStatus] || 1;
+        const offset = state.offsets[effectiveStatus] || 0;
+        const spacing = zoneHeight / (count + 1);
         const relativeRank = Math.max(1, rank - offset);
 
         return base + (relativeRank * spacing);
@@ -174,7 +225,8 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                 .map(m => ({
                     ts: m.timestamp,
                     status: m.status,
-                    rank: m.rank || stream.rank || 1
+                    rank: m.rank || stream.rank || 1,
+                    reason: m.status_reason
                 }));
 
             // CRITICAL: Normalize status for transitions
@@ -187,6 +239,7 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                     ts: stream.last_status_change,
                     status: currentStatus,
                     rank: stream.rank || 1,
+                    reason: stream.status_reason,
                     isBoundary: true // Mark as an event boundary
                 });
             }
@@ -196,7 +249,8 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                 markers.push({
                     ts: minTime - 300,
                     status: markers.length > 0 ? markers[0].status : currentStatus,
-                    rank: markers.length > 0 ? markers[0].rank : (stream.rank || 1)
+                    rank: markers.length > 0 ? markers[0].rank : (stream.rank || 1),
+                    reason: markers.length > 0 ? markers[0].reason : stream.status_reason
                 });
             }
 
@@ -216,13 +270,13 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
             // Convert to SVG points
             const svgPoints = points.map(p => ({
                 x: getXPosition(p.ts),
-                y: getYAt(p.ts, p.status, p.rank),
+                y: getYAt(p.ts, p.status, p.rank, p.reason),
                 status: p.status,
                 ts: p.ts
             }));
 
             // Final extension to playhead - Anchor it to current rank and status
-            const finalY = getYAt(maxTime, currentStatus, stream.rank || 1);
+            const finalY = getYAt(maxTime, currentStatus, stream.rank || 1, stream.status_reason);
             svgPoints.push({
                 x: getXPosition(maxTime),
                 y: finalY,
@@ -341,8 +395,15 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                             <div className="flex-1 flex items-center justify-end px-4 border-t border-white/5">
                                 <span className="text-[10px] uppercase font-black text-blue-500/40 tracking-widest">Review</span>
                             </div>
-                            <div className="flex-1 flex items-center justify-end px-4 border-t border-white/5">
-                                <span className="text-[10px] uppercase font-black text-yellow-500/40 tracking-widest">Quarantine</span>
+                            {/* Quarantine Subsections */}
+                            <div className="h-[20px] flex items-center justify-end px-4 border-t border-white/5 bg-yellow-500/5">
+                                <span className="text-[8px] uppercase font-black text-orange-500/40 tracking-widest">Logo Mismatch</span>
+                            </div>
+                            <div className="h-[20px] flex items-center justify-end px-4 border-t border-white/5 bg-yellow-500/5">
+                                <span className="text-[8px] uppercase font-black text-yellow-600/40 tracking-widest">Looping</span>
+                            </div>
+                            <div className="h-[20px] flex items-center justify-end px-4 border-t border-white/5 bg-red-500/5">
+                                <span className="text-[8px] uppercase font-black text-red-500/40 tracking-widest">Dead</span>
                             </div>
                         </div>
 
@@ -359,8 +420,12 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                                     <stop offset="33.3%" stopColor="#22c55e" />
                                     <stop offset="33.3%" stopColor="#3b82f6" />
                                     <stop offset="66.6%" stopColor="#3b82f6" />
-                                    <stop offset="66.6%" stopColor="#eab308" />
-                                    <stop offset="100%" stopColor="#eab308" />
+                                    <stop offset="66.6%" stopColor="#f97316" />
+                                    <stop offset="77.7%" stopColor="#f97316" />
+                                    <stop offset="77.7%" stopColor="#eab308" />
+                                    <stop offset="88.8%" stopColor="#eab308" />
+                                    <stop offset="88.8%" stopColor="#ef4444" />
+                                    <stop offset="100%" stopColor="#ef4444" />
                                 </linearGradient>
                             </defs>
 
@@ -368,10 +433,37 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                             <g className="bg-zones">
                                 <rect x="0" y="0" width="100" height="60" fill="#22c55e" fillOpacity="0.1" />
                                 <rect x="0" y="60" width="100" height="60" fill="#3b82f6" fillOpacity="0.1" />
-                                <rect x="0" y="120" width="100" height="60" fill="#eab308" fillOpacity="0.1" />
 
-                                <line x1="0" y1="60" x2="100" y2="60" stroke="white" strokeOpacity="0.1" vectorEffect="non-scaling-stroke" />
-                                <line x1="0" y1="120" x2="100" y2="120" stroke="white" strokeOpacity="0.1" vectorEffect="non-scaling-stroke" />
+                                {/* Quarantine Subsections */}
+                                <rect x="0" y="120" width="100" height="20" fill="#f97316" fillOpacity="0.08" />
+                                <rect x="0" y="140" width="100" height="20" fill="#eab308" fillOpacity="0.08" />
+                                <rect x="0" y="160" width="100" height="20" fill="#ef4444" fillOpacity="0.08" />
+
+                                <line x1="0" y1="60" stroke="white" strokeOpacity="0.1" vectorEffect="non-scaling-stroke" />
+                                <line x1="0" y1="120" stroke="white" strokeOpacity="0.1" vectorEffect="non-scaling-stroke" />
+                                <line x1="0" y1="140" stroke="white" strokeOpacity="0.05" vectorEffect="non-scaling-stroke" />
+                                <line x1="0" y1="160" stroke="white" strokeOpacity="0.05" vectorEffect="non-scaling-stroke" />
+                            </g>
+
+                            {/* Ad Periods Rendering */}
+                            <g className="ad-periods">
+                                {adPeriods.map((period, idx) => {
+                                    const startX = getXPosition(period.start);
+                                    const endX = getXPosition(period.end || maxTime);
+                                    if (startX > 100 || endX < 0) return null;
+                                    return (
+                                        <rect
+                                            key={idx}
+                                            x={Math.max(0, startX)}
+                                            y="0"
+                                            width={Math.min(100, endX) - Math.max(0, startX)}
+                                            height="180"
+                                            fill="#f97316"
+                                            fillOpacity="0.15"
+                                            pointerEvents="none"
+                                        />
+                                    );
+                                })}
                             </g>
 
                             {/* Viewport Overlay (Currently visible window in charts) */}

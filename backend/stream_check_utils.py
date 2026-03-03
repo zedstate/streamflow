@@ -989,11 +989,6 @@ def analyze_stream(
         'audio_channels': None,
         'channel_layout': None,
         'audio_bitrate': None,
-        'pixel_format': None,
-        'audio_sample_rate': None,
-        'audio_channels': None,
-        'channel_layout': None,
-        'audio_bitrate': None,
         'status': 'Error'
     }
     

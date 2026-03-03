@@ -692,6 +692,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
             streams={session.streams || []}
             zoomLevel={zoomLevel}
             onZoomChange={setZoomLevel}
+            adPeriods={session?.ad_periods || []}
           />
         )
       }
@@ -974,12 +975,10 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
       const hours = date.getHours().toString().padStart(2, '0');
       const minutes = date.getMinutes().toString().padStart(2, '0');
       const seconds = date.getSeconds().toString().padStart(2, '0');
-      // Map quarantined streams to negative zones
+      // Map quarantined streams to 0 speed in chart
       let displaySpeed = metric.speed || 0;
       if (metric.status === 'quarantined') {
-        if (metric.status_reason === 'logo-mismatch') displaySpeed = -1.0;
-        else if (metric.status_reason === 'looping') displaySpeed = -2.0;
-        else displaySpeed = -3.0; // Default dead
+        displaySpeed = 0;
       }
 
       return {
@@ -1039,17 +1038,10 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
             interval="preserveStartEnd"
           />
           <YAxis
-            tickFormatter={(value) => {
-              if (value === -1) return "Logo";
-              if (value === -2) return "Loop";
-              if (value === -3) return "Dead";
-              if (value < 0) return "";
-              return value;
-            }}
+            tickFormatter={(value) => value}
             tick={{ fontSize: 10 }}
             width={35}
-            domain={[-3.5, 'auto']}
-            ticks={[-3, -2, -1, 0, 1, 2, 3]}
+            domain={[0, 'auto']}
           />
           <RechartsTooltip
             contentStyle={{
@@ -1059,22 +1051,8 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
               fontSize: '12px'
             }}
             labelFormatter={(value) => formatTime(value)}
-            formatter={(value) => {
-              if (value === -1.0) return ["Logo Mismatch", "Quarantine Reason"];
-              if (value === -2.0) return ["Looping", "Quarantine Reason"];
-              if (value <= -3.0) return ["Dead", "Quarantine Reason"];
-              return [`${value.toFixed(2)}x`, 'Speed'];
-            }}
+            formatter={(value) => [`${value.toFixed(2)}x`, 'Speed']}
           />
-          {adPeriods && adPeriods.map((period, idx) => (
-            <ReferenceArea
-              key={idx}
-              x1={period.start}
-              x2={period.end || endTimestamp}
-              fill="#f97316"
-              opacity={0.15}
-            />
-          ))}
           <Line
             type="stepAfter"
             dataKey="speed"
