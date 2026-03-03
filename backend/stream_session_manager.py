@@ -165,11 +165,16 @@ class SessionInfo:
     # Matching configuration
     match_by_tvg_id: bool = False
     
+    # Store advertisement periods (when global pardon is active)
+    ad_periods: List[Dict[str, float]] = None
+    
     def __post_init__(self):
         if self.streams is None:
             self.streams = {}
         if self.quarantined_stream_ids is None:
             self.quarantined_stream_ids = set()
+        if self.ad_periods is None:
+            self.ad_periods = []
 
 
 class CappedSlidingWindow:

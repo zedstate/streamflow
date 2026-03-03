@@ -646,6 +646,15 @@ class StreamMonitoringService:
             if all(status == "FAILED" for status in active_logo_statuses.values()):
                 global_pardon = True
                 logger.debug(f"Logo Consensus: Global Pardon for session {session_id} (Commercial Break likely)")
+        # Manage Advertisement Periods
+        if global_pardon:
+            # If no ad period is open, start one
+            if not session.ad_periods or "end" in session.ad_periods[-1]:
+                session.ad_periods.append({"start": current_time})
+        else:
+            # If an ad period is open, close it
+            if session.ad_periods and "end" not in session.ad_periods[-1]:
+                session.ad_periods[-1]["end"] = current_time
         
         # Log the batched verification statuses perfectly concisely
         if active_logo_statuses:

@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { streamSessionsAPI } from '@/services/streamSessions';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { TimelineControl } from './TimelineControl';
 
 // Constants
@@ -102,11 +102,21 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     loadAliveScreenshots();
     loadPlayingStreams();
 
-    // Poll for updates every 2 seconds
+    // Poll for updates every 2 seconds if active
     const interval = setInterval(() => {
-      loadSession();
-      loadAliveScreenshots();
-      loadPlayingStreams();
+      // Use setSession functional update to check if session is active before polling
+      setSession(currentSession => {
+        if (currentSession && !currentSession.is_active) {
+          clearInterval(interval);
+          return currentSession;
+        }
+        // These calls are async, we can't easily wait for them here, 
+        // but loadSession itself will skip if it sees inactive (actually it should be stopped by interval clear)
+        loadAliveScreenshots();
+        loadPlayingStreams();
+        loadSession();
+        return currentSession;
+      });
     }, 2000);
 
     return () => clearInterval(interval);
@@ -155,11 +165,14 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       setLoading(false);
     } catch (err) {
       console.error('Failed to load session:', err);
-      toast({
-        title: 'Error',
-        description: 'Failed to load session details',
-        variant: 'destructive'
-      });
+      // Suppress toast if we already have session data (session exists and we are just refreshing)
+      if (!session) {
+        toast({
+          title: 'Error',
+          description: 'Failed to load session details',
+          variant: 'destructive'
+        });
+      }
       setLoading(false);
     }
   };
@@ -781,7 +794,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                       </Badge>
                     )}
                     {stream.status === 'quarantined' && stream.status_reason === 'logo-mismatch' && (
-                      <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20 text-[10px] px-1 py-0 h-4 uppercase font-bold">
+                      <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20 text-[10px] px-2 h-5 uppercase font-bold">
                         Logo Mismatch
                       </Badge>
                     )}
@@ -894,7 +907,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
               {!showQuarantined && (
                 <TableRow>
                   <TableCell colSpan={10} className="bg-muted/30 p-2">
-                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
+                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} adPeriods={session.ad_periods} />
                   </TableCell>
                 </TableRow>
               )}
@@ -907,7 +920,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
 }
 
 // Speed Metrics Chart Component
-function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel }) {
+function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel, adPeriods }) {
   const [allMetrics, setAllMetrics] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -958,9 +971,17 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
       const hours = date.getHours().toString().padStart(2, '0');
       const minutes = date.getMinutes().toString().padStart(2, '0');
       const seconds = date.getSeconds().toString().padStart(2, '0');
+      // Map quarantined streams to negative zones
+      let displaySpeed = metric.speed || 0;
+      if (metric.status === 'quarantined') {
+        if (metric.status_reason === 'logo-mismatch') displaySpeed = -1.0;
+        else if (metric.status_reason === 'looping') displaySpeed = -2.0;
+        else displaySpeed = -3.0; // Default dead
+      }
+
       return {
         time: `${hours}:${minutes}:${seconds}`,
-        speed: metric.speed || 0,
+        speed: displaySpeed,
         timestamp: metric.timestamp, // Keep original for reference
       };
     });
@@ -1007,14 +1028,25 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
         <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
           <XAxis
-            dataKey="time"
+            dataKey="timestamp"
+            tickFormatter={formatTime}
             tick={{ fontSize: 10 }}
+            domain={[startTime, endTimestamp]}
+            type="number"
             interval="preserveStartEnd"
           />
           <YAxis
+            tickFormatter={(value) => {
+              if (value === -1) return "Logo";
+              if (value === -2) return "Loop";
+              if (value === -3) return "Dead";
+              if (value < 0) return "";
+              return value;
+            }}
             tick={{ fontSize: 10 }}
-            width={30}
-            domain={[0, 'auto']}
+            width={35}
+            domain={[-3.5, 'auto']}
+            ticks={[-3, -2, -1, 0, 1, 2, 3]}
           />
           <RechartsTooltip
             contentStyle={{
@@ -1023,10 +1055,25 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
               borderRadius: '6px',
               fontSize: '12px'
             }}
-            formatter={(value) => [`${value.toFixed(2)}x`, 'Speed']}
+            labelFormatter={(value) => formatTime(value)}
+            formatter={(value) => {
+              if (value === -1.0) return ["Logo Mismatch", "Quarantine Reason"];
+              if (value === -2.0) return ["Looping", "Quarantine Reason"];
+              if (value <= -3.0) return ["Dead", "Quarantine Reason"];
+              return [`${value.toFixed(2)}x`, 'Speed'];
+            }}
           />
+          {adPeriods && adPeriods.map((period, idx) => (
+            <ReferenceArea
+              key={idx}
+              x1={period.start}
+              x2={period.end || endTimestamp}
+              fill="#f97316"
+              opacity={0.15}
+            />
+          ))}
           <Line
-            type="monotone"
+            type="stepAfter"
             dataKey="speed"
             stroke="hsl(var(--primary))"
             strokeWidth={2}

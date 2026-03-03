@@ -4676,6 +4676,7 @@ def get_stream_session(session_id):
                     'current_speed': stream_info.metrics_history[-1].speed if stream_info.metrics_history else 0.0,
                     'rank': stream_info.rank,
                     'last_logo_status': getattr(stream_info, 'last_logo_status', 'PENDING'),
+                    'display_logo_status': getattr(stream_info, 'display_logo_status', 'PENDING'),
                     'consecutive_logo_misses': getattr(stream_info, 'consecutive_logo_misses', 0),
                     'screenshot_path': stream_info.screenshot_path,
                     'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}" if stream_info.screenshot_path else None,
@@ -4743,6 +4744,7 @@ def get_stream_session(session_id):
             'screenshot_interval_seconds': session.screenshot_interval_seconds,
             'window_size': session.window_size,
             'streams': streams_data,
+            'ad_periods': session.ad_periods,
             # EPG event info
             'epg_event_id': session.epg_event_id,
             'epg_event_title': session.epg_event_title,
