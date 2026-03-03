@@ -2604,9 +2604,6 @@ class AutomatedStreamManager:
                             if d.get('dead_streams_count', 0) > 0 or d.get('revived_streams_count', 0) > 0 \
                                or d.get('skipped_streams_count', 0) > 0 or active_checks > 0:
                                 has_impact = True
-                        elif step['step'] == 'Playlist Refresh' and step['status'] != 'skipped':
-                            # Even if streams didn't change, the act of refreshing the playlist is worth logging
-                            has_impact = True
 
                     if steps and has_impact:
                         period_entry['channels'].append({
