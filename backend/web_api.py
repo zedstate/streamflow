@@ -5259,4 +5259,15 @@ if __name__ == '__main__':
     else:
         logger.info("Skipping background service startup in reloader parent process")
     
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    if args.debug:
+        logger.info(f"Starting development server on {args.host}:{args.port}")
+        app.run(host=args.host, port=args.port, debug=True)
+    else:
+        logger.info(f"Starting production WSGI server on {args.host}:{args.port}")
+        try:
+            from waitress import serve
+            serve(app, host=args.host, port=args.port, threads=8)
+        except ImportError:
+            logger.warning("Waitress not installed, falling back to development server.")
+            logger.warning("Please install waitress: pip install waitress")
+            app.run(host=args.host, port=args.port, debug=False)
