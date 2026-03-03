@@ -436,6 +436,11 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         - resolution: Resolution string (e.g., '1920x1080')
         - fps: Frames per second (float)
         - bitrate_kbps: Bitrate in kbps (float or None)
+        - pixel_format: Pixel format (str or None)
+        - audio_sample_rate: Audio sample rate (int or None)
+        - audio_channels: Number of audio channels (int or None)
+        - channel_layout: Audio channel layout (str or None)
+        - audio_bitrate: Audio bitrate (int or None)
         - status: "OK", "Timeout", or "Error"
         - elapsed_time: Time taken for the operation
     """
@@ -449,6 +454,11 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             'fps': 0,
             'bitrate_kbps': None,
             'hdr_format': None,
+            'pixel_format': None,
+            'audio_sample_rate': None,
+            'audio_channels': None,
+            'channel_layout': None,
+            'audio_bitrate': None,
             'status': 'Error',
             'elapsed_time': 0
         }
@@ -465,6 +475,11 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             'fps': 0,
             'bitrate_kbps': None,
             'hdr_format': None,
+            'pixel_format': None,
+            'audio_sample_rate': None,
+            'audio_channels': None,
+            'channel_layout': None,
+            'audio_bitrate': None,
             'status': 'Error',
             'elapsed_time': 0
         }
@@ -485,6 +500,16 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         'fps': 0,
         'bitrate_kbps': None,
         'hdr_format': None,
+        'pixel_format': None,
+        'audio_sample_rate': None,
+        'audio_channels': None,
+        'channel_layout': None,
+        'audio_bitrate': None,
+        'pixel_format': None,
+        'audio_sample_rate': None,
+        'audio_channels': None,
+        'channel_layout': None,
+        'audio_bitrate': None,
         'status': 'OK',
         'elapsed_time': 0
     }
@@ -578,7 +603,13 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                             
                             logger.debug(f"  → Extracted color info: pix_fmt={pix_fmt}, color_info={color_info}")
                             
-                            # Parse color info which can be in formats like:
+                            # Extract pixel format (before comma/parentheses)
+                            pix_fmt_match = re.search(r'Video:\s*[a-zA-Z0-9_-]+\s*(?:\([^)]+\))?\s*,\s*([a-zA-Z0-9_-]+)', line)
+                            if pix_fmt_match:
+                                result_data['pixel_format'] = pix_fmt_match.group(1).lower()
+                                logger.debug(f"  → Detected pixel format: {result_data['pixel_format']}")
+
+                            # Extract color info which can be in formats like:
                             # - "bt2020nc/bt2020/arib-std-b67"
                             # - "bt2020/arib-std-b67"
                             # - "tv, bt2020nc/bt2020/arib-std-b67"
@@ -625,6 +656,45 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                         if audio_codec != 'N/A':
                             result_data['audio_codec'] = audio_codec
                             logger.debug(f"  → Final audio codec: {result_data['audio_codec']}")
+
+                        # Extract audio sample rate, channels, and bitrate
+                        # Example: "Stream #0:1: Audio: aac, 48000 Hz, stereo, fltp, 128 kb/s"
+                        
+                        # Sample Rate
+                        sample_rate_match = re.search(r'(\d+)\s*Hz', line)
+                        if sample_rate_match:
+                            result_data['audio_sample_rate'] = int(sample_rate_match.group(1))
+                            logger.debug(f"  → Detected audio sample rate: {result_data['audio_sample_rate']} Hz")
+                        
+                        # Channels / Layout
+                        # Standard layouts: mono, stereo, 5.1(side), 5.1, 7.1, etc.
+                        channel_match = re.search(r'Hz,\s*([a-zA-Z0-9_.()]+)', line)
+                        if channel_match:
+                            layout = channel_match.group(1).lower()
+                            result_data['channel_layout'] = layout
+                            logger.debug(f"  → Detected audio channel layout: {layout}")
+                            
+                            # Map common layouts to channel counts
+                            layout_to_channels = {
+                                'mono': 1,
+                                'stereo': 2,
+                                '5.1': 6,
+                                '5.1(side)': 6,
+                                '7.1': 8,
+                                '7.1(wide)': 8,
+                                'quad': 4,
+                                '2.1': 3,
+                                '4.0': 4
+                            }
+                            result_data['audio_channels'] = layout_to_channels.get(layout)
+                            if result_data['audio_channels']:
+                                logger.debug(f"  → Mapped layout '{layout}' to {result_data['audio_channels']} channels")
+                        
+                        # Audio Bitrate
+                        audio_bitrate_match = re.search(r'(\d+)\s*kb/s', line)
+                        if audio_bitrate_match:
+                            result_data['audio_bitrate'] = int(audio_bitrate_match.group(1))
+                            logger.debug(f"  → Detected audio bitrate: {result_data['audio_bitrate']} kbps")
                 except (ValueError, AttributeError) as e:
                     logger.debug(f"  → Error parsing audio stream line: {e}")
             
@@ -887,6 +957,11 @@ def analyze_stream(
         - resolution: Resolution string (e.g., '1920x1080')
         - fps: Frames per second (float)
         - bitrate_kbps: Bitrate in kbps (float or None)
+        - pixel_format: Pixel format (str or None)
+        - audio_sample_rate: Audio sample rate (int or None)
+        - audio_channels: Number of audio channels (int or None)
+        - channel_layout: Audio channel layout (str or None)
+        - audio_bitrate: Audio bitrate (int or None)
         - status: "OK", "Timeout", or "Error"
     """
     # In debug mode, show detailed entry log; in non-debug mode, be more concise
@@ -907,6 +982,16 @@ def analyze_stream(
         'fps': 0,
         'bitrate_kbps': None,
         'hdr_format': None,
+        'pixel_format': None,
+        'audio_sample_rate': None,
+        'audio_channels': None,
+        'channel_layout': None,
+        'audio_bitrate': None,
+        'pixel_format': None,
+        'audio_sample_rate': None,
+        'audio_channels': None,
+        'channel_layout': None,
+        'audio_bitrate': None,
         'status': 'Error'
     }
     
@@ -946,6 +1031,11 @@ def analyze_stream(
                     'fps': result_data['fps'],
                     'bitrate_kbps': result_data['bitrate_kbps'],
                     'hdr_format': result_data['hdr_format'],
+                    'pixel_format': result_data['pixel_format'],
+                    'audio_sample_rate': result_data['audio_sample_rate'],
+                    'audio_channels': result_data['audio_channels'],
+                    'channel_layout': result_data['channel_layout'],
+                    'audio_bitrate': result_data['audio_bitrate'],
                     'status': result_data['status']
                 }
 

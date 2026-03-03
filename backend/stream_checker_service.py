@@ -1318,6 +1318,11 @@ class StreamCheckerService:
             "video_codec": stream_data.get("video_codec"),
             "audio_codec": stream_data.get("audio_codec"),
             "hdr_format": stream_data.get("hdr_format"),
+            "pixel_format": stream_data.get("pixel_format"),
+            "audio_sample_rate": stream_data.get("audio_sample_rate"),
+            "audio_channels": stream_data.get("audio_channels"),
+            "channel_layout": stream_data.get("channel_layout"),
+            "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
         }
         
@@ -1394,6 +1399,11 @@ class StreamCheckerService:
             "video_codec": stream_data.get("video_codec"),
             "audio_codec": stream_data.get("audio_codec"),
             "hdr_format": stream_data.get("hdr_format"),
+            "pixel_format": stream_data.get("pixel_format"),
+            "audio_sample_rate": stream_data.get("audio_sample_rate"),
+            "audio_channels": stream_data.get("audio_channels"),
+            "channel_layout": stream_data.get("channel_layout"),
+            "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
         }
         

@@ -190,6 +190,11 @@ def extract_stream_stats(stream_data: Dict[str, Any]) -> Dict[str, Any]:
         - bitrate_kbps: float or None
         - video_codec: str (e.g., "h264" or "N/A")
         - audio_codec: str (e.g., "aac" or "N/A")
+        - pixel_format: str or None
+        - audio_sample_rate: int or None
+        - audio_channels: int or None
+        - channel_layout: str or None
+        - audio_bitrate: int or None
     """
     import json
     
@@ -199,7 +204,12 @@ def extract_stream_stats(stream_data: Dict[str, Any]) -> Dict[str, Any]:
         'bitrate_kbps': None,
         'video_codec': 'N/A',
         'audio_codec': 'N/A',
-        'hdr_format': None
+        'hdr_format': None,
+        'pixel_format': None,
+        'audio_sample_rate': None,
+        'audio_channels': None,
+        'channel_layout': None,
+        'audio_bitrate': None
     }
     
     # Try to get stream_stats from various locations
@@ -239,6 +249,13 @@ def extract_stream_stats(stream_data: Dict[str, Any]) -> Dict[str, Any]:
         
         # HDR Format
         result['hdr_format'] = stream_stats.get('hdr_format')
+
+        # Enriched stats
+        result['pixel_format'] = stream_stats.get('pixel_format')
+        result['audio_sample_rate'] = stream_stats.get('audio_sample_rate')
+        result['audio_channels'] = stream_stats.get('audio_channels')
+        result['channel_layout'] = stream_stats.get('channel_layout')
+        result['audio_bitrate'] = stream_stats.get('audio_bitrate')
     
     # Fallback: check if fields are directly on stream_data (e.g., from analyze_stream)
     if result['resolution'] == 'N/A' and 'resolution' in stream_data:
@@ -258,6 +275,21 @@ def extract_stream_stats(stream_data: Dict[str, Any]) -> Dict[str, Any]:
         
     if result['hdr_format'] is None and 'hdr_format' in stream_data:
         result['hdr_format'] = stream_data.get('hdr_format')
+
+    if result['pixel_format'] is None and 'pixel_format' in stream_data:
+        result['pixel_format'] = stream_data.get('pixel_format')
+
+    if result['audio_sample_rate'] is None and 'audio_sample_rate' in stream_data:
+        result['audio_sample_rate'] = stream_data.get('audio_sample_rate')
+
+    if result['audio_channels'] is None and 'audio_channels' in stream_data:
+        result['audio_channels'] = stream_data.get('audio_channels')
+
+    if result['channel_layout'] is None and 'channel_layout' in stream_data:
+        result['channel_layout'] = stream_data.get('channel_layout')
+
+    if result['audio_bitrate'] is None and 'audio_bitrate' in stream_data:
+        result['audio_bitrate'] = stream_data.get('audio_bitrate')
     
     return result
 
