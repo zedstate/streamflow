@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
+import { cn } from '@/lib/utils.js'
 import { Sidebar } from '@/components/layout/Sidebar.jsx'
 import { Toaster } from '@/components/ui/toaster.jsx'
 import { useToast } from '@/hooks/use-toast.js'
@@ -19,6 +20,7 @@ import Scheduling from '@/pages/Scheduling'
 function App() {
   const [setupStatus, setSetupStatus] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [isCollapsed, setIsCollapsed] = useState(false)
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -86,9 +88,12 @@ function App() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <Sidebar />
+      <Sidebar isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
 
-      <main className="flex-1 lg:ml-64 p-6">
+      <main className={cn(
+        "flex-1 p-6 transition-all duration-300 ease-in-out",
+        isCollapsed ? "lg:ml-20" : "lg:ml-64"
+      )}>
         <div className="max-w-7xl mx-auto pt-12 lg:pt-0">
           <Routes>
             <Route path="/" element={<Dashboard />} />

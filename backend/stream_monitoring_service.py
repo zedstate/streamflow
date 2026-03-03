@@ -691,8 +691,6 @@ class StreamMonitoringService:
                 if not global_pardon:
                     if active_logo_statuses[stream_id] == "FAILED":
                         stream_info.consecutive_logo_misses += 1
-                    elif active_logo_statuses[stream_id] == "SUCCESS":
-                        stream_info.consecutive_logo_misses = 0
                 
                 # Reset status back to PENDING so we don't double-count until next screenshot
                 stream_info.last_logo_status = "PENDING"
@@ -1078,6 +1076,8 @@ class StreamMonitoringService:
                             # If logo mismatch, record it so it can be shown in UI if quarantined later
                             info.status_reason = 'logo-mismatch'
                         elif status == "SUCCESS":
+                            # Reset count immediately on success
+                            info.consecutive_logo_misses = 0
                             # Reset reason if it was logo-mismatch but now it passed
                             if info.status_reason == 'logo-mismatch':
                                 info.status_reason = None

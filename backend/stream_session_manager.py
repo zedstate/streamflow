@@ -1059,6 +1059,9 @@ class StreamSessionManager:
                 # Reset counters for fresh start
                 stream_info.low_speed_start_time = None
                 stream_info.failure_count = 0
+                stream_info.consecutive_logo_misses = 0
+                stream_info.loop_duration = None
+                stream_info.status_reason = None
                 
                 # Remove from persistent blocklist
                 if session.quarantined_stream_ids and stream_id in session.quarantined_stream_ids:
