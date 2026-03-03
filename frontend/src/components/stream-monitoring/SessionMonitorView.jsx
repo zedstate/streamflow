@@ -612,6 +612,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
                   isLive={isLive}
                   zoomLevel={zoomLevel}
+                  adPeriods={session?.ad_periods || []}
                 />
               )}
             </CardContent>
@@ -642,6 +643,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   isLive={isLive}
                   zoomLevel={zoomLevel}
                   isReview
+                  adPeriods={session?.ad_periods || []}
                 />
               )}
             </CardContent>
@@ -668,6 +670,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   sessionId={sessionId}
                   showQuarantined
                   onRevive={handleReviveStream}
+                  adPeriods={session?.ad_periods || []}
                 />
               )}
             </CardContent>
@@ -720,7 +723,7 @@ function StatsCard({ title, value, suffix = '', icon: Icon, variant = 'default' 
 }
 
 // Streams Table Component
-function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false, cursorTime, isLive, zoomLevel }) {
+function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false, cursorTime, isLive, zoomLevel, adPeriods = [] }) {
   const formatQuality = (stream) => {
     if (!stream.width || !stream.height) return 'Unknown';
     return `${stream.width}x${stream.height}`;
@@ -907,7 +910,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
               {!showQuarantined && (
                 <TableRow>
                   <TableCell colSpan={10} className="bg-muted/30 p-2">
-                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} adPeriods={session.ad_periods} />
+                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} adPeriods={adPeriods} />
                   </TableCell>
                 </TableRow>
               )}
