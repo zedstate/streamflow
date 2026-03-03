@@ -1814,15 +1814,33 @@ class StreamCheckerService:
                         for s in streams:
                             # Try to find existing stats if available in stream object
                             # Otherwise use placeholders
+                            extracted_stats = extract_stream_stats(s)
+                            formatted_stats = format_stream_stats_for_display(extracted_stats)
+                            
+                            cached_for_score = {
+                                'stream_id': s.get('id'),
+                                'stream_name': s.get('name'),
+                                'stream_url': s.get('url'),
+                                'bitrate_kbps': extracted_stats.get('bitrate_kbps'),
+                                'resolution': extracted_stats.get('resolution'),
+                                'fps': extracted_stats.get('fps'),
+                                'video_codec': extracted_stats.get('video_codec'),
+                                'audio_codec': extracted_stats.get('audio_codec'),
+                                'hdr_format': extracted_stats.get('hdr_format'),
+                                'status': 'cached'
+                            }
+                            
+                            temp_score = self._calculate_stream_score(cached_for_score, priority_m3u_ids, priority_mode, scoring_weights)
+
                             stat = {
                                 'stream_id': s.get('id'),
                                 'stream_name': s.get('name'),
-                                'resolution': 'Cached',
-                                'fps': 'Cached',
-                                'video_codec': 'Cached',
-                                'bitrate': 'Cached',
+                                'resolution': formatted_stats['resolution'],
+                                'fps': formatted_stats['fps'],
+                                'video_codec': formatted_stats['video_codec'],
+                                'bitrate': formatted_stats['bitrate'],
                                 'm3u_account': self._get_m3u_account_name(s.get('id'), udi) if hasattr(self, '_get_m3u_account_name') else 'N/A',
-                                'score': s.get('score', 0)
+                                'score': temp_score
                             }
                             cached_stats.append(stat)
 
@@ -1887,24 +1905,27 @@ class StreamCheckerService:
                         streams_detail=list(stream_statuses.values())
                     )
             
-            # Progress callback for parallel checker
             def progress_callback(completed, total, result):
                 completed_count[0] = completed
                 stream_name = result.get('stream_name', 'Unknown')
                 stream_id = result.get('stream_id')
                 
+                # Calculate temp score for UI display
+                temp_score = self._calculate_stream_score(result, priority_m3u_ids, priority_mode, scoring_weights)
+                
                 # Update stream status based on result
                 if stream_id in stream_statuses:
                     if result.get('status') == 'ERROR':
                         stream_statuses[stream_id]['status'] = 'error'
+                        stream_statuses[stream_id]['score'] = 0.0
                     else:
                         stream_statuses[stream_id]['status'] = 'completed'
                         # Optional: record score or resolution
-                        stream_statuses[stream_id]['score'] = result.get('score', 0)
+                        stream_statuses[stream_id]['score'] = temp_score
                         stream_statuses[stream_id]['resolution'] = result.get('resolution', '0x0')
                         stream_statuses[stream_id]['video_codec'] = result.get('video_codec', 'N/A')
                         stream_statuses[stream_id]['fps'] = result.get('fps', 0)
-                        stream_statuses[stream_id]['bitrate'] = result.get('bitrate')
+                        stream_statuses[stream_id]['bitrate'] = result.get('bitrate_kbps')
                         stream_statuses[stream_id]['hdr_format'] = result.get('hdr_format')
                 
                 # Update progress
