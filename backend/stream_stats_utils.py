@@ -405,6 +405,13 @@ def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -
         if min_bitrate > 0 and bitrate < min_bitrate:
             return True, 'low_quality'
     
+    # Check against configured minimum FPS if provided
+    fps = stats['fps']
+    if config and fps is not None:
+        min_fps = config.get('min_fps', 0)
+        if min_fps > 0 and fps < min_fps:
+            return True, 'low_quality'
+    
     # Check against configured minimum score if provided
     if config:
         min_score = config.get('min_score', 0)

@@ -1202,6 +1202,9 @@ class StreamCheckerService:
                         if 'min_bitrate' in stream_checking:
                             profile_config['min_bitrate_kbps'] = stream_checking['min_bitrate']
                         
+                        if 'min_fps' in stream_checking:
+                            profile_config['min_fps'] = stream_checking['min_fps']
+                        
                         # Use profile config if available
                         check_config = profile_config
                     else:
