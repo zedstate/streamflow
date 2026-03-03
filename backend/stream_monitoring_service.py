@@ -229,12 +229,31 @@ class StreamMonitoringService:
                     current_streams = channel.get('streams', [])
                     if stream_id in current_streams:
                         new_streams = [sid for sid in current_streams if sid != stream_id]
-                        from api_utils import update_channel_streams
+                        from api_utils import update_channel_streams, change_channel_stream
                         success = update_channel_streams(session.channel_id, new_streams)
                         
                         if success:
                             logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel {session.channel_id}")
                             udi.refresh_channel_by_id(session.channel_id)
+                            
+                            # If the removed stream was currently playing and reason merits a forced change
+                            if reason in ["logo-mismatch", "looping"]:
+                                playing_streams = udi.get_playing_stream_ids()
+                                if stream_id in playing_streams:
+                                    logger.info(f"Quarantined stream {stream_id} is currently playing. Finding replacement...")
+                                    # Find best remaining stable stream
+                                    best_replacement = None
+                                    for replacement_id in new_streams:
+                                        rep_info = session.streams.get(replacement_id)
+                                        if rep_info and rep_info.status == 'stable' and not rep_info.is_quarantined:
+                                            best_replacement = replacement_id
+                                            break
+                                    
+                                    if best_replacement:
+                                        logger.info(f"Forcing Dispatcharr to switch from {stream_id} to {best_replacement}")
+                                        change_channel_stream(session.channel_id, stream_id=best_replacement)
+                                    else:
+                                        logger.warning(f"No stable replacement stream found for channel {session.channel_id}")
                         else:
                             logger.warning(f"Failed to update channel {session.channel_id} to remove {reason} stream {stream_id}")
                     else:

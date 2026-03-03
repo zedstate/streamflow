@@ -617,6 +617,42 @@ def update_channel_streams(
         )
         raise
 
+def change_channel_stream(channel_id: int, stream_id: Optional[int] = None, url: Optional[str] = None) -> bool:
+    """
+    Force change the currently playing stream for a channel in Dispatcharr.
+    
+    Parameters:
+        channel_id (int): The ID of the channel.
+        stream_id (Optional[int]): The ID of the stream to change to.
+        url (Optional[str]): The URL of the stream to change to.
+        
+    Returns:
+        bool: True if the stream was successfully changed, False otherwise.
+    """
+    if not stream_id and not url:
+        logger.error(f"Cannot change stream for channel {channel_id}: neither stream_id nor url provided")
+        return False
+        
+    endpoint = f"{_get_base_url()}/api/proxy/ts/change_stream/{channel_id}"
+    payload = {}
+    if stream_id:
+        payload["stream_id"] = stream_id
+    if url:
+        payload["url"] = url
+        
+    try:
+        response = post_request(endpoint, payload)
+        if response and response.status_code == 200:
+            logger.info(f"Successfully forced stream change for channel {channel_id} (Target Stream ID: {stream_id})")
+            return True
+        else:
+            status = response.status_code if response else 'None'
+            logger.warning(f"Failed to force stream change for channel {channel_id}. Status: {status}")
+            return False
+    except Exception as e:
+        logger.error(f"Error calling change_stream API for channel {channel_id}: {e}")
+        return False
+
 def refresh_m3u_playlists(
     account_id: Optional[int] = None
 ) -> requests.Response:

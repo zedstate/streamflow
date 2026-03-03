@@ -30,6 +30,39 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/accounts/api-keys/:
+    get:
+      operationId: api_accounts_api_keys_retrieve
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/accounts/api-keys/generate/:
+    post:
+      operationId: api_accounts_api_keys_generate_create
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/accounts/api-keys/revoke/:
+    post:
+      operationId: api_accounts_api_keys_revoke_create
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/accounts/auth/login/:
     post:
       operationId: api_accounts_auth_login_create
@@ -1006,6 +1039,72 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/channels/channels/by-uuids/:
+    post:
+      operationId: api_channels_channels_by_uuids_create
+      description: Retrieve channels by a list of UUIDs using POST to avoid URL length
+        limitations
+      parameters:
+      - in: query
+        name: channel_group
+        schema:
+          type: string
+      - in: query
+        name: epg
+        schema:
+          type: string
+      - in: query
+        name: name
+        schema:
+          type: string
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelByUUIDsRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChannelByUUIDsRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ChannelByUUIDsRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedChannelList'
+          description: ''
   /api/channels/channels/edit/bulk/:
     patch:
       operationId: api_channels_channels_edit_bulk_partial_update
@@ -1025,6 +1124,37 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/PatchedChannel'
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+          description: ''
+  /api/channels/channels/edit/bulk-regex/:
+    post:
+      operationId: api_channels_channels_edit_bulk_regex_create
+      description: 'Bulk rename channel names using a regex find/replace executed
+        server-side. Accepts JavaScript-style named groups (e.g., (?<name>...)) and
+        converts them to Python syntax. Supports flags: ''i'' (IGNORECASE). Replacement
+        tokens like $1, $& and $<name> are translated to Python.'
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkRegexRenameRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkRegexRenameRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/BulkRegexRenameRequest'
+        required: true
       security:
       - jwtAuth: []
       - BearerAuth: []
@@ -1214,6 +1344,23 @@ paths:
             schema:
               $ref: '#/components/schemas/Channel'
         required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+          description: ''
+  /api/channels/channels/summary/:
+    get:
+      operationId: api_channels_channels_summary_retrieve
+      description: Return a lightweight list of channels with only the fields needed
+        by the TV Guide.
+      tags:
+      - api
       security:
       - jwtAuth: []
       - BearerAuth: []
@@ -2727,6 +2874,456 @@ paths:
               schema:
                 $ref: '#/components/schemas/Stream'
           description: ''
+  /api/connect/integrations/:
+    get:
+      operationId: api_connect_integrations_list
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Integration'
+          description: ''
+    post:
+      operationId: api_connect_integrations_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Integration'
+        required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: ''
+  /api/connect/integrations/{id}/:
+    get:
+      operationId: api_connect_integrations_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this integration.
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: ''
+    put:
+      operationId: api_connect_integrations_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this integration.
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Integration'
+        required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: ''
+    patch:
+      operationId: api_connect_integrations_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this integration.
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedIntegration'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedIntegration'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedIntegration'
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: ''
+    delete:
+      operationId: api_connect_integrations_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this integration.
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/connect/integrations/{id}/subscriptions/:
+    get:
+      operationId: api_connect_integrations_subscriptions_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this integration.
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: ''
+  /api/connect/integrations/{id}/subscriptions/set/:
+    put:
+      operationId: api_connect_integrations_subscriptions_set_update
+      description: |-
+        Replace the integration's subscriptions with the provided list.
+        Body format: [{"event": "channel_start", "enabled": true, "payload_template": "..."}, ...]
+        Any existing subscriptions not in the list will be deleted; missing ones will be created/updated.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this integration.
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Integration'
+        required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: ''
+  /api/connect/integrations/{id}/test/:
+    post:
+      operationId: api_connect_integrations_test_create
+      description: Execute a saved integration (connect) with a dummy payload to verify
+        configuration.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this integration.
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Integration'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Integration'
+        required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Integration'
+          description: ''
+  /api/connect/logs/:
+    get:
+      operationId: api_connect_logs_list
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDeliveryLogList'
+          description: ''
+  /api/connect/logs/{id}/:
+    get:
+      operationId: api_connect_logs_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this delivery log.
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryLog'
+          description: ''
+  /api/connect/subscriptions/:
+    get:
+      operationId: api_connect_subscriptions_list
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EventSubscription'
+          description: ''
+    post:
+      operationId: api_connect_subscriptions_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventSubscription'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EventSubscription'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EventSubscription'
+        required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSubscription'
+          description: ''
+  /api/connect/subscriptions/{id}/:
+    get:
+      operationId: api_connect_subscriptions_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this event subscription.
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSubscription'
+          description: ''
+    put:
+      operationId: api_connect_subscriptions_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this event subscription.
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventSubscription'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EventSubscription'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EventSubscription'
+        required: true
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSubscription'
+          description: ''
+    patch:
+      operationId: api_connect_subscriptions_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this event subscription.
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedEventSubscription'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedEventSubscription'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedEventSubscription'
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSubscription'
+          description: ''
+    delete:
+      operationId: api_connect_subscriptions_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this event subscription.
+        required: true
+      tags:
+      - api
+      security:
+      - jwtAuth: []
+      - BearerAuth: []
+      - {}
+      responses:
+        '204':
+          description: No response body
   /api/core/notifications/:
     get:
       operationId: api_core_notifications_list
@@ -6362,6 +6959,22 @@ components:
             $ref: '#/components/schemas/EpgAssociation'
       required:
       - associations
+    BulkRegexRenameRequest:
+      type: object
+      properties:
+        channel_ids:
+          type: array
+          items:
+            type: integer
+        find:
+          type: string
+        replace:
+          type: string
+        flags:
+          type: string
+      required:
+      - channel_ids
+      - find
     BulkRemoveSeriesRecordingsRequest:
       type: object
       properties:
@@ -6464,6 +7077,16 @@ components:
       - id
       - name
       - uuid
+    ChannelByUUIDsRequest:
+      type: object
+      properties:
+        uuids:
+          type: array
+          items:
+            type: string
+          description: List of channel UUIDs to retrieve
+      required:
+      - uuids
     ChannelGroup:
       type: object
       properties:
@@ -6562,13 +7185,47 @@ components:
     CurrentProgramsRequest:
       type: object
       properties:
-        channel_ids:
+        channel_uuids:
           type: array
           items:
-            type: integer
+            type: string
           nullable: true
-          description: Array of channel IDs. If null or omitted, returns all channels
+          description: Array of channel UUIDs. If null or omitted, returns all channels
             with current programs.
+    DeliveryLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        subscription:
+          allOf:
+          - $ref: '#/components/schemas/EventSubscription'
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/DeliveryLogStatusEnum'
+        request_payload: {}
+        response_payload: {}
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - status
+      - subscription
+    DeliveryLogStatusEnum:
+      enum:
+      - success
+      - failed
+      type: string
+      description: |-
+        * `success` - Success
+        * `failed` - Failed
     EPGData:
       type: object
       description: |-
@@ -6624,6 +7281,9 @@ components:
           type: integer
           maximum: 2147483647
           minimum: -2147483648
+        cron_expression:
+          type: string
+          default: ''
         priority:
           type: integer
           maximum: 2147483647
@@ -6653,9 +7313,14 @@ components:
         epg_data_count:
           type: string
           readOnly: true
+        has_channels:
+          type: boolean
+          readOnly: true
+          default: false
       required:
       - created_at
       - epg_data_count
+      - has_channels
       - id
       - name
       - source_type
@@ -6764,6 +7429,60 @@ components:
           type: string
           description: 'Optional: evaluate only rules for this channel TVG ID. If
             omitted, all rules are evaluated.'
+    EventEnum:
+      enum:
+      - channel_start
+      - channel_stop
+      - channel_reconnect
+      - channel_error
+      - channel_failover
+      - stream_switch
+      - recording_start
+      - recording_end
+      - epg_refresh
+      - m3u_refresh
+      - client_connect
+      - client_disconnect
+      - login_failed
+      - epg_blocked
+      - m3u_blocked
+      type: string
+      description: |-
+        * `channel_start` - Channel Started
+        * `channel_stop` - Channel Stopped
+        * `channel_reconnect` - Channel Reconnected
+        * `channel_error` - Channel Error
+        * `channel_failover` - Channel Failover
+        * `stream_switch` - Stream Switch
+        * `recording_start` - Recording Started
+        * `recording_end` - Recording Ended
+        * `epg_refresh` - EPG Refreshed
+        * `m3u_refresh` - M3U Refreshed
+        * `client_connect` - Client Connected
+        * `client_disconnect` - Client Disconnected
+        * `login_failed` - Login Failed
+        * `epg_blocked` - EPG Blocked
+        * `m3u_blocked` - M3U Blocked
+    EventSubscription:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        event:
+          $ref: '#/components/schemas/EventEnum'
+        enabled:
+          type: boolean
+        payload_template:
+          type: string
+          nullable: true
+          description: Optional Jinja2/Django template for customizing payload
+        integration:
+          type: integer
+      required:
+      - event
+      - id
+      - integration
     FilterTypeEnum:
       enum:
       - group
@@ -6854,6 +7573,35 @@ components:
       required:
       - device_id
       - id
+    Integration:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 255
+        type:
+          $ref: '#/components/schemas/TypeEnum'
+        config: {}
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        subscriptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventSubscription'
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - name
+      - subscriptions
+      - type
     LoginRequest:
       type: object
       properties:
@@ -6957,6 +7705,9 @@ components:
           type: integer
           maximum: 2147483647
           minimum: -2147483648
+        cron_expression:
+          type: string
+          default: ''
         custom_properties:
           nullable: true
         account_type:
@@ -7232,6 +7983,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Channel'
+    PaginatedDeliveryLogList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryLog'
     PaginatedEpisodeList:
       type: object
       required:
@@ -7507,6 +8281,9 @@ components:
           type: integer
           maximum: 2147483647
           minimum: -2147483648
+        cron_expression:
+          type: string
+          default: ''
         priority:
           type: integer
           maximum: 2147483647
@@ -7536,6 +8313,26 @@ components:
         epg_data_count:
           type: string
           readOnly: true
+        has_channels:
+          type: boolean
+          readOnly: true
+          default: false
+    PatchedEventSubscription:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        event:
+          $ref: '#/components/schemas/EventEnum'
+        enabled:
+          type: boolean
+        payload_template:
+          type: string
+          nullable: true
+          description: Optional Jinja2/Django template for customizing payload
+        integration:
+          type: integer
     PatchedGroup:
       type: object
       properties:
@@ -7566,6 +8363,29 @@ components:
           type: integer
           maximum: 2147483647
           minimum: 0
+    PatchedIntegration:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 255
+        type:
+          $ref: '#/components/schemas/TypeEnum'
+        config: {}
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        subscriptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventSubscription'
+          readOnly: true
     PatchedLogo:
       type: object
       properties:
@@ -7651,6 +8471,9 @@ components:
           type: integer
           maximum: 2147483647
           minimum: -2147483648
+        cron_expression:
+          type: string
+          default: ''
         custom_properties:
           nullable: true
         account_type:
@@ -8011,6 +8834,10 @@ components:
             only.
           pattern: ^[\w.@+-]+$
           maxLength: 150
+        api_key:
+          type: string
+          readOnly: true
+          nullable: true
         email:
           type: string
           format: email
@@ -8031,11 +8858,6 @@ components:
           nullable: true
         avatar_config:
           nullable: true
-        is_active:
-          type: boolean
-          title: Active
-          description: Designates whether this user should be treated as active. Unselect
-            this instead of deleting accounts.
         is_staff:
           type: boolean
           title: Staff status
@@ -8582,6 +9404,16 @@ components:
       required:
       - access
       - refresh
+    TypeEnum:
+      enum:
+      - webhook
+      - api
+      - script
+      type: string
+      description: |-
+        * `webhook` - Webhook
+        * `api` - API
+        * `script` - Custom Script
     User:
       type: object
       properties:
@@ -8594,6 +9426,10 @@ components:
             only.
           pattern: ^[\w.@+-]+$
           maxLength: 150
+        api_key:
+          type: string
+          readOnly: true
+          nullable: true
         email:
           type: string
           format: email
@@ -8614,11 +9450,6 @@ components:
           nullable: true
         avatar_config:
           nullable: true
-        is_active:
-          type: boolean
-          title: Active
-          description: Designates whether this user should be treated as active. Unselect
-            this instead of deleting accounts.
         is_staff:
           type: boolean
           title: Staff status
@@ -8642,6 +9473,7 @@ components:
           type: string
           maxLength: 150
       required:
+      - api_key
       - id
       - password
       - username

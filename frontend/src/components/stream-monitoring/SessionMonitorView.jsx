@@ -792,8 +792,8 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                       </Badge>
                     )}
                     {(stream.status === 'review' || stream.status === 'quarantined') && stream.status_reason === 'looping' && (
-                      <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20 text-[10px] px-1 py-0 h-4 uppercase font-bold">
-                        Looping {stream.loop_duration ? `(${stream.loop_duration.toFixed(1)}s)` : ''}
+                      <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20 text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center leading-none">
+                        <span className="mt-[0.5px]">Looping {stream.loop_duration ? `(${stream.loop_duration.toFixed(1)}s)` : ''}</span>
                       </Badge>
                     )}
                     {stream.status === 'quarantined' && stream.status_reason === 'logo-mismatch' && (
