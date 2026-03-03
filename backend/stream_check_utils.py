@@ -171,6 +171,11 @@ def _extract_codec_from_line(line: str, codec_type: str) -> Optional[str]:
             return None
     
     # Step 5: Return the codec as-is if it's not a wrapper
+    # Special case: If codec is just a number (e.g., '2'), it's likely a channel count, not a codec
+    if codec.isdigit():
+        logger.debug(f"  → Initial codec '{codec}' is purely numeric, likely a channel count. Returning None.")
+        return None
+        
     return codec
 
 
@@ -505,11 +510,6 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         'audio_channels': None,
         'channel_layout': None,
         'audio_bitrate': None,
-        'pixel_format': None,
-        'audio_sample_rate': None,
-        'audio_channels': None,
-        'channel_layout': None,
-        'audio_bitrate': None,
         'status': 'OK',
         'elapsed_time': 0
     }
@@ -678,6 +678,8 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                             layout_to_channels = {
                                 'mono': 1,
                                 'stereo': 2,
+                                '2.0': 2,
+                                '1.0': 1,
                                 '5.1': 6,
                                 '5.1(side)': 6,
                                 '7.1': 8,
