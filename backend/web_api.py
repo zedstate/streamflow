@@ -5059,7 +5059,9 @@ def get_stream_viewer_url(stream_id):
             }), 404
         
         # Route to the local internal UDP-to-HTTP proxy
-        stream_url = f"/api/stream/proxy/{stream_id}"
+        # Use absolute URL because mpegts.js fetch in Worker requires it
+        base_url = request.host_url.rstrip('/')
+        stream_url = f"{base_url}/api/stream/proxy/{stream_id}"
         
         return jsonify({
             'success': True,
