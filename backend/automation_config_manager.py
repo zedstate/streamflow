@@ -386,7 +386,8 @@ class AutomationConfigManager:
             new_period = {
                 "id": period_id,
                 "name": period_data.get("name", "New Period"),
-                "schedule": period_data.get("schedule", {"type": "interval", "value": 60})
+                "schedule": period_data.get("schedule", {"type": "interval", "value": 60}),
+                "priority": int(period_data.get("priority", 0))
             }
             self._config["automation_periods"][period_id] = new_period
             if self._save_config():
@@ -409,6 +410,8 @@ class AutomationConfigManager:
                 current["name"] = period_data["name"]
             if "schedule" in period_data:
                 current["schedule"] = period_data["schedule"]
+            if "priority" in period_data:
+                current["priority"] = int(period_data["priority"])
             # Note: profile_id is no longer stored in periods, it's per-channel
             
             logger.info(f"Updated automation period: {pid}")
@@ -621,7 +624,16 @@ class AutomationConfigManager:
             # Only use automation periods - legacy profile assignments are ignored
             active_periods = self.get_active_periods_for_channel(channel_id)
             if active_periods:
-                # Use the first active period's profile as the primary profile for compatibility
+                # If there are multiple active periods, sort them by priority (descending) 
+                # then by ID (ascending) to guarantee deterministic resolution
+                if len(active_periods) > 1:
+                    active_periods.sort(key=lambda p: (-int(p.get('priority', 0)), p.get('id', '')))
+                    logger.warning(
+                        f"Channel {channel_id} triggered by {len(active_periods)} overlapping periods. "
+                        f"Defaulting to highest priority period: {active_periods[0].get('name')} (Priority: {active_periods[0].get('priority', 0)})"
+                    )
+
+                # Use the highest priority active period's profile
                 period = active_periods[0]
                 profile = period.get('profile')
                 if profile:

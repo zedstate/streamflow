@@ -52,7 +52,8 @@ export default function AutomationPeriods() {
   const handleCreate = () => {
     setCurrentPeriod({
       name: '',
-      schedule: { type: 'interval', value: 60 }
+      schedule: { type: 'interval', value: 60 },
+      priority: 0
     })
     setEditDialogOpen(true)
   }
@@ -213,11 +214,14 @@ export default function AutomationPeriods() {
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground mt-2">
                       <div className="flex items-center gap-1">
                         <Clock className="h-4 w-4" />
                         {formatSchedule(period.schedule)}
                       </div>
+                      <Badge variant="outline" className="font-normal text-xs text-muted-foreground w-fit">
+                        Priority: {period.priority || 0}
+                      </Badge>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -322,6 +326,25 @@ export default function AutomationPeriods() {
                     </p>
                   </TabsContent>
                 </Tabs>
+              </div>
+
+              {/* Priority Configuration */}
+              <div className="space-y-2">
+                <Label htmlFor="period-priority">Priority</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="period-priority"
+                    type="number"
+                    min="0"
+                    max="1000"
+                    className="max-w-[120px]"
+                    value={currentPeriod.priority || 0}
+                    onChange={(e) => setCurrentPeriod({ ...currentPeriod, priority: parseInt(e.target.value) || 0 })}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Higher values take precedence when schedules overlap exactly.
+                  </span>
+                </div>
               </div>
             </div>
           )}
