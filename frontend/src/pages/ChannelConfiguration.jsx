@@ -534,8 +534,15 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
       setAllPeriods(periodsResponse.data)
       setAllProfiles(profilesResponse.data)
 
-      // assignedResponse.data is now {period_id: profile_id}
-      setPeriodAssignments(assignedResponse.data || {})
+      // assignedResponse.data is a list of periods with profile info
+      // Transform into {period_id: profile_id} map
+      const assignments = {}
+      if (Array.isArray(assignedResponse.data)) {
+        assignedResponse.data.forEach(p => {
+          assignments[p.id] = p.profile_id
+        })
+      }
+      setPeriodAssignments(assignments)
     } catch (err) {
       console.error('Failed to load data:', err)
       toast({
@@ -553,7 +560,13 @@ function AssignPeriodsDialog({ open, onOpenChange, channelId, channelName, onSuc
       setSaving(true)
 
       const currentResponse = await automationAPI.getChannelPeriods(channelId)
-      const currentAssignments = currentResponse.data || {}
+      const currentPeriodsData = currentResponse.data || []
+      const currentAssignments = {}
+      if (Array.isArray(currentPeriodsData)) {
+        currentPeriodsData.forEach(p => {
+          currentAssignments[p.id] = p.profile_id
+        })
+      }
 
       const newPeriods = Object.keys(periodAssignments)
       const currentPeriods = Object.keys(currentAssignments)
