@@ -11,16 +11,16 @@ import logging
 import os
 import re
 import requests
+import socket
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 from dataclasses import asdict
-from werkzeug.utils import secure_filename
-
-from flask import Flask, request, jsonify, send_from_directory, send_file, make_response
+from flask import Flask, request, jsonify, send_from_directory, send_file, make_response, Response
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import _get_base_url
@@ -5058,12 +5058,8 @@ def get_stream_viewer_url(stream_id):
                 'error': f'Stream {stream_id} not found'
             }), 404
         
-        stream_url = stream.get('url', '')
-        if not stream_url:
-            return jsonify({
-                'success': False,
-                'error': f'Stream {stream_id} has no URL'
-            }), 404
+        # Route to the local internal UDP-to-HTTP proxy
+        stream_url = f"/api/stream/proxy/{stream_id}"
         
         return jsonify({
             'success': True,
@@ -5077,6 +5073,31 @@ def get_stream_viewer_url(stream_id):
             'success': False,
             'error': str(e)
         }), 500
+
+
+@app.route('/api/stream/proxy/<int:stream_id>', methods=['GET'])
+def stream_proxy_url(stream_id):
+    """Proxy the local UDP stream from FFmpeg out via HTTP."""
+    port_viewer = 30000 + stream_id
+    
+    def generate():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('127.0.0.1', port_viewer))
+        sock.settimeout(5.0)  # Timeout if FFmpeg dies or stream hangs
+        try:
+            while True:
+                data, _ = sock.recvfrom(32768)
+                if not data:
+                    break
+                yield data
+        except socket.timeout:
+            logger.warning(f"UDP proxy for stream {stream_id} timed out.")
+        except Exception as e:
+            logger.error(f"UDP proxy error on stream {stream_id}: {e}")
+        finally:
+            sock.close()
+
+    return Response(generate(), mimetype='video/MP2T')
 
 
 @app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])

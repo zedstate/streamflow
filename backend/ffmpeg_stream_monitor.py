@@ -62,12 +62,14 @@ class FFmpegStreamMonitor:
         self.on_stats_update = on_stats_update
         self.stats = FFmpegStats(url=url)
         
-        # UDP ports for Primary-Sidecar routing
+        # UDP ports for Primary-Sidecar routing and Live Preview
         self.port_a = None
         self.port_b = None
+        self.port_viewer = None
         if stream_id is not None:
             self.port_a = 10000 + stream_id
             self.port_b = 20000 + stream_id
+            self.port_viewer = 30000 + stream_id
         
         self._process: Optional[subprocess.Popen] = None
         self._monitor_thread: Optional[threading.Thread] = None
@@ -102,8 +104,7 @@ class FFmpegStreamMonitor:
                     '-c', 'copy',  # Copy codec (no re-encoding)
                 ]
                 
-                # Use robust multi-output routing if stream_id is provided, otherwise fallback to null muxer
-                if self.port_a and self.port_b:
+                if self.port_a and self.port_b and self.port_viewer:
                     # Duplicate to two local UDP ports + null output for stats
                     # We use the 'fifo' pseudo-muxer to decouple network sending from the main thread.
                     # Setting drop_pkts_on_overflow=1 ensures FFmpeg drops UDP packets instead of blocking
@@ -111,6 +112,7 @@ class FFmpegStreamMonitor:
                     cmd.extend([
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
+                        '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_viewer}',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:
