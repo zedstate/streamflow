@@ -103,6 +103,8 @@ class StreamProxy:
         self.lock = threading.Lock()
         self.running = False
         self.thread = None
+        self.last_client_time = None
+        self.LINGER_SECONDS = 60
 
     def add_client(self):
         q = queue.Queue(maxsize=200) # Buffer for about 2-3 seconds of stream
@@ -117,8 +119,8 @@ class StreamProxy:
             if q in self.clients:
                 self.clients.remove(q)
             if not self.clients:
-                self._stop()
-                self.manager.remove_proxy(self.stream_id)
+                self.last_client_time = datetime.now()
+                logger.info(f"Last client disconnected from stream {self.stream_id}. Entering {self.LINGER_SECONDS}s linger period.")
 
     def _start(self):
         self.running = True
@@ -141,22 +143,47 @@ class StreamProxy:
         try:
             # Bind to all interfaces or localhost? FFmpeg sends to 127.0.0.1
             sock.bind(('127.0.0.1', self.port))
-            sock.settimeout(1.0) # Short timeout to check self.running frequently
+            sock.settimeout(1.0) # Short timeout to allow periodically checking for lingering cleanup
             while self.running:
                 try:
+                    # Short timeout to allow periodically checking for lingering cleanup
                     data, _ = sock.recvfrom(65535)
-                    if data:
-                        with self.lock:
-                            for q in self.clients:
-                                try:
-                                    # Optimization: If this is the very first packet after a client joined,
-                                    # we might want to ensure it's a fresh sync byte, but for now 
-                                    # we just push to all clients.
-                                    q.put_nowait(data)
-                                except queue.Full:
-                                    pass # Drop data for this specific slow neighbor
                 except socket.timeout:
+                    # Check if we should shut down due to lingering timeout
+                    with self.lock:
+                        if not self.clients and self.last_client_time:
+                            elapsed = (datetime.now() - self.last_client_time).total_seconds()
+                            if elapsed >= self.LINGER_SECONDS:
+                                logger.info(f"Linger timeout reached for stream {self.stream_id}. Shutting down listener.")
+                                self.running = False
+                                self.manager.remove_proxy(self.stream_id)
+                                break
                     continue
+
+                if data:
+                    with self.lock:
+                        if not self.clients:
+                            # Discard data while lingering, but check for timeout
+                            if self.last_client_time:
+                                elapsed = (datetime.now() - self.last_client_time).total_seconds()
+                                if elapsed >= self.LINGER_SECONDS:
+                                    logger.info(f"Linger timeout reached during data recv for stream {self.stream_id}. Shutting down.")
+                                    self.running = False
+                                    self.manager.remove_proxy(self.stream_id)
+                                    break
+                            continue
+                        
+                        # We have clients, so we are active - clear linger timestamp
+                        self.last_client_time = None
+                        
+                        for q in self.clients:
+                            try:
+                                # Optimization: If this is the very first packet after a client joined,
+                                # we might want to ensure it's a fresh sync byte, but for now 
+                                # we just push to all clients.
+                                q.put_nowait(data)
+                            except queue.Full:
+                                pass # Drop data for this specific slow neighbor
         except Exception as e:
             logger.error(f"UDP listener error for stream {self.stream_id}: {e}")
         finally:
