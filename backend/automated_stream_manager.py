@@ -2221,55 +2221,6 @@ class AutomatedStreamManager:
                 "error": str(e)
             }
     
-    def should_run_playlist_update(self) -> bool:
-        """Check if it's time to run playlist update."""
-        if not self.last_playlist_update:
-            return True
-            
-        from automation_config_manager import get_automation_config_manager
-        automation_config = get_automation_config_manager()
-        settings = automation_config.get_global_settings()
-        
-        # If automation is globally disabled, we shouldn't run unless manually triggered
-        # But this check is usually done in run_automation_cycle.
-        
-        # We can implement schedule logic here from automation_config if we moved it there.
-        # For now, let's keep the legacy cron/interval config from `self.config` which comes from dispatcharr_config/channel_settings?
-        # Actually `self.config` seems to be loaded from somewhere else.
-        # Let's assume scheduling is still in the main config for now, as we didn't move scheduling to profiles yet.
-        
-        # Check if cron expression is configured
-        cron_expr = self.config.get("playlist_update_cron", "")
-        if cron_expr and CRONITER_AVAILABLE:
-            try:
-                # Use croniter to check if it's time to run
-                cron = croniter(cron_expr, self.last_playlist_update)
-                next_run = cron.get_next(datetime)
-                return datetime.now() >= next_run
-            except Exception as e:
-                logger.warning(f"Invalid cron expression '{cron_expr}', falling back to interval: {e}")
-        
-        # Fall back to interval-based scheduling
-        schedule = settings.get("playlist_update_interval_minutes", {"type": "interval", "value": 5})
-        
-        # Handle legacy integer format (defensive)
-        if isinstance(schedule, int):
-            schedule = {"type": "interval", "value": schedule}
-            
-        if schedule.get("type") == "cron" and CRONITER_AVAILABLE:
-            try:
-                cron_expr = schedule.get("value")
-                cron = croniter(cron_expr, self.last_playlist_update)
-                next_run = cron.get_next(datetime)
-                return datetime.now() >= next_run
-            except Exception as e:
-                logger.warning(f"Invalid cron expression '{schedule.get('value')}', falling back to default interval: {e}")
-                interval = timedelta(minutes=5)
-        else:
-            interval_mins = schedule.get("value", 5)
-            interval = timedelta(minutes=interval_mins)
-            
-        return datetime.now() - self.last_playlist_update >= interval
     
     def _is_period_due(self, period_id: str, period_info: dict) -> bool:
         """Check if a specific period is due to run based on its schedule."""
