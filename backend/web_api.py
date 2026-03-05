@@ -9,6 +9,7 @@ the automated stream management system.
 import json
 import logging
 import os
+import queue
 import re
 import requests
 import socket
@@ -91,6 +92,92 @@ scheduled_event_processor_wake = None  # threading.Event to wake up the processo
 epg_refresh_thread = None
 epg_refresh_running = False
 epg_refresh_wake = None  # threading.Event to wake up the refresh early
+
+class StreamProxy:
+    """Manages a single UDP listener for a stream and broadcasts to multiple HTTP clients."""
+    def __init__(self, stream_id, manager):
+        self.stream_id = stream_id
+        self.manager = manager
+        self.port = 30000 + stream_id
+        self.clients = [] # List of queue.Queue
+        self.lock = threading.Lock()
+        self.running = False
+        self.thread = None
+
+    def add_client(self):
+        q = queue.Queue(maxsize=200) # Buffer for about 2-3 seconds of stream
+        with self.lock:
+            self.clients.append(q)
+            if not self.running:
+                self._start()
+        return q
+
+    def remove_client(self, q):
+        with self.lock:
+            if q in self.clients:
+                self.clients.remove(q)
+            if not self.clients:
+                self._stop()
+                self.manager.remove_proxy(self.stream_id)
+
+    def _start(self):
+        self.running = True
+        self.thread = threading.Thread(
+            target=self._run, 
+            daemon=True, 
+            name=f"ProxyUDP-{self.stream_id}"
+        )
+        self.thread.start()
+        logger.info(f"Started shared UDP listener for stream {self.stream_id} on port {self.port}")
+
+    def _stop(self):
+        self.running = False
+        logger.info(f"Stopped shared UDP listener for stream {self.stream_id}")
+
+    def _run(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Allow immediate reuse of the port
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            # Bind to all interfaces or localhost? FFmpeg sends to 127.0.0.1
+            sock.bind(('127.0.0.1', self.port))
+            sock.settimeout(1.0) # Short timeout to check self.running frequently
+            while self.running:
+                try:
+                    data, _ = sock.recvfrom(65535)
+                    if data:
+                        with self.lock:
+                            for q in self.clients:
+                                try:
+                                    q.put_nowait(data)
+                                except queue.Full:
+                                    pass # Drop data for this specific slow neighbor
+                except socket.timeout:
+                    continue
+        except Exception as e:
+            logger.error(f"UDP listener error for stream {self.stream_id}: {e}")
+        finally:
+            sock.close()
+
+class UDPProxyManager:
+    """Singleton-like manager for all active UDP-to-HTTP proxies."""
+    def __init__(self):
+        self.proxies = {} # stream_id -> StreamProxy
+        self.lock = threading.Lock()
+
+    def get_proxy(self, stream_id):
+        with self.lock:
+            if stream_id not in self.proxies:
+                self.proxies[stream_id] = StreamProxy(stream_id, self)
+            return self.proxies[stream_id]
+
+    def remove_proxy(self, stream_id):
+        with self.lock:
+            if stream_id in self.proxies:
+                del self.proxies[stream_id]
+
+# Initialize the global proxy manager
+udp_proxy_manager = UDPProxyManager()
 
 def get_automation_manager():
     """Get or create automation manager instance."""
@@ -5079,25 +5166,29 @@ def get_stream_viewer_url(stream_id):
 
 @app.route('/api/stream/proxy/<int:stream_id>', methods=['GET'])
 def stream_proxy_url(stream_id):
-    """Proxy the local UDP stream from FFmpeg out via HTTP."""
-    port_viewer = 30000 + stream_id
+    """Proxy the local UDP stream from FFmpeg out via HTTP using a shared listener."""
+    proxy = udp_proxy_manager.get_proxy(stream_id)
+    q = proxy.add_client()
     
     def generate():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(('127.0.0.1', port_viewer))
-        sock.settimeout(5.0)  # Timeout if FFmpeg dies or stream hangs
         try:
+            # Use a slightly longer timeout for the initial packet to account for FFmpeg startup
             while True:
-                data, _ = sock.recvfrom(32768)
-                if not data:
-                    break
-                yield data
-        except socket.timeout:
-            logger.warning(f"UDP proxy for stream {stream_id} timed out.")
+                try:
+                    # Block on the queue with a timeout
+                    data = q.get(timeout=10.0)
+                    yield data
+                except queue.Empty:
+                    # If we time out and the proxy is no longer running, stop
+                    if not proxy.running:
+                        logger.warning(f"Shared proxy for {stream_id} stopped, closing HTTP client")
+                        break
+                    # Otherwise, just keep waiting – maybe just a temporary gap in stream
+                    continue
         except Exception as e:
-            logger.error(f"UDP proxy error on stream {stream_id}: {e}")
+            logger.debug(f"HTTP streaming client for {stream_id} disconnected: {e}")
         finally:
-            sock.close()
+            proxy.remove_client(q)
 
     return Response(generate(), mimetype='video/MP2T')
 
