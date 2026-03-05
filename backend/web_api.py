@@ -4816,7 +4816,8 @@ def get_stream_session(session_id):
                     remaining = max(0, review_limit - time_in_review)
                     stream_dict['review_time_remaining'] = remaining
                 
-                streams_data.append(stream_dict)
+                if stream_dict['current_speed'] >= 1.0:
+                    streams_data.append(stream_dict)
         
         # Sort streams to match Dispatcharr channel order
         # This ensures the frontend sees the exact same order as Dispatcharr
@@ -5114,7 +5115,13 @@ def get_alive_screenshots(session_id):
         if session.streams:
             for stream_id, stream_info in session.streams.items():
                 if not stream_info.is_quarantined and stream_info.screenshot_path:
-                    screenshots_data.append({
+                    # Only show screenshots for streams with good speed (>= 1.0)
+                    latest_speed = 0.0
+                    if stream_info.metrics_history:
+                        latest_speed = stream_info.metrics_history[-1].speed
+                    
+                    if latest_speed >= 1.0:
+                        screenshots_data.append({
                         'stream_id': stream_info.stream_id,
                         'stream_name': stream_info.name,
                         'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}",
