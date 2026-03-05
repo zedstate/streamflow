@@ -264,8 +264,8 @@ def epg_refresh_processor():
             
             # Fetch EPG data (this will also trigger match_programs_to_rules)
             logger.info(f"Fetching EPG data and matching programs to auto-create rules...")
-            programs = service.fetch_epg_grid(force_refresh=True)
-            logger.info(f"EPG refresh complete. Fetched {len(programs)} programs.")
+            result = service.match_programs_to_rules()
+            logger.info(f"EPG refresh complete. Created {result.get('created', 0)} events.")
             
             # Wait for the next refresh interval or wake event
             if epg_refresh_wake is None:

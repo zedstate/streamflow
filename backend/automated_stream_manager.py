@@ -1239,18 +1239,18 @@ class AutomatedStreamManager:
             udi.refresh_channel_profiles()  # Sync profiles with Dispatcharr to prevent orphaned references
             logger.info("UDI cache refreshed successfully")
             
-            # Trigger EPG refresh to pick up any EPG/tvg-id changes made in Dispatcharr
+            # Trigger EPG matching to pick up any EPG/tvg-id changes made in Dispatcharr
             # This ensures that if a channel's EPG assignment was changed in Dispatcharr,
             # the new program data will be available in StreamFlow
             try:
-                logger.info("Triggering EPG refresh after playlist update...")
+                logger.info("Triggering auto-create rule matching after playlist update...")
                 from scheduling_service import get_scheduling_service
                 scheduling_service = get_scheduling_service()
-                # Force refresh to bypass cache and get fresh EPG data
-                scheduling_service.fetch_epg_grid(force_refresh=True)
-                logger.info("EPG refresh completed successfully")
+                # Force matching to bypass cache and get fresh EPG data
+                scheduling_service.match_programs_to_rules()
+                logger.info("Rule matching completed successfully")
             except Exception as e:
-                logger.error(f"Error triggering EPG refresh after playlist update: {e}")
+                logger.error(f"Error triggering rule matching after playlist update: {e}")
                 # Continue even if EPG refresh fails
             
             # Get streams after refresh - log this one since it shows the final result

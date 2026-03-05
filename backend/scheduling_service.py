@@ -43,8 +43,7 @@ class SchedulingService:
     def __init__(self):
         """Initialize the scheduling service."""
         self._lock = threading.Lock()
-        self._epg_cache: List[Dict[str, Any]] = []
-        self._epg_cache_time: Optional[datetime] = None
+        self._epg_cache: Dict[str, Dict[str, Any]] = {}
         self._config = self._load_config()
         self._scheduled_events = self._load_scheduled_events()
         self._auto_create_rules = self._load_auto_create_rules()
@@ -170,93 +169,122 @@ class SchedulingService:
         """
         return os.getenv("DISPATCHARR_TOKEN")
     
-    def fetch_epg_grid(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Fetch EPG grid data from Dispatcharr API with caching.
+    def fetch_channel_programs_from_api(self, tvg_id: str, hours_ahead: int = 24, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Fetch EPG programs for a specific channel from Dispatcharr API.
         
         Args:
+            tvg_id: TVG ID of the channel
+            hours_ahead: Number of hours ahead to fetch
             force_refresh: If True, bypass cache and fetch fresh data
             
         Returns:
             List of program dictionaries
         """
-        programs_copy = []  # Initialize to ensure it's always defined
-        
+        if not tvg_id:
+            return []
+            
+        # Check cache
         with self._lock:
-            # Check cache
-            if not force_refresh and self._epg_cache and self._epg_cache_time:
-                cache_age = datetime.now() - self._epg_cache_time
+            cached_data = self._epg_cache.get(tvg_id)
+            if not force_refresh and cached_data:
+                cache_age = datetime.now() - cached_data['time']
                 refresh_interval = timedelta(minutes=self._config.get('epg_refresh_interval_minutes', 60))
                 
                 if cache_age < refresh_interval:
-                    logger.debug(f"Returning cached EPG data (age: {cache_age})")
-                    return self._epg_cache.copy()
+                    return cached_data['programs'].copy()
+                    
+        # Fetch fresh data
+        base_url = self._get_base_url()
+        if not base_url:
+            logger.error("Missing Dispatcharr configuration (base_url)")
+            return []
             
-            # Fetch fresh data
-            base_url = self._get_base_url()
+        try:
+            # Prepare time filters
+            now = datetime.now(timezone.utc)
+            start_time = (now - timedelta(hours=1)).isoformat()
+            end_time = (now + timedelta(hours=hours_ahead)).isoformat()
             
-            if not base_url:
-                logger.error("Missing Dispatcharr configuration (base_url)")
+            # Using /api/epg/programs/ with filters
+            url = f"{base_url}/api/epg/programs/?tvg_id={tvg_id}&start_time__gte={start_time}&start_time__lte={end_time}&limit=100"
+            logger.debug(f"Fetching EPG programs for TVG ID {tvg_id}")
+            
+            data = fetch_data_from_url(url)
+            if data is None:
+                logger.error(f"Failed to fetch EPG programs for TVG ID {tvg_id}")
+                return []
+                
+            programs = []
+            if isinstance(data, list):
+                programs = data
+            elif isinstance(data, dict):
+                programs = data.get('results', data.get('data', data.get('programs', [])))
+                if not isinstance(programs, list):
+                    programs = []
+            
+            valid_programs = [p for p in programs if isinstance(p, dict)]
+            
+            # Update cache
+            with self._lock:
+                self._epg_cache[tvg_id] = {
+                    'time': datetime.now(),
+                    'programs': valid_programs
+                }
+                
+            return valid_programs.copy()
+            
+        except Exception as e:
+            logger.error(f"Error fetching EPG programs for {tvg_id}: {e}")
+            with self._lock:
+                cached_data = self._epg_cache.get(tvg_id)
+                if cached_data:
+                    return cached_data['programs'].copy()
+            return []
+
+    def fetch_epg_grid(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Fetch EPG grid data from Dispatcharr API.
+        
+        Args:
+            force_refresh: Parameter kept for compatibility, ignored.
+            
+        Returns:
+            List of program dictionaries
+        """
+        # Fetch fresh data
+        base_url = self._get_base_url()
+        
+        if not base_url:
+            logger.error("Missing Dispatcharr configuration (base_url)")
+            return []
+        
+        try:
+            url = f"{base_url}/api/epg/grid/"
+            logger.info(f"Fetching global EPG grid data from {url}")
+            
+            data = fetch_data_from_url(url)
+            if data is None:
+                logger.error("Failed to fetch EPG grid data")
                 return []
             
-            try:
-                url = f"{base_url}/api/epg/grid/"
-                logger.info(f"Fetching EPG grid data from {url}")
-                
-                data = fetch_data_from_url(url)
-                if data is None:
-                    logger.error("Failed to fetch EPG grid data")
-                    return []
-                
-                # Handle different response formats from Dispatcharr API
-                # According to swagger, it should be an array, but handle edge cases
-                if isinstance(data, list):
-                    programs = data
-                elif isinstance(data, dict):
-                    # If wrapped in an object, try to extract the array
-                    # Common keys: results, data, programs
-                    programs = data.get('results', data.get('data', data.get('programs', [])))
-                    if not isinstance(programs, list):
-                        logger.error(f"Unexpected EPG grid response format: {type(data)}, keys: {data.keys() if isinstance(data, dict) else 'N/A'}")
-                        programs = []
-                else:
-                    logger.error(f"Unexpected EPG grid response type: {type(data)}")
+            if isinstance(data, list):
+                programs = data
+            elif isinstance(data, dict):
+                programs = data.get('results', data.get('data', data.get('programs', [])))
+                if not isinstance(programs, list):
                     programs = []
-                
-                # Validate that programs is a list of dictionaries
-                if programs:
-                    # Filter out any non-dict items
-                    valid_programs = [p for p in programs if isinstance(p, dict)]
-                    if len(valid_programs) != len(programs):
-                        logger.warning(f"Filtered out {len(programs) - len(valid_programs)} invalid program entries")
-                    programs = valid_programs
-                
-                logger.info(f"Fetched {len(programs)} programs from EPG grid")
-                
-                # Update cache
-                self._epg_cache = programs
-                self._epg_cache_time = datetime.now()
-                
-                # Copy programs before releasing lock
-                programs_copy = programs.copy()
-                
-            except Exception as e:
-                logger.error(f"Error fetching EPG grid: {e}")
-                # Return cached data if available, even if stale
-                if self._epg_cache:
-                    logger.warning("Returning stale cached EPG data due to fetch error")
-                    programs_copy = self._epg_cache.copy()
-                # programs_copy is already initialized to [] at the start
-        
-        # Match outside the lock to avoid deadlock
-        try:
-            self.match_programs_to_rules()
+            else:
+                programs = []
+            
+            valid_programs = [p for p in programs if isinstance(p, dict)]
+            logger.info(f"Fetched {len(valid_programs)} programs from EPG grid")
+            return valid_programs
+            
         except Exception as e:
-            logger.error(f"Error matching programs to rules: {e}", exc_info=True)
-        
-        return programs_copy
+            logger.error(f"Error fetching global EPG grid: {e}")
+            return []
     
     def get_programs_by_channel(self, channel_id: int, tvg_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get programs for a specific channel from cached EPG data.
+        """Get programs for a specific channel from Dispatcharr API.
         
         Args:
             channel_id: Channel ID
@@ -265,12 +293,6 @@ class SchedulingService:
         Returns:
             List of program dictionaries
         """
-        # Get EPG data (from cache or fetch if needed)
-        programs = self.fetch_epg_grid()
-        
-        if not programs:
-            return []
-        
         # Get channel from UDI to get its tvg_id if not provided
         if not tvg_id:
             udi = get_udi_manager()
@@ -281,11 +303,11 @@ class SchedulingService:
         if not tvg_id:
             logger.warning(f"No TVG ID found for channel {channel_id}")
             return []
+            
+        # Get EPG data 
+        channel_programs = self.fetch_channel_programs_from_api(tvg_id)
         
-        # Filter programs by tvg_id - ensure we only process dictionaries
-        channel_programs = [p for p in programs if isinstance(p, dict) and p.get('tvg_id') == tvg_id]
-        
-        # Sort by start time
+        # Sort by start time just in case
         channel_programs.sort(key=lambda p: p.get('start_time', ''))
         
         logger.debug(f"Found {len(channel_programs)} programs for channel {channel_id} (tvg_id: {tvg_id})")
@@ -883,9 +905,8 @@ class SchedulingService:
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
                 try:
-                    # Ensure EPG data is fetched before matching
-                    self.fetch_epg_grid()
-                    # Note: fetch_epg_grid already calls match_programs_to_rules at the end
+                    # Run matching for the newly created rule
+                    self.match_programs_to_rules()
                 except Exception as e:
                     logger.error(f"Error matching programs to rules in background: {e}", exc_info=True)
             
@@ -1128,12 +1149,15 @@ class SchedulingService:
         logger.debug(f"Regex '{regex_pattern}' matched {len(matching_programs)} programs for channel {channel_id}")
         return matching_programs
     
-    def match_programs_to_rules(self) -> Dict[str, Any]:
+    def match_programs_to_rules(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Match EPG programs to auto-create rules and create/update scheduled events.
         
+        Args:
+            force_refresh: If True, bypass channel EPG cache and fetch fresh programs
+        
         This method:
-        1. Scans all programs in EPG cache
-        2. For each rule, finds matching programs
+        1. Scans all rules for their targeted channels
+        2. Fetches matching programs per channel on demand
         3. Creates new events for programs not yet scheduled
         4. Updates existing events if program name or time changed
         
@@ -1148,7 +1172,6 @@ class SchedulingService:
             
             # Make copies of the data we need to avoid holding lock during processing
             rules_snapshot = self._auto_create_rules.copy()
-            epg_cache_snapshot = self._epg_cache.copy()
         
         # Now process outside the lock
         created_count = 0
@@ -1159,17 +1182,8 @@ class SchedulingService:
         events_to_add = []
         events_to_update = []
         
-        # Pre-group programs by tvg_id for efficient lookup (performance optimization)
-        programs_by_tvg_id = defaultdict(list)
-        for program in epg_cache_snapshot:
-            if isinstance(program, dict):
-                tvg_id = program.get('tvg_id')
-                if tvg_id:
-                    programs_by_tvg_id[tvg_id].append(program)
-        
-        # Sort programs by start time for each channel
-        for tvg_id in programs_by_tvg_id:
-            programs_by_tvg_id[tvg_id].sort(key=lambda p: p.get('start_time', ''))
+        # Fetch EPG programs dynamically for needed tvg_ids
+        programs_by_tvg_id = {}
         
         for rule in rules_snapshot:
             # Support both old format (channel_id) and new format (channel_ids + channel_group_ids)
@@ -1227,7 +1241,12 @@ class SchedulingService:
                     logger.warning(f"Rule {rule.get('id')} channel {channel_id} has no TVG ID, skipping")
                     continue
                 
-                # Get programs for this channel from the pre-grouped dictionary
+                # Get programs for this channel dynamically (with local caching across rules)
+                if tvg_id not in programs_by_tvg_id:
+                    fetched_programs = self.fetch_channel_programs_from_api(tvg_id, force_refresh=force_refresh)
+                    fetched_programs.sort(key=lambda p: p.get('start_time', ''))
+                    programs_by_tvg_id[tvg_id] = fetched_programs
+                    
                 programs = programs_by_tvg_id.get(tvg_id, [])
                 
                 for program in programs:
