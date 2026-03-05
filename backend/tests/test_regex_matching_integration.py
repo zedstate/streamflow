@@ -121,8 +121,10 @@ class TestRegexMatchingIntegration(unittest.TestCase):
         """Test that events are created when matching is called directly."""
         # Pre-populate EPG cache and create a rule
         with self.service._lock:
-            self.service._epg_cache = self.mock_programs.copy()
-            self.service._epg_cache_time = datetime.now()
+            self.service._epg_cache['test-channel-1'] = {
+                'time': datetime.now(),
+                'programs': self.mock_programs.copy()
+            }
             self.service._auto_create_rules = [{
                 'id': 'test-rule-1',
                 'name': 'Breaking News Alert',
@@ -148,8 +150,10 @@ class TestRegexMatchingIntegration(unittest.TestCase):
         """Test that match_programs_to_rules completes without deadlock."""
         # Pre-populate EPG cache and rules
         with self.service._lock:
-            self.service._epg_cache = self.mock_programs.copy()
-            self.service._epg_cache_time = datetime.now()
+            self.service._epg_cache['test-channel-1'] = {
+                'time': datetime.now(),
+                'programs': self.mock_programs.copy()
+            }
             self.service._auto_create_rules = [{
                 'id': 'test-rule-1',
                 'name': 'Test Rule',
@@ -172,23 +176,12 @@ class TestRegexMatchingIntegration(unittest.TestCase):
     def test_concurrent_access_no_deadlock(self):
         """Test that concurrent access to the service doesn't cause deadlock."""
         with self.service._lock:
-            self.service._epg_cache = self.mock_programs.copy()
-            self.service._epg_cache_time = datetime.now()
+            self.service._epg_cache['test-channel-1'] = {
+                'time': datetime.now(),
+                'programs': self.mock_programs.copy()
+            }
         
         errors = []
-        
-        def create_rule():
-            try:
-                rule_data = {
-                    'name': 'Test Rule',
-                    'channel_id': 1,
-                    'regex_pattern': '^Breaking News',
-                    'minutes_before': 5
-                }
-                with patch('scheduling_service.fetch_data_from_url'):
-                    self.service.create_auto_create_rule(rule_data)
-            except Exception as e:
-                errors.append(e)
         
         def match_programs():
             try:
@@ -212,6 +205,60 @@ class TestRegexMatchingIntegration(unittest.TestCase):
         # Check no errors occurred
         if errors:
             self.fail(f"Errors occurred: {errors}")
+
+    def test_prevents_cross_channel_leakage(self):
+        """Test that programs from other channels (returned by API) are not leaked into the current channel."""
+        # Define 2 channels
+        channel1 = {'id': 1, 'name': 'Channel 1', 'tvg_id': 'tvg-1'}
+        channel2 = {'id': 2, 'name': 'Channel 2', 'tvg_id': 'tvg-2'}
+        
+        # Mock UDI to return these channels
+        def get_channel(cid):
+            if cid == 1: return channel1
+            if cid == 2: return channel2
+            return None
+        self.mock_udi.return_value.get_channel_by_id.side_effect = get_channel
+        
+        # Mixed API response (simulating Dispatcharr returning extra data)
+        now = datetime.now(timezone.utc)
+        mixed_programs = [
+            {
+                'title': 'Correct Match Channel 1',
+                'start_time': (now + timedelta(hours=1)).isoformat(),
+                'end_time': (now + timedelta(hours=2)).isoformat(),
+                'tvg_id': 'tvg-1'
+            },
+            {
+                'title': 'Foreign Match Channel 2',
+                'start_time': (now + timedelta(hours=1)).isoformat(),
+                'end_time': (now + timedelta(hours=2)).isoformat(),
+                'tvg_id': 'tvg-2'
+            }
+        ]
+        
+        # Create a rule specifically for Channel 1
+        with self.service._lock:
+            self.service._auto_create_rules = [{
+                'id': 'rule-1',
+                'name': 'Match All',
+                'channel_id': 1,
+                'regex_pattern': 'Match',
+                'minutes_before': 0
+            }]
+            
+        # Mock the API fetch to return the mixed list
+        with patch('scheduling_service.fetch_data_from_url', return_value=mixed_programs):
+            # Run matching
+            self.service.match_programs_to_rules(force_refresh=True)
+            
+        # Verify results
+        events = self.service.get_scheduled_events()
+        
+        # IMPORTANT: Should only have ONE event, and it MUST be for Channel 1
+        self.assertEqual(len(events), 1, "Should have only created 1 event despite multiple API matches")
+        self.assertEqual(events[0]['channel_id'], 1)
+        self.assertEqual(events[0]['program_title'], 'Correct Match Channel 1')
+        self.assertNotEqual(events[0]['program_title'], 'Foreign Match Channel 2')
 
 
 if __name__ == '__main__':

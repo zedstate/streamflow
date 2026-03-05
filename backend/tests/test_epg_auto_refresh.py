@@ -124,12 +124,9 @@ class TestEPGAutoRefresh(unittest.TestCase):
                         self.assertEqual(len(events), 0, "No events should exist initially")
                         
                         # Call fetch_epg_grid (this is what the EPG refresh processor does)
-                        programs = service.fetch_epg_grid(force_refresh=True)
+                        service.fetch_epg_grid(force_refresh=True)
                         
-                        # Verify EPG data was fetched
-                        self.assertEqual(len(programs), 3, "Should have fetched 3 programs")
-                        
-                        # Verify events were created
+                        # Verify events were created (this confirms EPG data was fetched and processed)
                         events = service.get_scheduled_events()
                         self.assertEqual(len(events), 2, "Should have created 2 events for matching programs")
                         

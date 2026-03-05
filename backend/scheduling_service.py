@@ -222,7 +222,9 @@ class SchedulingService:
                 if not isinstance(programs, list):
                     programs = []
             
-            valid_programs = [p for p in programs if isinstance(p, dict)]
+            # Strictly filter by the requested tvg_id to avoid cross-channel leakage
+            # even if the API returns extraneous results
+            valid_programs = [p for p in programs if isinstance(p, dict) and p.get('tvg_id') == tvg_id]
             
             # Update cache
             with self._lock:
@@ -242,46 +244,20 @@ class SchedulingService:
             return []
 
     def fetch_epg_grid(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Fetch EPG grid data from Dispatcharr API.
+        """Fetch EPG grid data from Dispatcharr API and trigger matching.
+        
+        Note: This is now a wrapper around match_programs_to_rules to maintain
+        compatibility with legacy code and tests.
         
         Args:
-            force_refresh: Parameter kept for compatibility, ignored.
+            force_refresh: If True, bypass channel EPG cache and fetch fresh programs
             
         Returns:
-            List of program dictionaries
+            Empty list (as programs are now fetched per-channel on demand)
         """
-        # Fetch fresh data
-        base_url = self._get_base_url()
-        
-        if not base_url:
-            logger.error("Missing Dispatcharr configuration (base_url)")
-            return []
-        
-        try:
-            url = f"{base_url}/api/epg/grid/"
-            logger.info(f"Fetching global EPG grid data from {url}")
-            
-            data = fetch_data_from_url(url)
-            if data is None:
-                logger.error("Failed to fetch EPG grid data")
-                return []
-            
-            if isinstance(data, list):
-                programs = data
-            elif isinstance(data, dict):
-                programs = data.get('results', data.get('data', data.get('programs', [])))
-                if not isinstance(programs, list):
-                    programs = []
-            else:
-                programs = []
-            
-            valid_programs = [p for p in programs if isinstance(p, dict)]
-            logger.info(f"Fetched {len(valid_programs)} programs from EPG grid")
-            return valid_programs
-            
-        except Exception as e:
-            logger.error(f"Error fetching global EPG grid: {e}")
-            return []
+        logger.info("Triggering EPG refresh and rule matching")
+        self.match_programs_to_rules(force_refresh=force_refresh)
+        return []
     
     def get_programs_by_channel(self, channel_id: int, tvg_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get programs for a specific channel from Dispatcharr API.
