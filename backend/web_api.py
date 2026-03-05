@@ -105,9 +105,11 @@ class StreamProxy:
         self.thread = None
         self.last_client_time = None
         self.LINGER_SECONDS = 60
+        self.last_drop_log_time = 0
 
     def add_client(self):
-        q = queue.Queue(maxsize=200) # Buffer for about 2-3 seconds of stream
+        # Buffer for about 3-5 seconds of stream at typical bitrates (2000 packets)
+        q = queue.Queue(maxsize=2000) 
         with self.lock:
             self.clients.append(q)
             if not self.running:
@@ -183,6 +185,11 @@ class StreamProxy:
                                 # we just push to all clients.
                                 q.put_nowait(data)
                             except queue.Full:
+                                # Log packet drops at most once every 5 seconds per stream
+                                now = time.time()
+                                if now - self.last_drop_log_time > 5:
+                                    logger.warning(f"Shared proxy for {self.stream_id} is dropping packets (queue full). Client processing too slow.")
+                                    self.last_drop_log_time = now
                                 pass # Drop data for this specific slow neighbor
         except Exception as e:
             logger.error(f"UDP listener error for stream {self.stream_id}: {e}")
