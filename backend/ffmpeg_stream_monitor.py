@@ -106,13 +106,13 @@ class FFmpegStreamMonitor:
                 
                 if self.port_a and self.port_b and self.port_viewer:
                     # Duplicate to two local UDP ports + null output for stats
-                    # We use the 'fifo' pseudo-muxer to decouple network sending from the main thread.
-                    # Setting drop_pkts_on_overflow=1 ensures FFmpeg drops UDP packets instead of blocking
-                    # the main quality evaluation loop when periodic screenshot consumers are inactive.
+                    # port_a & port_b use 'fifo' pseudo-muxer for sidecar processes
+                    # port_viewer uses direct mpegts to avoid startup artifacts for the browser proxy
                     cmd.extend([
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
-                        '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_viewer}',
+                        # Specific mapping for viewer (v+a) to ensure mpegts.js compatibility
+                        '-map', '0:v', '-map', '0:a?', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{self.port_viewer}?pkt_size=1316',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:

@@ -149,6 +149,9 @@ class StreamProxy:
                         with self.lock:
                             for q in self.clients:
                                 try:
+                                    # Optimization: If this is the very first packet after a client joined,
+                                    # we might want to ensure it's a fresh sync byte, but for now 
+                                    # we just push to all clients.
                                     q.put_nowait(data)
                                 except queue.Full:
                                     pass # Drop data for this specific slow neighbor
@@ -5190,7 +5193,7 @@ def stream_proxy_url(stream_id):
         finally:
             proxy.remove_client(q)
 
-    return Response(generate(), mimetype='video/MP2T')
+    return Response(generate(), mimetype='video/mp2t')
 
 
 @app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
