@@ -1077,8 +1077,9 @@ function LiveStreamsGrid({ streams, sessionId }) {
     // Import hls.js once for all stream players
     const loadHls = async () => {
       try {
-        const Hls = await import('hls.js');
-        setHlsLib(() => Hls.default);
+        const HlsModule = await import('hls.js');
+        const Hls = HlsModule.default || HlsModule;
+        setHlsLib(() => Hls);
         setLoading(false);
       } catch (err) {
         console.error('Failed to load hls.js:', err);
@@ -1161,6 +1162,13 @@ function LiveStreamPlayer({ stream, hlsLib }) {
         // Clean up any existing player before creating a new one
         cleanupPlayer();
 
+        // Debug: Log the hlsLib shape if it seems wrong
+        if (hlsLib && typeof hlsLib !== 'function' && !hlsLib.isSupported) {
+          console.error('hlsLib is not a constructor or lacks isSupported:', hlsLib);
+          setError('HLS library configuration error');
+          return;
+        }
+
         // 1. Check for native HLS support (Safari)
         if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
           videoRef.current.src = streamUrl;
@@ -1171,7 +1179,7 @@ function LiveStreamPlayer({ stream, hlsLib }) {
           });
         }
         // 2. Use hls.js for other browsers (Chrome, Firefox)
-        else if (hlsLib.isSupported()) {
+        else if (hlsLib.isSupported && hlsLib.isSupported()) {
           const hls = new hlsLib({
             enableWorker: true,
             lowLatencyMode: true,
@@ -1184,8 +1192,12 @@ function LiveStreamPlayer({ stream, hlsLib }) {
             levelLoadingMaxRetry: 10,
           });
 
-          hls.loadSource(streamUrl);
+          // Correct HLS.js sequence: attach then load
           hls.attachMediaElement(videoRef.current);
+
+          hls.on(hlsLib.Events.MEDIA_ATTACHED, () => {
+            hls.loadSource(streamUrl);
+          });
 
           hls.on(hlsLib.Events.MANIFEST_PARSED, () => {
             videoRef.current.play().catch(err => {
@@ -1196,8 +1208,15 @@ function LiveStreamPlayer({ stream, hlsLib }) {
           hls.on(hlsLib.Events.ERROR, (event, data) => {
             if (data.fatal) {
               console.error('Fatal HLS error:', data.type, data.details);
-              setError(`Stream error: ${data.details}`);
-              cleanupPlayer();
+              // Only set error if it's truly unrecoverable
+              if (data.type === hlsLib.ErrorTypes.NETWORK_ERROR) {
+                hls.startLoad();
+              } else if (data.type === hlsLib.ErrorTypes.MEDIA_ERROR) {
+                hls.recoverMediaError();
+              } else {
+                setError(`Stream error: ${data.details}`);
+                cleanupPlayer();
+              }
             }
           });
 
@@ -1207,7 +1226,7 @@ function LiveStreamPlayer({ stream, hlsLib }) {
         }
       } catch (err) {
         console.error('Failed to initialize HLS player:', err);
-        setError('Failed to initialize player');
+        setError(`Failed to initialize player: ${err.message}`);
       }
     };
 
