@@ -1210,13 +1210,13 @@ function LiveStreamPlayer({ stream, hlsLib }) {
           });
 
           // Defensive check on the instance
-          if (typeof hls.attachMediaElement !== 'function') {
-            console.error('Created HLS instance is missing methods. hlsLib:', hlsLib, 'instance:', hls);
-            throw new Error('HLS instance initialization failed');
+          if (typeof hls.attachMedia !== 'function') {
+            console.error('Created HLS instance is missing attachMedia. hlsLib:', hlsLib, 'instance:', hls);
+            throw new Error('HLS instance initialization failed: missing attachMedia');
           }
 
           // Correct HLS.js sequence: attach then load
-          hls.attachMediaElement(videoRef.current);
+          hls.attachMedia(videoRef.current);
 
           hls.on(hlsLib.Events.MEDIA_ATTACHED, () => {
             hls.loadSource(streamUrl);
