@@ -99,6 +99,8 @@ class FFmpegStreamMonitor:
                 cmd = [
                     'ffmpeg',
                     '-hide_banner', # Reduce log spam
+                    '-fflags', '+genpts', # Regenerate timestamps
+                    '-avoid_negative_ts', 'make_zero', # Cleaner startup timestamps
                     '-nostdin',     # Disable interactive stdin
                     '-i', self.url,
                     '-c', 'copy',  # Copy codec (no re-encoding)
@@ -107,12 +109,16 @@ class FFmpegStreamMonitor:
                 if self.port_a and self.port_b and self.port_viewer:
                     # Duplicate to two local UDP ports + null output for stats
                     # port_a & port_b use 'fifo' pseudo-muxer for sidecar processes
-                    # port_viewer uses direct mpegts to avoid startup artifacts for the browser proxy
+                    # port_viewer uses direct mpegts with stabilization for Firefox/MSE
                     cmd.extend([
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
-                        # Specific mapping for viewer (v+a) to ensure mpegts.js compatibility
-                        '-map', '0:v', '-map', '0:a?', '-c', 'copy', '-f', 'mpegts', f'udp://127.0.0.1:{self.port_viewer}?pkt_size=1316',
+                        # Stabilization for viewer (v+a) to ensure mpegts.js / Firefox compatibility:
+                        # +resend_headers: ensures new clients get PAT/PMT immediately
+                        # +initial_discontinuity: tells decoder to expect non-zero start
+                        '-map', '0:v', '-map', '0:a?', '-c', 'copy', 
+                        '-f', 'mpegts', '-mpegts_flags', '+resend_headers+initial_discontinuity',
+                        f'udp://127.0.0.1:{self.port_viewer}?pkt_size=1316',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:

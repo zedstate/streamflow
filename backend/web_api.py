@@ -4816,8 +4816,7 @@ def get_stream_session(session_id):
                     remaining = max(0, review_limit - time_in_review)
                     stream_dict['review_time_remaining'] = remaining
                 
-                if stream_dict['current_speed'] >= 1.0:
-                    streams_data.append(stream_dict)
+                streams_data.append(stream_dict)
         
         # Sort streams to match Dispatcharr channel order
         # This ensures the frontend sees the exact same order as Dispatcharr
