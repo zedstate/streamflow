@@ -99,9 +99,7 @@ class FFmpegStreamMonitor:
                 cmd = [
                     'ffmpeg',
                     '-hide_banner', # Reduce log spam
-                    '-reorder_queue_size', '4096', # Better handling of out-of-order packets
-                    '-fflags', '+genpts+nobuffer', # Regenerate timestamps and reduce latency
-                    '-avoid_negative_ts', 'make_zero', # Cleaner startup timestamps
+                    '-fflags', '+genpts', # Regenerate timestamps (keep as input flag)
                     '-nostdin',     # Disable interactive stdin
                     '-i', self.url,
                 ]
@@ -114,10 +112,10 @@ class FFmpegStreamMonitor:
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
                         # Stabilization for viewer (v+a) to ensure mpegts.js / Firefox compatibility:
-                        # -c:a aac + aresample=async=1: Fixes "Large audio timestamp gap" by regenerating audio samples
                         '-map', '0:v', '-map', '0:a?', 
                         '-c:v', 'copy', 
                         '-c:a', 'aac', '-ac', '2', '-ar', '44100', '-af', 'aresample=async=1',
+                        '-avoid_negative_ts', 'make_zero',
                         '-f', 'mpegts', '-mpegts_flags', '+resend_headers+initial_discontinuity',
                         f'udp://127.0.0.1:{self.port_viewer}',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
