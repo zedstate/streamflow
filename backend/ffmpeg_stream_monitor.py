@@ -6,7 +6,9 @@ quality assessment without significant resource usage.
 """
 
 import logging
+import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -16,6 +18,9 @@ from typing import Optional, Callable
 from logging_config import setup_logging
 
 logger = setup_logging(__name__)
+
+# Constants for HLS
+HLS_ROOT = "/tmp/streamflow_hls"
 
 # Constants for bitrate calculation
 BITS_PER_BYTE = 8
@@ -69,7 +74,10 @@ class FFmpegStreamMonitor:
         if stream_id is not None:
             self.port_a = 10000 + stream_id
             self.port_b = 20000 + stream_id
-            self.port_viewer = 30000 + stream_id
+        # HLS Configuration
+        self.hls_dir = None
+        if stream_id is not None:
+            self.hls_dir = os.path.join(HLS_ROOT, f"stream_{stream_id}")
         
         self._process: Optional[subprocess.Popen] = None
         self._monitor_thread: Optional[threading.Thread] = None
@@ -104,21 +112,35 @@ class FFmpegStreamMonitor:
                     '-i', self.url,
                 ]
                 
-                if self.port_a and self.port_b and self.port_viewer:
-                    # Duplicate to two local UDP ports + null output for stats
-                    # port_a & port_b use 'fifo' pseudo-muxer for sidecar processes
-                    # port_viewer uses direct mpegts with stabilization for Firefox/MSE
+                if self.port_a and self.port_b and self.hls_dir:
+                    # 1. Ensure HLS directory exists and is clean
+                    if os.path.exists(self.hls_dir):
+                        shutil.rmtree(self.hls_dir)
+                    os.makedirs(self.hls_dir, exist_ok=True)
+                    
+                    hls_playlist = os.path.join(self.hls_dir, "playlist.m3u8")
+                    
+                    # Duplicate to:
+                    # - two local UDP ports (port_a & port_b) for sidecar processes
+                    # - HLS output for stable web preview
+                    # - null output for stats
                     cmd.extend([
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
-                        # Stabilization for viewer (v+a) to ensure mpegts.js / Firefox compatibility:
+                        
+                        # HLS Output for Web Preview
                         '-map', '0:v', '-map', '0:a?', 
                         '-c:v', 'copy', 
                         '-c:a', 'aac', '-ac', '2', '-ar', '44100', '-af', 'aresample=async=1',
                         '-avoid_negative_ts', 'make_zero',
-                        '-f', 'mpegts', '-mpegts_flags', '+resend_headers+initial_discontinuity',
-                        '-flush_packets', '1',
-                        f'udp://127.0.0.1:{self.port_viewer}?pkt_size=1316',
+                        '-f', 'hls',
+                        '-hls_time', '1',          # 1-second segments for low latency
+                        '-hls_list_size', '6',     # Keep 6 segments in playlist
+                        '-hls_flags', 'delete_segments+append_list+independent_segments',
+                        '-hls_segment_type', 'mpegts',
+                        '-hls_segment_filename', os.path.join(self.hls_dir, "seg_%d.ts"),
+                        hls_playlist,
+                        
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:
@@ -212,6 +234,13 @@ class FFmpegStreamMonitor:
                     logger.error(f"Error stopping FFmpeg process: {e}")
                 finally:
                     self._process = None
+            
+            # Cleanup HLS directory
+            if self.hls_dir and os.path.exists(self.hls_dir):
+                try:
+                    shutil.rmtree(self.hls_dir)
+                except Exception as e:
+                    logger.error(f"Error cleaning up HLS directory {self.hls_dir}: {e}")
             
             self.stats.is_alive = False
             

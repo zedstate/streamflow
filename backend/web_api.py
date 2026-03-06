@@ -75,6 +75,8 @@ DEAD_STREAMS_MAX_PER_PAGE = 100
 EPG_REFRESH_INITIAL_DELAY_SECONDS = 5  # Delay before first EPG refresh
 EPG_REFRESH_ERROR_RETRY_SECONDS = 300  # Retry interval after errors (5 minutes)
 THREAD_SHUTDOWN_TIMEOUT_SECONDS = 5  # Timeout for graceful thread shutdown
+# HLS Constants
+HLS_ROOT = "/tmp/streamflow_hls"
 
 # Initialize Flask app with static file serving
 # Note: static_folder set to None to disable Flask's built-in static route
@@ -5193,7 +5195,7 @@ def get_playing_streams():
 
 @app.route('/api/stream-viewer/<int:stream_id>', methods=['GET'])
 def get_stream_viewer_url(stream_id):
-    """Get the stream's direct URL for live viewing in browser."""
+    """Get the stream's direct HLS URL for live viewing in browser."""
     try:
         udi = get_udi_manager()
         stream = udi.get_stream_by_id(stream_id)
@@ -5204,10 +5206,9 @@ def get_stream_viewer_url(stream_id):
                 'error': f'Stream {stream_id} not found'
             }), 404
         
-        # Route to the local internal UDP-to-HTTP proxy
-        # Use absolute URL because mpegts.js fetch in Worker requires it
+        # Use absolute URL for the HLS manifest
         base_url = request.host_url.rstrip('/')
-        stream_url = f"{base_url}/api/stream/proxy/{stream_id}"
+        stream_url = f"{base_url}/api/stream/hls/{stream_id}/playlist.m3u8"
         
         return jsonify({
             'success': True,
@@ -5216,11 +5217,22 @@ def get_stream_viewer_url(stream_id):
             'stream_name': stream.get('name', 'Unknown')
         })
     except Exception as e:
-        logger.error(f"Error getting stream viewer URL for stream {stream_id}: {e}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        logger.error(f"Error getting stream viewer URL: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream/hls/<int:stream_id>/<filename>', methods=['GET'])
+def serve_hls_file(stream_id, filename):
+    """Serve HLS playlists and segments from the temporary HLS storage."""
+    # Ensure filename is safe (though Flask does some validation)
+    filename = secure_filename(filename)
+    stream_hls_dir = os.path.join(HLS_ROOT, f"stream_{stream_id}")
+    
+    # Check if directory exists
+    if not os.path.exists(stream_hls_dir):
+        return jsonify({"error": "Stream session not found or expired"}), 404
+        
+    return send_from_directory(stream_hls_dir, filename)
 
 
 @app.route('/api/stream/proxy/<int:stream_id>', methods=['GET'])

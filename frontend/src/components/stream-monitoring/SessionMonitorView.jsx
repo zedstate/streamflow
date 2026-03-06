@@ -1068,28 +1068,25 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
 }
 
 // Screenshot Dialog Component  
-// LiveStreamsGrid Component with mpegts.js support
+// LiveStreamsGrid Component with hls.js support
 function LiveStreamsGrid({ streams, sessionId }) {
-  const [mpegtsLib, setMpegtsLib] = React.useState(null);
+  const [hlsLib, setHlsLib] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
 
   useEffect(() => {
-    // Import mpegts.js once for all stream players
-    const loadMpegts = async () => {
+    // Import hls.js once for all stream players
+    const loadHls = async () => {
       try {
-        const mpegts = await import('mpegts.js');
-        if (!mpegts.default.isSupported()) {
-          console.error('Browser does not support MPEG-TS playback');
-        }
-        setMpegtsLib(mpegts.default);
+        const Hls = await import('hls.js');
+        setHlsLib(Hls.default);
         setLoading(false);
       } catch (err) {
-        console.error('Failed to load mpegts.js:', err);
+        console.error('Failed to load hls.js:', err);
         setLoading(false);
       }
     };
 
-    loadMpegts();
+    loadHls();
   }, []);
 
   if (loading) {
@@ -1104,14 +1101,14 @@ function LiveStreamsGrid({ streams, sessionId }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {streams.map((stream) => (
-        <LiveStreamPlayer key={stream.stream_id} stream={stream} mpegtsLib={mpegtsLib} />
+        <LiveStreamPlayer key={stream.stream_id} stream={stream} hlsLib={hlsLib} />
       ))}
     </div>
   );
 }
 
-// Live Stream Player Component using mpegts.js
-function LiveStreamPlayer({ stream, mpegtsLib }) {
+// Live Stream Player Component using hls.js
+function LiveStreamPlayer({ stream, hlsLib }) {
   const videoRef = React.useRef(null);
   const playerRef = React.useRef(null);
   const [streamUrl, setStreamUrl] = React.useState(null);
@@ -1156,56 +1153,60 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
   }, [stream.stream_id]);
 
   useEffect(() => {
-    // Initialize mpegts.js player when stream URL is available
-    if (!streamUrl || !videoRef.current || !mpegtsLib) return;
+    // Initialize hls.js player when stream URL is available
+    if (!streamUrl || !videoRef.current || !hlsLib) return;
 
     const initPlayer = async () => {
       try {
         // Clean up any existing player before creating a new one
         cleanupPlayer();
 
-        if (!mpegtsLib.isSupported()) {
-          setError('Your browser does not support MPEG-TS playback');
-          return;
+        // 1. Check for native HLS support (Safari)
+        if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+          videoRef.current.src = streamUrl;
+          videoRef.current.addEventListener('loadedmetadata', () => {
+            videoRef.current.play().catch(err => {
+              console.warn('Autoplay blocked by browser:', err);
+            });
+          });
         }
+        // 2. Use hls.js for other browsers (Chrome, Firefox)
+        else if (hlsLib.isSupported()) {
+          const hls = new hlsLib({
+            enableWorker: true,
+            lowLatencyMode: true,
+            backBufferLength: 0,
+            maxBufferLength: 3,
+            maxMaxBufferLength: 5,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 10,
+            manifestLoadingMaxRetry: 10,
+            levelLoadingMaxRetry: 10,
+          });
 
-        // Create player
-        const player = mpegtsLib.createPlayer({
-          type: 'mpegts',
-          url: streamUrl,
-          isLive: true,
-        }, {
-          enableWorker: true,
-          enableStashBuffer: false, // Disable stash buffer to reduce latency and improve sync in Firefox
-          stashInitialSize: 128,    // Small initial buffer for faster startup
-          liveBufferLatencyChasing: true, // Keep close to the live edge to avoid buffer bloat
-          liveBufferLatencyMaxLatency: 3,
-          liveBufferLatencyMinLatency: 1,
-          autoCleanupSourceBuffer: true, // Automatically clean up old buffer data
-          accurateSeek: false,           // Faster seeking/recovery
-          seekType: 'range',
-        });
+          hls.loadSource(streamUrl);
+          hls.attachMediaElement(videoRef.current);
 
-        player.attachMediaElement(videoRef.current);
-        player.load();
+          hls.on(hlsLib.Events.MANIFEST_PARSED, () => {
+            videoRef.current.play().catch(err => {
+              console.warn('Autoplay blocked by browser:', err);
+            });
+          });
 
-        // Auto-play the stream
-        player.play().catch(err => {
-          console.warn('Autoplay blocked by browser - user interaction required. Click the video or unmute button to start playback:', err);
-        });
+          hls.on(hlsLib.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              console.error('Fatal HLS error:', data.type, data.details);
+              setError(`Stream error: ${data.details}`);
+              cleanupPlayer();
+            }
+          });
 
-        // Handle errors with retry capability
-        player.on(mpegtsLib.Events.ERROR, (errorType, errorDetail, errorInfo) => {
-          console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
-          setError('Stream playback error');
-
-          // Clean up the failed player
-          cleanupPlayer();
-        });
-
-        playerRef.current = player;
+          playerRef.current = hls;
+        } else {
+          setError('Your browser does not support HLS playback');
+        }
       } catch (err) {
-        console.error('Failed to initialize mpegts.js:', err);
+        console.error('Failed to initialize HLS player:', err);
         setError('Failed to initialize player');
       }
     };
@@ -1214,7 +1215,7 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
 
     // Cleanup on unmount or when dependencies change
     return cleanupPlayer;
-  }, [streamUrl, mpegtsLib, retryKey]);
+  }, [streamUrl, hlsLib, retryKey]);
 
   const handleRetry = () => {
     setError(null);
