@@ -540,7 +540,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
               </TabsContent>
 
               <TabsContent value="live">
-                <LiveStreamsGrid streams={activeStreams} sessionId={sessionId} />
+                <LiveStreamsGrid streams={activeStreams.filter(s => s.speed >= 1.0)} sessionId={sessionId} />
               </TabsContent>
             </Tabs>
           </CardContent>

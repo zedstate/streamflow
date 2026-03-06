@@ -42,8 +42,8 @@ SCREENSHOT_CHECK_INTERVAL = 5.0  # seconds - how often to check for screenshot n
 
 
 # Auto-quarantine thresholds
-SLOW_SPEED_THRESHOLD = 0.3  # Speed below this is considered too slow
-SLOW_SPEED_DURATION = 60.0  # seconds - how long to tolerate slow speed before quarantine
+SLOW_SPEED_THRESHOLD = 0.8  # Speed below this is considered too slow
+SLOW_SPEED_DURATION = 30.0  # seconds - how long to tolerate slow speed before quarantine
 
 # Stream switching thresholds
 SCORE_SWITCH_THRESHOLD = 10.0  # Points diff required to switch primary stream
