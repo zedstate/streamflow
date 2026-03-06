@@ -1078,11 +1078,28 @@ function LiveStreamsGrid({ streams, sessionId }) {
     const loadHls = async () => {
       try {
         const HlsModule = await import('hls.js');
-        const Hls = HlsModule.default || HlsModule;
+
+        // Robustly find the Hls constructor
+        let Hls = HlsModule.default;
+
+        // Handle various module formats (ESM default, named, or CJS export)
+        if (!Hls || (typeof Hls !== 'function' && !Hls.isSupported)) {
+          Hls = HlsModule.Hls || HlsModule;
+        }
+
+        // Final verification that we have something usable
+        if (typeof Hls !== 'function' && (!Hls || typeof Hls.isSupported !== 'function')) {
+          console.error('HLS constructor not found in module structure:', HlsModule);
+          setError('HLS library structure is invalid');
+          setLoading(false);
+          return;
+        }
+
         setHlsLib(() => Hls);
         setLoading(false);
       } catch (err) {
-        console.error('Failed to load hls.js:', err);
+        console.error('Failed to dynamic import hls.js:', err);
+        setError(`Failed to load player library: ${err.message}`);
         setLoading(false);
       }
     };
@@ -1191,6 +1208,12 @@ function LiveStreamPlayer({ stream, hlsLib }) {
             manifestLoadingMaxRetry: 10,
             levelLoadingMaxRetry: 10,
           });
+
+          // Defensive check on the instance
+          if (typeof hls.attachMediaElement !== 'function') {
+            console.error('Created HLS instance is missing methods. hlsLib:', hlsLib, 'instance:', hls);
+            throw new Error('HLS instance initialization failed');
+          }
 
           // Correct HLS.js sequence: attach then load
           hls.attachMediaElement(videoRef.current);
