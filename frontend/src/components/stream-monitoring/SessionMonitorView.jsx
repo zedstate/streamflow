@@ -1176,7 +1176,11 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
           isLive: true,
         }, {
           enableWorker: true,
-          lazyLoadMaxDuration: 3 * 60,
+          enableStashBuffer: false, // Disable stash buffer to reduce latency and improve sync in Firefox
+          stashInitialSize: 128,    // Small initial buffer for faster startup
+          liveBufferLatencyChasing: true, // Keep close to the live edge to avoid buffer bloat
+          liveBufferLatencyMaxLatency: 3,
+          liveBufferLatencyMinLatency: 1,
           seekType: 'range',
         });
 

@@ -2449,8 +2449,28 @@ class AutomatedStreamManager:
             run_results = {
                 'duration': duration_str,
                 'total_channels': channels_with_periods,
-                'periods': []
+                'periods': [],
+                'total_streams': 0,
+                'streams_analyzed': 0,
+                'dead_streams': 0,
+                'streams_revived': 0,
+                'added_streams': 0,
+                'removed_streams': 0,
+                'avg_bitrate': 'N/A',
+                'avg_resolution': 'N/A',
+                'avg_fps': 'N/A'
             }
+            
+            # Aggregate stats counters
+            agg_bitrates = []
+            agg_fps = []
+            agg_resolutions = []
+            total_streams_count = 0
+            streams_analyzed_count = 0
+            dead_streams_count = 0
+            revived_streams_count = 0
+            added_streams_count = 0
+            removed_streams_count = 0
             
             # Map channel IDs to their results
             val_map = {str(d['channel_id']): d for d in validation_details}
@@ -2489,40 +2509,60 @@ class AutomatedStreamManager:
                             }
                         })
                     
-                    # Step 2: Validation
                     if c_id in val_map:
                         v_detail = val_map[c_id]
+                        rem_count = v_detail.get('removed_count', 0)
+                        removed_streams_count += rem_count
                         steps.append({
                             'step': 'Validation',
                             'status': 'success',
                             'details': {
-                                'removed_count': v_detail.get('removed_count', 0),
+                                'removed_count': rem_count,
                                 'streams': v_detail.get('removed_streams', [])
                             }
                         })
                     
-                    # Step 3: Assignment
                     if c_id in assign_map:
                         a_detail = assign_map[c_id]
+                        add_count = a_detail.get('stream_count', 0)
+                        added_streams_count += add_count
                         steps.append({
                             'step': 'Assignment',
                             'status': 'success',
                             'details': {
-                                'added_count': a_detail.get('stream_count', 0),
+                                'added_count': add_count,
                                 'streams': a_detail.get('streams', [])
                             }
                         })
                     
-                    # Step 4: Quality Check
-                    # Check if we have results for this channel
                     if int(c_id) in check_results:
                         c_result = check_results[int(c_id)]
+                        ch_dead = c_result.get('dead_streams_count', 0)
+                        ch_revived = c_result.get('revived_streams_count', 0)
+                        ch_analyzed = len(c_result.get('checked_streams', []))
+                        
+                        dead_streams_count += ch_dead
+                        revived_streams_count += ch_revived
+                        streams_analyzed_count += ch_analyzed
+                        
+                        # Collect metrics for global averages
+                        from stream_stats_utils import parse_bitrate_value, parse_fps_value
+                        for s in c_result.get('checked_streams', []):
+                            br = parse_bitrate_value(s.get('bitrate'))
+                            if br: agg_bitrates.append(br)
+                            
+                            f = parse_fps_value(s.get('fps'))
+                            if f: agg_fps.append(f)
+                            
+                            res = s.get('resolution')
+                            if res and res != 'N/A': agg_resolutions.append(res)
+
                         steps.append({
                             'step': 'Quality Check',
                             'status': 'success' if c_result.get('error') is None else 'failed',
                             'details': {
-                                'dead_streams_count': c_result.get('dead_streams_count', 0),
-                                'revived_streams_count': c_result.get('revived_streams_count', 0),
+                                'dead_streams_count': ch_dead,
+                                'revived_streams_count': ch_revived,
                                 'skipped_streams_count': len(c_result.get('skipped_streams', [])),
                                 'dead_streams': c_result.get('dead_streams', []),
                                 'revived_streams': c_result.get('revived_streams', []),
@@ -2531,6 +2571,9 @@ class AutomatedStreamManager:
                                 'error': c_result.get('error')
                             }
                         })
+                        
+                        # Total streams count for this channel
+                        total_streams_count += len(channel.get('streams', []))
                     
                     # Filter out channels with zero impact
                     # A channel has impact if:
@@ -2568,6 +2611,24 @@ class AutomatedStreamManager:
                 
                 if period_entry['channels']:
                     run_results['periods'].append(period_entry)
+
+            # Finalize aggregate stats
+            run_results['total_streams'] = total_streams_count
+            run_results['streams_analyzed'] = streams_analyzed_count
+            run_results['dead_streams'] = dead_streams_count
+            run_results['streams_revived'] = revived_streams_count
+            run_results['added_streams'] = added_streams_count
+            run_results['removed_streams'] = removed_streams_count
+            
+            from stream_stats_utils import format_bitrate, format_fps
+            from collections import Counter
+            
+            if agg_bitrates:
+                run_results['avg_bitrate'] = format_bitrate(sum(agg_bitrates) / len(agg_bitrates))
+            if agg_fps:
+                run_results['avg_fps'] = format_fps(sum(agg_fps) / len(agg_fps))
+            if agg_resolutions:
+                run_results['avg_resolution'] = Counter(agg_resolutions).most_common(1)[0][0]
             
             # Add to changelog if there's any work done
             has_work = any(len(p['channels']) > 0 for p in run_results['periods'])

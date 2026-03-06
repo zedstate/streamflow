@@ -341,7 +341,8 @@ function StepContent({ step }) {
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground w-[30%]">Stream Name</TableHead>
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">M3U</TableHead>
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">Resolution</TableHead>
-                      <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">FPS</TableHead>
+                      <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">Rate</TableHead>
+                      <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">Bitrate</TableHead>
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">Codec</TableHead>
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground text-right">Score</TableHead>
                     </TableRow>
@@ -365,6 +366,9 @@ function StepContent({ step }) {
                         </TableCell>
                         <TableCell className="py-1">
                           {s.fps || '-'}
+                        </TableCell>
+                        <TableCell className="py-1">
+                          {s.bitrate || '-'}
                         </TableCell>
                         <TableCell className="py-1 text-muted-foreground">
                           {s.video_codec || '-'}
@@ -505,6 +509,24 @@ function ChangelogEntry({ entry }) {
             <div>
               <p className="text-[10px] text-muted-foreground uppercase tracking-tight font-bold">Duration</p>
               <p className="text-lg font-bold">{details.duration}</p>
+            </div>
+          )}
+          {details.avg_bitrate && details.avg_bitrate !== 'N/A' && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-tight font-bold">Avg Bitrate</p>
+              <p className="text-lg font-bold text-blue-500">{details.avg_bitrate}</p>
+            </div>
+          )}
+          {details.avg_resolution && details.avg_resolution !== 'N/A' && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-tight font-bold">Avg Res</p>
+              <p className="text-lg font-bold">{details.avg_resolution}</p>
+            </div>
+          )}
+          {details.avg_fps && details.avg_fps !== 'N/A' && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-tight font-bold">Avg FPS</p>
+              <p className="text-lg font-bold">{details.avg_fps}</p>
             </div>
           )}
         </div>

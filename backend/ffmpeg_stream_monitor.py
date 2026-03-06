@@ -99,11 +99,11 @@ class FFmpegStreamMonitor:
                 cmd = [
                     'ffmpeg',
                     '-hide_banner', # Reduce log spam
-                    '-fflags', '+genpts', # Regenerate timestamps
+                    '-reorder_queue_size', '4096', # Better handling of out-of-order packets
+                    '-fflags', '+genpts+nobuffer', # Regenerate timestamps and reduce latency
                     '-avoid_negative_ts', 'make_zero', # Cleaner startup timestamps
                     '-nostdin',     # Disable interactive stdin
                     '-i', self.url,
-                    '-c', 'copy',  # Copy codec (no re-encoding)
                 ]
                 
                 if self.port_a and self.port_b and self.port_viewer:
@@ -114,11 +114,12 @@ class FFmpegStreamMonitor:
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
                         # Stabilization for viewer (v+a) to ensure mpegts.js / Firefox compatibility:
-                        # +resend_headers: ensures new clients get PAT/PMT immediately
-                        # +initial_discontinuity: tells decoder to expect non-zero start
-                        '-map', '0:v', '-map', '0:a?', '-c', 'copy', 
+                        # -c:a aac + aresample=async=1: Fixes "Large audio timestamp gap" by regenerating audio samples
+                        '-map', '0:v', '-map', '0:a?', 
+                        '-c:v', 'copy', 
+                        '-c:a', 'aac', '-ac', '2', '-ar', '44100', '-af', 'aresample=async=1',
                         '-f', 'mpegts', '-mpegts_flags', '+resend_headers+initial_discontinuity',
-                        f'udp://127.0.0.1:{self.port_viewer}?pkt_size=1316',
+                        f'udp://127.0.0.1:{self.port_viewer}',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:
