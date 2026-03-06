@@ -1078,7 +1078,7 @@ function LiveStreamsGrid({ streams, sessionId }) {
     const loadHls = async () => {
       try {
         const Hls = await import('hls.js');
-        setHlsLib(Hls.default);
+        setHlsLib(() => Hls.default);
         setLoading(false);
       } catch (err) {
         console.error('Failed to load hls.js:', err);
