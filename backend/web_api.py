@@ -108,8 +108,8 @@ class StreamProxy:
         self.last_drop_log_time = 0
 
     def add_client(self):
-        # Buffer for about 5-10 seconds of stream (5000 packets)
-        q = queue.Queue(maxsize=5000) 
+        # Buffer for about 2-4 seconds of stream (2000 packets)
+        q = queue.Queue(maxsize=2000) 
         with self.lock:
             self.clients[q] = False # Initially does not need resync
             if not self.running:
@@ -193,12 +193,20 @@ class StreamProxy:
                                 # Mark for resync to avoid pushing malformed fragments
                                 self.clients[q] = True
                                 
+                                # Optimization: Clear the entire queue to "jump to live"
+                                # This prevents the client from being permanently lagged
+                                try:
+                                    while not q.empty():
+                                        q.get_nowait()
+                                except queue.Empty:
+                                    pass
+
                                 # Log packet drops at most once every 5 seconds per stream
                                 now = time.time()
                                 if now - self.last_drop_log_time > 5:
-                                    logger.warning(f"Shared proxy for {self.stream_id} is dropping packets (queue full). Client processing too slow.")
+                                    logger.warning(f"Shared proxy for {self.stream_id} buffer full - clearing queue (Jump-to-Live). Client processing too slow.")
                                     self.last_drop_log_time = now
-                                pass # Drop data for this specific slow neighbor
+                                pass # Data dropped for this specific slow client
         except Exception as e:
             logger.error(f"UDP listener error for stream {self.stream_id}: {e}")
         finally:

@@ -117,7 +117,8 @@ class FFmpegStreamMonitor:
                         '-c:a', 'aac', '-ac', '2', '-ar', '44100', '-af', 'aresample=async=1',
                         '-avoid_negative_ts', 'make_zero',
                         '-f', 'mpegts', '-mpegts_flags', '+resend_headers+initial_discontinuity',
-                        f'udp://127.0.0.1:{self.port_viewer}',
+                        '-flush_packets', '1',
+                        f'udp://127.0.0.1:{self.port_viewer}?pkt_size=1316',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:
