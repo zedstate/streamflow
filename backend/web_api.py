@@ -99,7 +99,7 @@ class StreamProxy:
         self.stream_id = stream_id
         self.manager = manager
         self.port = 30000 + stream_id
-        self.clients = [] # List of queue.Queue
+        self.clients = {} # dict of queue.Queue -> bool (needs_resync)
         self.lock = threading.Lock()
         self.running = False
         self.thread = None
@@ -108,10 +108,10 @@ class StreamProxy:
         self.last_drop_log_time = 0
 
     def add_client(self):
-        # Buffer for about 3-5 seconds of stream at typical bitrates (2000 packets)
-        q = queue.Queue(maxsize=2000) 
+        # Buffer for about 5-10 seconds of stream (5000 packets)
+        q = queue.Queue(maxsize=5000) 
         with self.lock:
-            self.clients.append(q)
+            self.clients[q] = False # Initially does not need resync
             if not self.running:
                 self._start()
         return q
@@ -119,7 +119,7 @@ class StreamProxy:
     def remove_client(self, q):
         with self.lock:
             if q in self.clients:
-                self.clients.remove(q)
+                del self.clients[q]
             if not self.clients:
                 self.last_client_time = datetime.now()
                 logger.info(f"Last client disconnected from stream {self.stream_id}. Entering {self.LINGER_SECONDS}s linger period.")
@@ -178,13 +178,21 @@ class StreamProxy:
                         # We have clients, so we are active - clear linger timestamp
                         self.last_client_time = None
                         
-                        for q in self.clients:
+                        for q, needs_resync in list(self.clients.items()):
                             try:
-                                # Optimization: If this is the very first packet after a client joined,
-                                # we might want to ensure it's a fresh sync byte, but for now 
-                                # we just push to all clients.
+                                # If client previously dropped data, wait for next TS sync byte (0x47)
+                                if needs_resync:
+                                    if data and data[0] == 0x47:
+                                        self.clients[q] = False
+                                        # Proceed to put data
+                                    else:
+                                        continue # Still searching for sync
+                                
                                 q.put_nowait(data)
                             except queue.Full:
+                                # Mark for resync to avoid pushing malformed fragments
+                                self.clients[q] = True
+                                
                                 # Log packet drops at most once every 5 seconds per stream
                                 now = time.time()
                                 if now - self.last_drop_log_time > 5:

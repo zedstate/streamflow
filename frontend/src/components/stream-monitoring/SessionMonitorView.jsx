@@ -1181,6 +1181,8 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
           liveBufferLatencyChasing: true, // Keep close to the live edge to avoid buffer bloat
           liveBufferLatencyMaxLatency: 3,
           liveBufferLatencyMinLatency: 1,
+          autoCleanupSourceBuffer: true, // Automatically clean up old buffer data
+          accurateSeek: false,           // Faster seeking/recovery
           seekType: 'range',
         });
 
