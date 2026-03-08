@@ -26,14 +26,21 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [cursorTime, setCursorTime] = useState(null); // Current timestamp of the timeline
   const [isLive, setIsLive] = useState(true); // Whether we are following the latest updates
   const [zoomLevel, setZoomLevel] = useState(60); // Window size in seconds (default 1 minute)
+  const [activePreviewTab, setActivePreviewTab] = useState("screenshots");
   const { toast } = useToast();
 
   // Helper to find the metric closest to the cursor time
   const getSnapshotAtTime = (stream, time) => {
-    if (!stream.metrics_history || stream.metrics_history.length === 0) return stream;
+    // Normalize speed field: use speed if available, fallback to current_speed
+    const normalizedStream = {
+      ...stream,
+      speed: stream.speed !== undefined ? stream.speed : stream.current_speed
+    };
 
-    // If live, return current state
-    if (isLive) return stream;
+    if (!stream.metrics_history || stream.metrics_history.length === 0) return normalizedStream;
+
+    // If live, return normalized current state
+    if (isLive) return normalizedStream;
 
     // Find closest metric
     // Assuming metrics are sorted by timestamp (they should be appended in order)
@@ -491,7 +498,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
             <CardDescription>View screenshots and live streams from active streams</CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="screenshots" className="w-full">
+            <Tabs value={activePreviewTab} onValueChange={setActivePreviewTab} className="w-full">
               <TabsList className="mb-4">
                 <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                 <TabsTrigger value="live">Live Streams</TabsTrigger>
@@ -540,7 +547,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
               </TabsContent>
 
               <TabsContent value="live">
-                <LiveStreamsGrid streams={activeStreams.filter(s => s.speed >= 1.0)} sessionId={sessionId} />
+                {activePreviewTab === "live" && (
+                  <LiveStreamsGrid streams={activeStreams.filter(s => (s.speed || s.current_speed || 0) >= 1.0)} sessionId={sessionId} />
+                )}
               </TabsContent>
             </Tabs>
           </CardContent>
