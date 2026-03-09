@@ -237,12 +237,12 @@ def verify_logo(screenshot_path: str, logo_id: int) -> str:
         if score_tr == -1.0:
             return "SKIPPED"
             
-        if score_tr >= 0.35:
+        if score_tr >= 0.45:
             logger.debug(f"Logo match SUCCESS in Top-Right quadrant. Score: {score_tr:.2f}, Scale: {scale_tr:.2f}")
             return "SUCCESS"
             
         # Pillar 2 - Multi-Corner Fallback
-        # If Top-Right fails (score < 0.35), immediately repeat for Top-Left
+        # If Top-Right fails (score < 0.45), immediately repeat for Top-Left
         tl_roi = screenshot[0:int(h * 0.35), 0:int(w * 0.35)]
         tl_roi_gray = cv2.cvtColor(tl_roi, cv2.COLOR_BGR2GRAY)
         
@@ -250,7 +250,7 @@ def verify_logo(screenshot_path: str, logo_id: int) -> str:
         if score_tl == -1.0:
             return "SKIPPED"
             
-        if score_tl >= 0.35:
+        if score_tl >= 0.45:
             logger.debug(f"Logo match SUCCESS in Top-Left quadrant. Score: {score_tl:.2f}, Scale: {scale_tl:.2f}")
             return "SUCCESS"
             

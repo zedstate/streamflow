@@ -949,11 +949,18 @@ class StreamSessionManager:
             return False
         
         with self.session_locks[session_id]:
-            # Update status to quarantined
-            stream_info.status = 'quarantined'
-            stream_info.last_status_change = time.time()
-            self._save_sessions()
-        
+            if stream_info.status != 'quarantined':
+                # Update status to quarantined
+                stream_info.status = 'quarantined'
+                stream_info.status_reason = reason
+                stream_info.last_status_change = time.time()
+                
+                # Add to persistent blocklist
+                if session.quarantined_stream_ids is None:
+                    session.quarantined_stream_ids = set()
+                session.quarantined_stream_ids.add(stream_id)
+                
+                self._save_sessions()
         logger.info(f"Manually quarantined stream {stream_id} in session {session_id}")
         
         # Remove from Dispatcharr channel if requested
@@ -1005,39 +1012,43 @@ class StreamSessionManager:
          
         return True
 
-    def quarantine_stream(self, session_id: str, stream_id: int) -> bool:
+
+
+    def move_stream_to_review(self, session_id: str, stream_id: int, reason: str = "manual") -> bool:
         """
-        Quarantine a stream by setting its status to 'quarantined' and adding to blocklist.
+        Moves a stream back to 'review' status (e.g., when it is detected looping while stable).
         
         Args:
             session_id: Session ID
-            stream_id: Stream ID
+            stream_id: Stream ID to move to review
+            reason: The reason for moving to review
             
         Returns:
-            True if successful
+            True if moved successfully
         """
         if session_id not in self.sessions:
+            logger.error(f"Session {session_id} not found")
             return False
             
         session = self.sessions[session_id]
         stream_info = session.streams.get(stream_id)
         
         if not stream_info:
+            logger.error(f"Stream {stream_id} not found in session {session_id}")
             return False
             
-        with self.session_locks[session_id]:
-            if stream_info.status != 'quarantined':
-                stream_info.status = 'quarantined'
-                stream_info.last_status_change = time.time()
-                
-                # Add to persistent blocklist
-                if session.quarantined_stream_ids is None:
-                    session.quarantined_stream_ids = set()
-                session.quarantined_stream_ids.add(stream_id)
-                
-                self._save_sessions()
-                logger.info(f"Quarantined stream {stream_id} in session {session_id} (added to blocklist)")
-                return True
+        if stream_info.status == "quarantined":
+            logger.debug(f"Stream {stream_id} is quarantined; not moving to review.")
+            return False
+            
+        if stream_info.status != "review":
+            stream_info.status = "review"
+            stream_info.status_reason = reason
+            stream_info.last_status_change = time.time()
+            logger.info(f"Stream {stream_id} moved to Review. Reason: {reason}")
+            self._save_sessions()
+            return True
+            
         return False
 
     def revive_stream(self, session_id: str, stream_id: int) -> bool:
