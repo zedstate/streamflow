@@ -925,7 +925,7 @@ class StreamSessionManager:
             
             return True
     
-    def quarantine_stream(self, session_id: str, stream_id: int, remove_from_dispatcharr: bool = True) -> bool:
+    def quarantine_stream(self, session_id: str, stream_id: int, remove_from_dispatcharr: bool = True, reason: str = "manual") -> bool:
         """
         Manually quarantine a stream and optionally remove it from Dispatcharr.
         

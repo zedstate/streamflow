@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import * as React from 'react';
-import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX, Radio } from 'lucide-react';
+import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX, Radio, ExternalLink, Maximize2, Minimize2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,11 +22,13 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [loading, setLoading] = useState(true);
   const [aliveScreenshots, setAliveScreenshots] = useState([]);
   const [logoUrl, setLogoUrl] = useState(null);
-  const [playingStreamIds, setPlayingStreamIds] = useState(new Set());
+  const [playingStreamIds, setPlayingStreamIds] = new Set();
   const [cursorTime, setCursorTime] = useState(null); // Current timestamp of the timeline
   const [isLive, setIsLive] = useState(true); // Whether we are following the latest updates
   const [zoomLevel, setZoomLevel] = useState(60); // Window size in seconds (default 1 minute)
   const [activePreviewTab, setActivePreviewTab] = useState("screenshots");
+  const [showTimeline, setShowTimeline] = useState(true);
+  const [expandedStreamId, setExpandedStreamId] = useState(null);
   const { toast } = useToast();
 
   // Helper to find the metric closest to the cursor time
@@ -687,9 +689,27 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         </TabsContent>
       </Tabs>
 
+      {/* Timeline Toggle */}
+      {session && (
+        <div className="flex justify-end mb-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowTimeline(!showTimeline)}
+            className="text-xs text-muted-foreground flex items-center gap-1 h-8"
+          >
+            {showTimeline ? (
+              <>Hide Timeline <ChevronUp className="h-3 w-3" /></>
+            ) : (
+              <>Show Timeline <ChevronDown className="h-3 w-3" /></>
+            )}
+          </Button>
+        </div>
+      )}
+
       {/* Timeline Control */}
       {
-        session && (
+        session && showTimeline && (
           <TimelineControl
             minTime={minTime}
             maxTime={maxTime}
@@ -1116,6 +1136,8 @@ function LiveStreamsGrid({ streams, sessionId }) {
     loadHls();
   }, []);
 
+  const [expandedStreamId, setExpandedStreamId] = useState(null);
+
   if (loading) {
     return (
       <div className="text-center py-12">
@@ -1125,17 +1147,59 @@ function LiveStreamsGrid({ streams, sessionId }) {
     );
   }
 
+  // If a stream is expanded, use the Stage Manager layout
+  if (expandedStreamId) {
+    const mainStream = streams.find(s => s.stream_id === expandedStreamId);
+    const thumbnailStreams = streams.filter(s => s.stream_id !== expandedStreamId);
+
+    return (
+      <div className="flex flex-col lg:flex-row gap-4 h-[600px]">
+        {/* Main large player */}
+        <div className="flex-1 min-w-0 h-full">
+          {mainStream && (
+            <LiveStreamPlayer
+              stream={mainStream}
+              hlsLib={hlsLib}
+              isExpanded={true}
+              onToggleExpand={() => setExpandedStreamId(null)}
+            />
+          )}
+        </div>
+
+        {/* Thumbnails list on the right */}
+        <div className="w-full lg:w-[350px] flex-shrink-0 h-full overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+          {thumbnailStreams.map((stream) => (
+            <LiveStreamPlayer
+              key={stream.stream_id}
+              stream={stream}
+              hlsLib={hlsLib}
+              isExpanded={false}
+              onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Regular grid layout when no stream is expanded
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {streams.map((stream) => (
-        <LiveStreamPlayer key={stream.stream_id} stream={stream} hlsLib={hlsLib} />
+        <LiveStreamPlayer
+          key={stream.stream_id}
+          stream={stream}
+          hlsLib={hlsLib}
+          isExpanded={false}
+          onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
+        />
       ))}
     </div>
   );
 }
 
 // Live Stream Player Component using hls.js
-function LiveStreamPlayer({ stream, hlsLib }) {
+function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
   const videoRef = React.useRef(null);
   const playerRef = React.useRef(null);
   const [streamUrl, setStreamUrl] = React.useState(null);
@@ -1294,9 +1358,9 @@ function LiveStreamPlayer({ stream, hlsLib }) {
   };
 
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="aspect-video bg-black rounded-md overflow-hidden mb-3 relative">
+    <Card className={isExpanded ? "h-full flex flex-col" : ""}>
+      <CardContent className={`p-4 ${isExpanded ? "flex flex-col h-full" : ""}`}>
+        <div className={`bg-black rounded-md overflow-hidden mb-3 relative group ${isExpanded ? "flex-1 min-h-0" : "aspect-video"}`}>
           {loading ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -1324,18 +1388,29 @@ function LiveStreamPlayer({ stream, hlsLib }) {
                 playsInline
                 className="w-full h-full object-contain [&::-webkit-media-controls]:hidden [&::-webkit-media-controls-enclosure]:hidden"
               />
-              <Button
-                size="sm"
-                variant="secondary"
-                className="absolute top-2 right-2 opacity-80 hover:opacity-100"
-                onClick={handleToggleMute}
-              >
-                {isMuted ? (
-                  <VolumeX className="h-4 w-4" />
-                ) : (
-                  <Volume2 className="h-4 w-4" />
+              <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-8 w-8 p-0"
+                  onClick={handleToggleMute}
+                  title={isMuted ? "Unmute" : "Mute"}
+                >
+                  {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </Button>
+
+                {onToggleExpand && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 w-8 p-0"
+                    onClick={onToggleExpand}
+                    title={isExpanded ? "Minimize" : "Expand"}
+                  >
+                    {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                  </Button>
                 )}
-              </Button>
+              </div>
             </>
           )}
         </div>
