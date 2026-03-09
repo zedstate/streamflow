@@ -22,7 +22,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [loading, setLoading] = useState(true);
   const [aliveScreenshots, setAliveScreenshots] = useState([]);
   const [logoUrl, setLogoUrl] = useState(null);
-  const [playingStreamIds, setPlayingStreamIds] = new Set();
+  const [playingStreamIds, setPlayingStreamIds] = useState(new Set());
   const [cursorTime, setCursorTime] = useState(null); // Current timestamp of the timeline
   const [isLive, setIsLive] = useState(true); // Whether we are following the latest updates
   const [zoomLevel, setZoomLevel] = useState(60); // Window size in seconds (default 1 minute)
