@@ -297,16 +297,24 @@ class StreamMonitoringService:
             elif info.status == 'review':
                 # Determine required review duration
                 review_limit = self.session_manager.get_review_duration()
-                if getattr(info, 'status_reason', None) == 'looping':
+                is_loop_review = getattr(info, 'status_reason', None) == 'looping'
+                if is_loop_review:
                     review_limit = self.session_manager.get_loop_review_duration()
                 
-                # Check if it passed review
+                # Check if it passed review (probation period ended)
                 if time_in_state > review_limit:
+                    # Logic for looping state machine:
+                    # If it was in review for looping, and it didn't get penalized again, it goes back to stable
+                    # The penalty logic in _evaluate_session_streams will move it to quarantine if it loops again
                     if info.reliability_score >= PASS_SCORE_THRESHOLD:
                         logger.info(f"Stream {stream_id} passed review (Score: {info.reliability_score:.1f}), moving to Stable")
                         with self.session_manager.session_locks[session.session_id]:
                             info.status = 'stable'
                             info.last_status_change = current_time
+                            # Reset loop duration if it was a loop review
+                            if is_loop_review:
+                                info.loop_duration = None
+                                info.status_reason = None
                             updates_needed = True
                             transitioned_to_stable = True
                     # Else: stay in review until score improves or it dies (monitored by standard logic)
@@ -733,6 +741,22 @@ class StreamMonitoringService:
                         if current_time - getattr(stream_info, 'last_loop_log_time', 0.0) > 60.0:
                             logger.warning(f"Stream {stream_id} penalized -50 points for active loop detection ({duration:.2f}s).")
                             stream_info.last_loop_log_time = current_time
+                        
+                        # Looping State Machine Transitions:
+                        if stream_info.status == 'stable':
+                            logger.info(f"Stream {stream_id} detected looping. Moving from Stable to Review.")
+                            self.session_manager.move_stream_to_review(session_id, stream_id, reason='looping')
+                        elif stream_info.status == 'review' and stream_info.status_reason == 'looping':
+                            # If it was already in review FOR looping, and we detect it again, quarantine it
+                            # Note: check if it has been in review for at least a few seconds to avoid immediate double-trigger
+                            if current_time - stream_info.last_status_change > 10.0:
+                                logger.warning(f"Stream {stream_id} detected looping AGAIN while in Review. Moving to Quarantine.")
+                                monitor.stop()
+                                if stream_id in self.monitors.get(session_id, {}):
+                                    del self.monitors[session_id][stream_id]
+                                self.session_manager.quarantine_stream(session_id, stream_id, reason='looping-repeated')
+                                self._remove_stream_from_dispatcharr(session_id, stream_id, "looping")
+                                continue
                 
                 stream_info.reliability_score = current_score
 
@@ -822,10 +846,12 @@ class StreamMonitoringService:
                             sidecar = None
                     
                     if not sidecar and stats.is_alive and stats.speed > 0:
-                        try:
-                            self._start_sidecar_detector(session_id, stream_id, monitor.port_a)
-                        except Exception as e:
-                            logger.error(f"Failed to start sidecar for stream {stream_id}: {e}")
+                        # Only start sidecar if looping detection is enabled for this session
+                        if getattr(session, 'enable_looping_detection', True):
+                            try:
+                                self._start_sidecar_detector(session_id, stream_id, monitor.port_a)
+                            except Exception as e:
+                                logger.error(f"Failed to start sidecar for stream {stream_id}: {e}")
 
         # 2. Re-rank all streams (even those without monitors)
         self._update_monitoring_ranks(session_id, current_time, force_update)
@@ -1119,14 +1145,18 @@ class StreamMonitoringService:
                 success = True
                 
                 # Synchronous logo verification so we can batch them atomically 
-                if session.logo_id:
-                    try:
-                        from logo_verification_service import verify_logo
-                        status = verify_logo(path, session.logo_id)
-                        if status != "SKIPPED":
-                            logo_status = status
-                    except Exception as e:
-                        logger.error(f"Error in sync logo verify: {e}")
+                # Restrict: Only if logo detection is enabled AND stream is in 'review' status
+                if session.logo_id and getattr(session, 'enable_logo_detection', True):
+                    if stream_info.status == 'review':
+                        try:
+                            from logo_verification_service import verify_logo
+                            status = verify_logo(path, session.logo_id)
+                            if status != "SKIPPED":
+                                logo_status = status
+                        except Exception as e:
+                            logger.error(f"Error in sync logo verify: {e}")
+                    else:
+                        logger.debug(f"Skipping logo verify for stream {stream_id} - not in review (status: {stream_info.status})")
             
             # Update stream info with probed stats
             if stats:

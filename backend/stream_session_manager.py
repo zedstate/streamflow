@@ -155,6 +155,9 @@ class SessionInfo:
     # Auto-creation source (for tracking if created by rules)
     auto_created: bool = False
     auto_create_rule_id: Optional[str] = None
+    # Detection toggles
+    enable_looping_detection: bool = True
+    enable_logo_detection: bool = True
     # Track quarantined stream IDs to prevent re-addition
     quarantined_stream_ids: Set[int] = None
     
@@ -410,6 +413,8 @@ class StreamSessionManager:
                       skip_stream_refresh: bool = False,
                       evaluation_interval_ms: int = DEFAULT_EVALUATION_INTERVAL_MS,
                       match_by_tvg_id: bool = False,
+                      enable_looping_detection: bool = True,
+                      enable_logo_detection: bool = True,
                       **kwargs) -> str:
         """
         Create a new monitoring session.
@@ -423,6 +428,8 @@ class StreamSessionManager:
             skip_stream_refresh: Skip refreshing global stream list (useful for batch operations)
             evaluation_interval_ms: Interval for stream evaluation in milliseconds
             match_by_tvg_id: Whether to match streams by TVG-ID
+            enable_looping_detection: Whether to enable looping detection for this session
+            enable_logo_detection: Whether to enable logo detection for this session
             **kwargs: Additional session parameters (auto_created, auto_create_rule_id, etc.)
             
         Returns:
@@ -504,6 +511,8 @@ class StreamSessionManager:
             logo_id=logo_id,
             channel_tvg_id=channel_tvg_id,
             match_by_tvg_id=match_by_tvg_id,
+            enable_looping_detection=enable_looping_detection,
+            enable_logo_detection=enable_logo_detection,
             **kwargs
         )
         

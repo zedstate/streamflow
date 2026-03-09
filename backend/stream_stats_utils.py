@@ -428,7 +428,8 @@ def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -
     
     # Check bitrate
     bitrate = stats['bitrate_kbps']
-    if bitrate in [0, None] or (isinstance(bitrate, (int, float)) and bitrate == 0):
+    # Refined logic: only mark as dead if bitrate is explicitly 0, not just missing (None)
+    if isinstance(bitrate, (int, float)) and bitrate == 0:
         return True, 'offline'
     
     # Check against configured minimum bitrate if provided

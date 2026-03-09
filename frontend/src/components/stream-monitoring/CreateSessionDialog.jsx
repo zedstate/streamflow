@@ -23,7 +23,9 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
     evaluation_interval_ms: 1000,
     enforce_sync_interval_ms: 1000,
     timeout_ms: 30000,
-    autoStart: true
+    autoStart: true,
+    enable_looping_detection: true,
+    enable_logo_detection: true
   });
   const { toast } = useToast();
 
@@ -200,6 +202,43 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
                   className="text-sm"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* Detection Toggles */}
+          <div className="border rounded-lg p-3 space-y-3">
+            <h4 className="text-sm font-medium">Detection Features</h4>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="looping-detection" className="text-sm">
+                  Looping Detection
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Identify and penalize looping streams
+                </p>
+              </div>
+              <Switch
+                id="looping-detection"
+                checked={formData.enable_looping_detection}
+                onCheckedChange={(checked) => handleChange('enable_looping_detection', checked)}
+              />
+            </div>
+
+            <div className="flex items-center justify-between border-t pt-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="logo-detection" className="text-sm">
+                  Logo Verification
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Verify stream logo against reference
+                </p>
+              </div>
+              <Switch
+                id="logo-detection"
+                checked={formData.enable_logo_detection}
+                onCheckedChange={(checked) => handleChange('enable_logo_detection', checked)}
+              />
             </div>
           </div>
 

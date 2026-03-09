@@ -63,6 +63,8 @@ export default function Scheduling() {
   const [ruleRegexPattern, setRuleRegexPattern] = useState('')
   const [ruleMinutesBefore, setRuleMinutesBefore] = useState(5)
   const [ruleScheduleType, setRuleScheduleType] = useState('check')  // 'check' or 'monitoring'
+  const [ruleEnableLoopingDetection, setRuleEnableLoopingDetection] = useState(true)
+  const [ruleEnableLogoDetection, setRuleEnableLogoDetection] = useState(true)
   const [testingRegex, setTestingRegex] = useState(false)
   const [regexMatches, setRegexMatches] = useState([])
   const [deleteRuleDialogOpen, setDeleteRuleDialogOpen] = useState(false)
@@ -343,7 +345,9 @@ export default function Scheduling() {
         channel_group_ids: ruleSelectedChannelGroups.map(g => g.id),
         regex_pattern: ruleRegexPattern,
         minutes_before: minutesBeforeValue,
-        schedule_type: ruleScheduleType
+        schedule_type: ruleScheduleType,
+        enable_looping_detection: ruleEnableLoopingDetection,
+        enable_logo_detection: ruleEnableLogoDetection
       }
 
       if (editingRuleId) {
@@ -370,6 +374,8 @@ export default function Scheduling() {
       setRuleRegexPattern('')
       setRuleMinutesBefore(5)
       setRuleScheduleType('check')
+      setRuleEnableLoopingDetection(true)
+      setRuleEnableLogoDetection(true)
       setRegexMatches([])
       setRuleChannelComboboxOpen(false)
       setRuleChannelGroupComboboxOpen(false)
@@ -411,6 +417,8 @@ export default function Scheduling() {
     setRuleRegexPattern(rule.regex_pattern)
     setRuleMinutesBefore(rule.minutes_before)
     setRuleScheduleType(rule.schedule_type || 'check')  // Default to 'check' for backward compatibility
+    setRuleEnableLoopingDetection(rule.enable_looping_detection !== false)
+    setRuleEnableLogoDetection(rule.enable_logo_detection !== false)
 
     // Find and set the channels - support both old (channel_id) and new (channel_ids) format
     const selectedChannels = []
@@ -1184,6 +1192,8 @@ export default function Scheduling() {
                   setRuleSelectedChannels([])
                   setRuleRegexPattern('')
                   setRuleMinutesBefore(5)
+                  setRuleEnableLoopingDetection(true)
+                  setRuleEnableLogoDetection(true)
                   setRegexMatches([])
                 }
               }}>
@@ -1195,6 +1205,8 @@ export default function Scheduling() {
                     setRuleSelectedChannels([])
                     setRuleRegexPattern('')
                     setRuleMinutesBefore(5)
+                    setRuleEnableLoopingDetection(true)
+                    setRuleEnableLogoDetection(true)
                     setRegexMatches([])
                   }}>
                     <Plus className="h-4 w-4 mr-2" />
@@ -1488,6 +1500,45 @@ export default function Scheduling() {
                               : SCHEDULE_TYPE_INFO.monitoring.detailsPlural}
                           </p>
                         </div>
+
+                        {/* Monitoring Toggles */}
+                        {ruleScheduleType === 'monitoring' && (
+                          <div className="border rounded-lg p-3 space-y-3">
+                            <h4 className="text-sm font-medium">Monitoring Features</h4>
+
+                            <div className="flex items-center justify-between">
+                              <div className="space-y-0.5">
+                                <Label htmlFor="rule-looping-detection" className="text-sm">
+                                  Looping Detection
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Identify and penalize looping streams
+                                </p>
+                              </div>
+                              <Switch
+                                id="rule-looping-detection"
+                                checked={ruleEnableLoopingDetection}
+                                onCheckedChange={(checked) => setRuleEnableLoopingDetection(checked)}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between border-t pt-3">
+                              <div className="space-y-0.5">
+                                <Label htmlFor="rule-logo-detection" className="text-sm">
+                                  Logo Verification
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Verify stream logo against reference
+                                </p>
+                              </div>
+                              <Switch
+                                id="rule-logo-detection"
+                                checked={ruleEnableLogoDetection}
+                                onCheckedChange={(checked) => setRuleEnableLogoDetection(checked)}
+                              />
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -1502,6 +1553,8 @@ export default function Scheduling() {
                       setRuleRegexPattern('')
                       setRuleMinutesBefore(5)
                       setRuleScheduleType('check')
+                      setRuleEnableLoopingDetection(true)
+                      setRuleEnableLogoDetection(true)
                       setRegexMatches([])
                       setRuleChannelComboboxOpen(false)
                       setRuleChannelGroupComboboxOpen(false)

@@ -371,6 +371,8 @@ class SchedulingService:
                 'check_time': check_time.isoformat(),
                 'tvg_id': channel.get('tvg_id'),
                 'schedule_type': schedule_type,
+                'enable_looping_detection': event_data.get('enable_looping_detection', True),
+                'enable_logo_detection': event_data.get('enable_logo_detection', True),
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
@@ -580,7 +582,9 @@ class SchedulingService:
                 epg_event=epg_event,
                 auto_created=event.get('auto_created', False),
                 auto_create_rule_id=event.get('auto_create_rule_id'),
-                match_by_tvg_id=match_by_tvg_id
+                match_by_tvg_id=match_by_tvg_id,
+                enable_looping_detection=event.get('enable_looping_detection', True),
+                enable_logo_detection=event.get('enable_logo_detection', True)
             )
             
             logger.info(f"Created monitoring session {session_id} from event {event_id}")
@@ -754,6 +758,8 @@ class SchedulingService:
                 - regex_pattern: Regex pattern to match program names
                 - minutes_before: Minutes before program start to check
                 - schedule_type: Type of schedule - 'check' or 'monitoring' (default: 'check')
+                - enable_looping_detection: Enable looping detection (default: True)
+                - enable_logo_detection: Enable logo detection (default: True)
                 
         Returns:
             Created rule dictionary
@@ -861,6 +867,8 @@ class SchedulingService:
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
                 'schedule_type': schedule_type,
+                'enable_looping_detection': rule_data.get('enable_looping_detection', True),
+                'enable_logo_detection': rule_data.get('enable_logo_detection', True),
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
@@ -1058,6 +1066,10 @@ class SchedulingService:
                 rule['name'] = rule_data['name']
             if 'minutes_before' in rule_data:
                 rule['minutes_before'] = rule_data['minutes_before']
+            if 'enable_looping_detection' in rule_data:
+                rule['enable_looping_detection'] = rule_data['enable_looping_detection']
+            if 'enable_logo_detection' in rule_data:
+                rule['enable_logo_detection'] = rule_data['enable_logo_detection']
             
             # Save changes
             self._auto_create_rules[rule_index] = rule
@@ -1291,6 +1303,8 @@ class SchedulingService:
                         'check_time': check_time.isoformat(),
                         'tvg_id': tvg_id,
                         'schedule_type': schedule_type,
+                        'enable_looping_detection': rule.get('enable_looping_detection', True),
+                        'enable_logo_detection': rule.get('enable_logo_detection', True),
                         'created_at': datetime.now(timezone.utc).isoformat(),
                         'auto_created': True,
                         'auto_create_rule_id': rule.get('id'),

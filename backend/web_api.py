@@ -3378,7 +3378,9 @@ def create_auto_create_rule():
         "name": "Rule Name",
         "channel_ids": [123, 456],  // or "channel_id": 123 for backward compatibility
         "regex_pattern": "^Breaking News",
-        "minutes_before": 5
+        "minutes_before": 5,
+        "enable_looping_detection": true,
+        "enable_logo_detection": true
     }
     """
     try:
@@ -3458,7 +3460,9 @@ def update_auto_create_rule(rule_id):
         "name": "Updated Rule Name",
         "channel_id": 123,
         "regex_pattern": "^Updated Pattern",
-        "minutes_before": 10
+        "minutes_before": 10,
+        "enable_looping_detection": false,
+        "enable_logo_detection": false
     }
     """
     try:
@@ -4675,7 +4679,9 @@ def create_stream_session():
             epg_event=epg_event,
             auto_created=auto_created,
             auto_create_rule_id=auto_create_rule_id,
-            match_by_tvg_id=match_by_tvg_id
+            match_by_tvg_id=match_by_tvg_id,
+            enable_looping_detection=data.get('enable_looping_detection', True),
+            enable_logo_detection=data.get('enable_logo_detection', True)
         )
         
         return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
@@ -4753,7 +4759,9 @@ def create_group_stream_sessions():
                     stagger_ms=stagger_ms,
                     timeout_ms=timeout_ms,
                     skip_stream_refresh=True,
-                    match_by_tvg_id=match_by_tvg_id
+                    match_by_tvg_id=match_by_tvg_id,
+                    enable_looping_detection=data.get('enable_looping_detection', True),
+                    enable_logo_detection=data.get('enable_logo_detection', True)
                 )
                 
                 # Start session

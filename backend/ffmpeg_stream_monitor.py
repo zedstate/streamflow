@@ -40,6 +40,7 @@ class FFmpegStats:
     last_updated: float = 0.0
     is_alive: bool = False
     error_message: Optional[str] = None
+    audio_language: Optional[str] = None
     # Additional fields for bitrate calculation
     total_size: int = 0  # bytes
     start_time: float = 0.0
@@ -349,6 +350,13 @@ class FFmpegStreamMonitor:
             fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', output)
             if fps_match:
                 self.stats.fps = round(float(fps_match.group(1)), 0)
+        
+        # Extract audio language: "Stream #0:1(eng): Audio: ..."
+        if 'Audio:' in output:
+            lang_match = re.search(r'Stream #\d+:\d+\((\w+)\):', output)
+            if lang_match:
+                self.stats.audio_language = lang_match.group(1)
+                logger.debug(f"Detected audio language for {self.url[:50]}: {self.stats.audio_language}")
     
     def _parse_stats(self, output: str):
         """Parse real-time statistics from FFmpeg output"""
