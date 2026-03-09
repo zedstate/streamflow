@@ -1038,7 +1038,7 @@ class StreamMonitoringService:
             
             time_since_screenshot = current_time - stream_info.last_screenshot_time
             monitor = self.monitors.get(session_id, {}).get(stream_id)
-            is_ready = monitor and monitor.get_stats().speed >= 1.0
+            is_ready = monitor and monitor.get_stats().speed >= 0.9
             
             if is_ready and time_since_screenshot >= interval:
                 any_stream_due = True
@@ -1052,7 +1052,7 @@ class StreamMonitoringService:
                     continue
                     
                 monitor = self.monitors.get(session_id, {}).get(stream_id)
-                is_ready = monitor and monitor.get_stats().speed >= 1.0
+                is_ready = monitor and monitor.get_stats().speed >= 0.9
                 
                 if is_ready:
                     streams_to_capture.append(stream_id)

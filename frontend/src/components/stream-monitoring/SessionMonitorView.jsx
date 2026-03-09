@@ -548,7 +548,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
               <TabsContent value="live">
                 {activePreviewTab === "live" && (
-                  <LiveStreamsGrid streams={activeStreams.filter(s => (s.speed || s.current_speed || 0) >= 1.0)} sessionId={sessionId} />
+                  <LiveStreamsGrid streams={activeStreams.filter(s => (s.speed || s.current_speed || 0) >= 0.9)} sessionId={sessionId} />
                 )}
               </TabsContent>
             </Tabs>

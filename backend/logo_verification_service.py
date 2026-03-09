@@ -11,12 +11,16 @@ import numpy as np
 import imutils
 import logging
 import requests
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 LOGOS_CACHE_DIR = CONFIG_DIR / 'logos_cache'
+
+# Global semaphore to limit concurrent template matching operations (CPU-heavy)
+POOL_SEMAPHORE = threading.Semaphore(2)
 
 def get_cached_logo_path(logo_id: int) -> str | None:
     """Finds the local cached path for a given logo ID, downloading it if necessary."""
@@ -103,53 +107,44 @@ def process_roi_matching(scene_roi: np.ndarray, template_gray: np.ndarray) -> fl
     
     # Pillar 1 - Edge Density Sanity Check
     edge_density = cv2.countNonZero(scene_edges)
-    if edge_density < 100:
-        logger.debug(f"Edge Density too low ({edge_density} < 100). Assuming black screen/whip-pan.")
-        return -1.0
+    if edge_density < 500:
+        return -1.0, 0.0
         
     highest_score = 0.0
     best_scale = 0.0
     
-    # Primary: Direct Grayscale Matching
-    for scale in np.linspace(0.2, 1.5, 14):
-        width = int(template_gray.shape[1] * scale)
-        if width <= 0:
-            continue
-        resized_template = imutils.resize(template_gray, width=width, inter=cv2.INTER_AREA)
-        
-        if resized_template.shape[0] > scene_roi.shape[0] or resized_template.shape[1] > scene_roi.shape[1]:
-            continue
+    with POOL_SEMAPHORE:
+        # Primary: Direct Grayscale Matching
+        for scale in np.linspace(0.2, 1.5, 14):
+            width = int(template_gray.shape[1] * scale)
+            if width <= 0: continue
+            resized_template = imutils.resize(template_gray, width=width, inter=cv2.INTER_AREA)
+            if resized_template.shape[0] > scene_roi.shape[0] or resized_template.shape[1] > scene_roi.shape[1]:
+                continue
+            result = cv2.matchTemplate(scene_roi, resized_template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
             
-        result = cv2.matchTemplate(scene_roi, resized_template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(result)
-        
-        if max_val > highest_score:
-            highest_score = max_val
-            best_scale = scale
+            if max_val > highest_score:
+                highest_score = max_val
+                best_scale = scale
+                
+        if highest_score >= 0.50:
+            return highest_score, best_scale
             
-    if highest_score >= 0.50:
-        return highest_score, best_scale
-        
-    # Fallback: Edge Matching
-    for scale in np.linspace(0.2, 1.5, 14):
-        width = int(template_gray.shape[1] * scale)
-        if width <= 0:
-            continue
-        resized_template = imutils.resize(template_gray, width=width, inter=cv2.INTER_AREA)
-        
-        if resized_template.shape[0] > scene_edges.shape[0] or resized_template.shape[1] > scene_edges.shape[1]:
-            continue
+        # Fallback: Edge Matching
+        for scale in np.linspace(0.2, 1.5, 14):
+            width = int(template_gray.shape[1] * scale)
+            if width <= 0: continue
+            resized_template = imutils.resize(template_gray, width=width, inter=cv2.INTER_AREA)
+            if resized_template.shape[0] > scene_blurred.shape[0] or resized_template.shape[1] > scene_blurred.shape[1]:
+                continue
+            template_edges = cv2.Canny(resized_template, 50, 200)
+            result = cv2.matchTemplate(scene_edges, template_edges, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
             
-        # Apply Canny to the resized template to maintain crisp 1-pixel edges
-        template_edges = cv2.Canny(resized_template, 50, 200)
-        
-        # Normalized Matching
-        result = cv2.matchTemplate(scene_edges, template_edges, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(result)
-        
-        if max_val > highest_score:
-            highest_score = max_val
-            best_scale = scale
+            if max_val > highest_score:
+                highest_score = max_val
+                best_scale = scale
             
     return highest_score, best_scale
 

@@ -5145,7 +5145,7 @@ def get_alive_screenshots(session_id):
                     if stream_info.metrics_history:
                         latest_speed = stream_info.metrics_history[-1].speed
                     
-                    if latest_speed >= 1.0:
+                    if latest_speed >= 0.9:
                         screenshots_data.append({
                         'stream_id': stream_info.stream_id,
                         'stream_name': stream_info.name,
