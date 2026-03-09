@@ -91,8 +91,11 @@ def process_roi_matching(scene_roi: np.ndarray, template_gray: np.ndarray) -> fl
     2. Primary: Direct Grayscale Template Matching (better for translucent/solid logos).
     3. Fallback: Edge Matching (better for stark contrast overlays).
     
-    Returns the highest match score, or -1.0 if skipped.
+    Returns: (highest_score, best_scale), or (-1.0, 0.0) if skipped.
     """
+    # Contrast Enhancement: Stretch the ROI to improve semi-translucent logo visibility
+    scene_roi = cv2.normalize(scene_roi, None, 0, 255, cv2.NORM_MINMAX)
+    
     # Apply a heavier 5x5 blur to wash out high-frequency crowd noise
     scene_blurred = cv2.GaussianBlur(scene_roi, (5, 5), 0)
     # Slightly stricter Canny to ignore background artifacting
@@ -105,9 +108,10 @@ def process_roi_matching(scene_roi: np.ndarray, template_gray: np.ndarray) -> fl
         return -1.0
         
     highest_score = 0.0
+    best_scale = 0.0
     
     # Primary: Direct Grayscale Matching
-    for scale in np.linspace(0.5, 1.5, 11):
+    for scale in np.linspace(0.2, 1.5, 14):
         width = int(template_gray.shape[1] * scale)
         if width <= 0:
             continue
@@ -121,12 +125,13 @@ def process_roi_matching(scene_roi: np.ndarray, template_gray: np.ndarray) -> fl
         
         if max_val > highest_score:
             highest_score = max_val
+            best_scale = scale
             
     if highest_score >= 0.50:
-        return highest_score
+        return highest_score, best_scale
         
     # Fallback: Edge Matching
-    for scale in np.linspace(0.5, 1.5, 11):
+    for scale in np.linspace(0.2, 1.5, 14):
         width = int(template_gray.shape[1] * scale)
         if width <= 0:
             continue
@@ -144,8 +149,9 @@ def process_roi_matching(scene_roi: np.ndarray, template_gray: np.ndarray) -> fl
         
         if max_val > highest_score:
             highest_score = max_val
+            best_scale = scale
             
-    return highest_score
+    return highest_score, best_scale
 
 def verify_logo(screenshot_path: str, logo_id: int) -> str:
     """
@@ -232,28 +238,28 @@ def verify_logo(screenshot_path: str, logo_id: int) -> str:
         # Convert ROI to grayscale as well just in case for blurring
         tr_roi_gray = cv2.cvtColor(tr_roi, cv2.COLOR_BGR2GRAY)
         
-        score_tr = process_roi_matching(tr_roi_gray, template_cropped)
+        score_tr, scale_tr = process_roi_matching(tr_roi_gray, template_cropped)
         if score_tr == -1.0:
             return "SKIPPED"
             
-        if score_tr >= 0.40:
-            logger.debug(f"Logo match SUCCESS in Top-Right quadrant. Score: {score_tr:.2f}")
+        if score_tr >= 0.35:
+            logger.debug(f"Logo match SUCCESS in Top-Right quadrant. Score: {score_tr:.2f}, Scale: {scale_tr:.2f}")
             return "SUCCESS"
             
         # Pillar 2 - Multi-Corner Fallback
-        # If Top-Right fails (score < 0.40), immediately repeat for Top-Left
+        # If Top-Right fails (score < 0.35), immediately repeat for Top-Left
         tl_roi = screenshot[0:int(h * 0.35), 0:int(w * 0.35)]
         tl_roi_gray = cv2.cvtColor(tl_roi, cv2.COLOR_BGR2GRAY)
         
-        score_tl = process_roi_matching(tl_roi_gray, template_cropped)
+        score_tl, scale_tl = process_roi_matching(tl_roi_gray, template_cropped)
         if score_tl == -1.0:
             return "SKIPPED"
             
-        if score_tl >= 0.40:
-            logger.debug(f"Logo match SUCCESS in Top-Left quadrant. Score: {score_tl:.2f}")
+        if score_tl >= 0.35:
+            logger.debug(f"Logo match SUCCESS in Top-Left quadrant. Score: {score_tl:.2f}, Scale: {scale_tl:.2f}")
             return "SUCCESS"
             
-        logger.debug(f"Logo match FAILED across multi-corner ROIs. TR: {score_tr:.2f}, TL: {score_tl:.2f}")
+        logger.debug(f"Logo match FAILED across multi-corner ROIs. TR: {score_tr:.2f} (scale {scale_tr:.2f}), TL: {score_tl:.2f} (scale {scale_tl:.2f})")
         return "FAILED"
         
     except Exception as e:
