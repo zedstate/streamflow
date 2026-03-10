@@ -287,8 +287,8 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     return b.reliability_score - a.reliability_score;
   };
 
-  const stableStreams = currentStreams.filter(s => s.status === 'stable').sort(sortStreams);
-  const reviewStreams = currentStreams.filter(s => s.status === 'review').sort(sortStreams);
+  const stableStreams = currentStreams.filter(s => s.status === 'stable' && !s.is_quarantined).sort(sortStreams);
+  const reviewStreams = currentStreams.filter(s => s.status === 'review' && !s.is_quarantined).sort(sortStreams);
   const quarantinedStreams = currentStreams.filter(s => s.status === 'quarantined' || s.is_quarantined);
   const activeStreams = [...stableStreams, ...reviewStreams];
 
