@@ -984,7 +984,7 @@ class StreamSessionManager:
                         stream_name=stream_info.name,
                         channel_id=session.channel_id
                     )
-                    logger.info(f"Marked quarantined stream {stream_id} as dead in tracker")
+                    logger.debug(f"Marked quarantined stream {stream_id} as dead in tracker")
                 except Exception as e:
                     logger.warning(f"Failed to mark stream {stream_id} as dead: {e}")
 
@@ -1002,7 +1002,7 @@ class StreamSessionManager:
                         success = update_channel_streams(session.channel_id, new_streams)
                         
                         if success:
-                            logger.info(f"Removed quarantined stream {stream_id} from Dispatcharr channel {session.channel_id}")
+                            logger.debug(f"Removed quarantined stream {stream_id} from Dispatcharr channel {session.channel_id}")
                             # Refresh channel in UDI
                             udi.refresh_channel_by_id(session.channel_id)
                         else:
@@ -1050,7 +1050,7 @@ class StreamSessionManager:
             stream_info.status = "review"
             stream_info.status_reason = reason
             stream_info.last_status_change = time.time()
-            logger.info(f"Stream {stream_id} moved to Review. Reason: {reason}")
+            logger.debug(f"Stream {stream_id} moved to Review. Reason: {reason}")
             self._save_sessions()
             return True
             

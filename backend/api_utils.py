@@ -1026,5 +1026,5 @@ def batch_update_stream_stats(stream_stats_list: List[Dict[str, Any]], batch_siz
                 logger.error(f"Error updating stream {stream_id} stats: {e}")
                 failed += 1
     
-    logger.info(f"Batch stats update complete: {successful} successful, {failed} failed out of {total} total")
+    logger.debug(f"Batch stats update complete: {successful} successful, {failed} failed out of {total} total")
     return successful, failed

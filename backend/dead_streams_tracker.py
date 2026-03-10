@@ -96,7 +96,7 @@ class DeadStreamsTracker:
                     'reason': reason
                 }
                 self._save_dead_streams()
-            logger.warning(f"🔴 MARKED STREAM AS DEAD: {stream_name} (Reason: {reason}, URL: {stream_url})")
+            logger.info(f"🔴 MARKED STREAM AS DEAD: {stream_name} (Reason: {reason}, URL: {stream_url})")
             return True
         except Exception as e:
             logger.error(f"❌ Error marking stream as dead: {e}")

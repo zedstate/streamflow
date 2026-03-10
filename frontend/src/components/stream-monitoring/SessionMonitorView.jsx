@@ -551,7 +551,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
               <TabsContent value="live">
                 {activePreviewTab === "live" && (
-                  <LiveStreamsGrid streams={activeStreams.filter(s => (s.speed || s.current_speed || 0) >= 0.9)} sessionId={sessionId} />
+                  <LiveStreamsGrid streams={activeStreams.filter(s => (s.speed || s.current_speed || 0) >= 0.9)} sessionId={sessionId} isActive={activePreviewTab === "live"} />
                 )}
               </TabsContent>
             </Tabs>
@@ -1107,9 +1107,10 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
 
 // Screenshot Dialog Component  
 // LiveStreamsGrid Component with hls.js support
-function LiveStreamsGrid({ streams, sessionId }) {
+function LiveStreamsGrid({ streams, sessionId, isActive }) {
   const [hlsLib, setHlsLib] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
 
   useEffect(() => {
     // Import hls.js once for all stream players
@@ -1173,57 +1174,61 @@ function LiveStreamsGrid({ streams, sessionId }) {
   }
 
   // Unified layout with CSS transitions
-  return (
-    <div className={cn(
-      "relative transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]",
-      expandedStreamId
-        ? "grid grid-cols-1 lg:grid-cols-[1fr,300px] gap-6 min-h-[750px] items-start"
-        : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
-    )}>
-      {displayStreams.map((stream, index) => {
-        const isExpanded = expandedStreamId === stream.stream_id;
-        const originalIdx = originalIndices[stream.stream_id] ?? 0;
-
-        // Calculate animation origin based on original grid position
-        const col = originalIdx % 3;
-
-        // Hide non-expanded streams on mobile to save space
-        const isHiddenOnMobile = expandedStreamId && !isExpanded && typeof window !== 'undefined' && window.innerWidth < 1024;
-        if (isHiddenOnMobile) return null;
-
-        return (
-          <div
-            key={stream.stream_id}
-            className={cn(
-              "transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]",
-              expandedStreamId ? (
-                isExpanded
-                  ? cn(
-                    "lg:col-span-1 lg:row-span-[50] w-full min-h-[650px] h-full animate-in fade-in zoom-in-95 duration-700",
-                    col === 0 ? "slide-in-from-left-12" : col === 1 ? "slide-in-from-top-12" : "slide-in-from-right-12"
-                  )
-                  : "lg:col-start-2 w-full h-[180px] lg:h-auto animate-in fade-in slide-in-from-right-32 duration-1000 delay-150"
-              ) : "w-full min-w-0"
-            )}
-            style={{
-              zIndex: isExpanded ? 50 : 1,
-            }}
-          >
+  if (!expandedStreamId) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 transition-all duration-500">
+        {displayStreams.map((stream) => (
+          <div key={stream.stream_id} className="w-full min-w-0">
             <LiveStreamPlayer
               stream={stream}
               hlsLib={hlsLib}
-              isExpanded={isExpanded}
-              onToggleExpand={() => setExpandedStreamId(isExpanded ? null : stream.stream_id)}
+              isExpanded={false}
+              isActive={isActive}
+              onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
             />
           </div>
-        );
-      })}
+        ))}
+      </div>
+    );
+  }
+
+  // Expanded layout: Flexbox with sidebar
+  const expandedStream = displayStreams[0];
+  const sidebarStreams = displayStreams.slice(1);
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-6 min-h-[650px] transition-all duration-700 ease-in-out">
+      {/* Main Expanded Stream */}
+      <div className="flex-1 w-full animate-in fade-in zoom-in-95 duration-700">
+        <LiveStreamPlayer
+          stream={expandedStream}
+          hlsLib={hlsLib}
+          isExpanded={true}
+          isActive={isActive}
+          onToggleExpand={() => setExpandedStreamId(null)}
+        />
+      </div>
+
+      {/* Sidebar Streams */}
+      <div className="w-full lg:w-[320px] flex flex-col gap-4 overflow-y-auto max-h-[750px] pr-2 scrollbar-thin scrollbar-thumb-zinc-800">
+        {sidebarStreams.map((stream) => (
+          <div key={stream.stream_id} className="w-full animate-in fade-in slide-in-from-right-12 duration-500">
+            <LiveStreamPlayer
+              stream={stream}
+              hlsLib={hlsLib}
+              isExpanded={false}
+              isActive={isActive}
+              onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 // Live Stream Player Component using hls.js
-function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
+function LiveStreamPlayer({ stream, hlsLib, isExpanded, isActive, onToggleExpand }) {
   const videoRef = React.useRef(null);
   const playerRef = React.useRef(null);
   const [streamUrl, setStreamUrl] = React.useState(null);
@@ -1242,6 +1247,17 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
         console.error('Error destroying player:', err);
       }
       playerRef.current = null;
+    }
+
+    // Also clean up the video element directly for native HLS (Safari/iOS)
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+        videoRef.current.src = "";
+        videoRef.current.load();
+      } catch (err) {
+        console.warn('Error clearing video element:', err);
+      }
     }
   }, []);
 
@@ -1268,13 +1284,20 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
   }, [stream.stream_id]);
 
   useEffect(() => {
-    // Initialize hls.js player when stream URL is available
-    if (!streamUrl || !videoRef.current || !hlsLib) return;
+    // Initialize hls.js player when stream URL is available AND active
+    if (!streamUrl || !videoRef.current || !hlsLib || !isActive) {
+      cleanupPlayer();
+      return;
+    }
+
+    let isMounted = true;
 
     const initPlayer = async () => {
       try {
         // Clean up any existing player before creating a new one
         cleanupPlayer();
+
+        if (!isMounted) return;
 
         // Debug: Log the hlsLib shape if it seems wrong
         if (hlsLib && typeof hlsLib !== 'function' && !hlsLib.isSupported) {
@@ -1287,9 +1310,11 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
         if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
           videoRef.current.src = streamUrl;
           videoRef.current.addEventListener('loadedmetadata', () => {
-            videoRef.current.play().catch(err => {
-              console.warn('Autoplay blocked by browser:', err);
-            });
+            if (isMounted && videoRef.current) {
+              videoRef.current.play().catch(err => {
+                console.warn('Autoplay blocked by browser:', err);
+              });
+            }
           });
         }
         // 2. Use hls.js for other browsers (Chrome, Firefox)
@@ -1306,6 +1331,9 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
             levelLoadingMaxRetry: 10,
           });
 
+          // Store reference immediately to ensure cleanup can find it
+          playerRef.current = hls;
+
           // Defensive check on the instance
           if (typeof hls.attachMedia !== 'function') {
             console.error('Created HLS instance is missing attachMedia. hlsLib:', hlsLib, 'instance:', hls);
@@ -1316,18 +1344,21 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
           hls.attachMedia(videoRef.current);
 
           hls.on(hlsLib.Events.MEDIA_ATTACHED, () => {
-            hls.loadSource(streamUrl);
+            if (isMounted) hls.loadSource(streamUrl);
           });
 
           hls.on(hlsLib.Events.MANIFEST_PARSED, () => {
-            videoRef.current.play().catch(err => {
-              console.warn('Autoplay blocked by browser:', err);
-            });
+            if (isMounted && videoRef.current) {
+              videoRef.current.play().catch(err => {
+                console.warn('Autoplay blocked by browser:', err);
+              });
+            }
           });
 
           let mediaRecoveryCount = 0;
 
           hls.on(hlsLib.Events.ERROR, (event, data) => {
+            if (!isMounted) return;
             if (data.fatal) {
               console.error('Fatal HLS error:', data.type, data.details);
 
@@ -1354,10 +1385,8 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
 
           // Add a listener to reset error state on success
           hls.on(hlsLib.Events.FRAG_BUFFERED, () => {
-            if (error) setError(null);
+            if (isMounted && error) setError(null);
           });
-
-          playerRef.current = hls;
         } else {
           setError('Your browser does not support HLS playback');
         }
@@ -1370,8 +1399,11 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
     initPlayer();
 
     // Cleanup on unmount or when dependencies change
-    return cleanupPlayer;
-  }, [streamUrl, hlsLib, retryKey]);
+    return () => {
+      isMounted = false;
+      cleanupPlayer();
+    };
+  }, [streamUrl, hlsLib, retryKey, isActive, cleanupPlayer]);
 
   const handleRetry = () => {
     setError(null);

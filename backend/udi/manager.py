@@ -317,7 +317,7 @@ class UDIManager:
         """
         self._ensure_initialized()
         if log_result:
-            logger.info(f"Returning {len(self._streams_cache)} streams from UDI")
+            logger.debug(f"Returning {len(self._streams_cache)} streams from UDI")
         return self._streams_cache.copy()
     
     def get_stream_by_id(self, stream_id: int) -> Optional[Dict[str, Any]]:

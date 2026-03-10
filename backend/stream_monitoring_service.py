@@ -537,7 +537,7 @@ class StreamMonitoringService:
                     self.monitors[session_id][stream_id] = monitor
                     # Initialize last_screenshot_time to current time to stagger first attempts
                     stream_info.last_screenshot_time = time.time()
-                    logger.info(f"Started primary monitor for stream {stream_id} in session {session_id}")
+                    logger.debug(f"Started primary monitor for stream {stream_id} in session {session_id}")
                     
                     time.sleep(session.stagger_ms / 1000.0)
                 else:
@@ -821,7 +821,7 @@ class StreamMonitoringService:
                     self.session_manager.quarantine_stream(session_id, stream_id, reason='dead')
                     self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
                 else:
-                    logger.info(f"Stream {stream_id} triggered RESTART (non-fatal) in session {session_id}. Error: {stats.error_message}")
+                    logger.debug(f"Stream {stream_id} triggered RESTART (non-fatal) in session {session_id}. Error: {stats.error_message}")
                     monitor.stop()
                     if stream_id in self.monitors.get(session_id, {}):
                         del self.monitors[session_id][stream_id]
@@ -844,7 +844,7 @@ class StreamMonitoringService:
                         else:
                             slow_duration = current_time - stream_info.low_speed_start_time
                             if slow_duration >= SLOW_SPEED_DURATION:
-                                logger.warning(f"Stream {stream_id} auto-quarantined for slow speed ({current_speed:.2f}x)")
+                                logger.info(f"Stream {stream_id} auto-quarantined for slow speed ({current_speed:.2f}x)")
                                 stream_info.status_reason = 'slow-speed'
                                 monitor.stop()
                                 if stream_id in self.monitors.get(session_id, {}):
@@ -1040,7 +1040,7 @@ class StreamMonitoringService:
         
         session = self.session_manager.get_session(session_id)
         if session:
-            logger.info(f"Refreshed streams for session {session_id}, now tracking {len(session.streams)} streams")
+            logger.debug(f"Refreshed streams for session {session_id}, now tracking {len(session.streams)} streams")
     
     def _check_screenshots(self, session_id: str):
         """Check if any streams need screenshots"""
