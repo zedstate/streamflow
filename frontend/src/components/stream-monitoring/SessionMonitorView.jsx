@@ -689,40 +689,51 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         </TabsContent>
       </Tabs>
 
-      {/* Timeline Toggle */}
-      {session && (
-        <div className="flex justify-end mb-2">
+      {/* Floating Timeline Button (Shows when timeline is hidden) */}
+      {!showTimeline && (
+        <div className="fixed bottom-6 right-6 z-[60] animate-in fade-in slide-in-from-bottom-4 duration-500">
           <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowTimeline(!showTimeline)}
-            className="text-xs text-muted-foreground flex items-center gap-1 h-8"
+            onClick={() => setShowTimeline(true)}
+            className="group relative overflow-hidden bg-zinc-950 hover:bg-zinc-900 text-white border border-white/10 rounded-full h-12 px-6 shadow-[0_8px_30px_rgb(0,0,0,0.4)] flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
           >
-            {showTimeline ? (
-              <>Hide Timeline <ChevronUp className="h-3 w-3" /></>
-            ) : (
-              <>Show Timeline <ChevronDown className="h-3 w-3" /></>
-            )}
+            <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="relative flex items-center gap-2">
+              <span className="text-sm font-semibold tracking-wide">Show Timeline</span>
+              <ChevronUp className="h-4 w-4 text-primary animate-bounce-subtle" />
+            </div>
           </Button>
+          <style jsx>{`
+            @keyframes bounce-subtle {
+              0%, 100% { transform: translateY(0); }
+              50% { transform: translateY(-3px); }
+            }
+            .animate-bounce-subtle {
+              animation: bounce-subtle 2s ease-in-out infinite;
+            }
+          `}</style>
         </div>
       )}
 
       {/* Timeline Control */}
       {
-        session && showTimeline && (
-          <TimelineControl
-            minTime={minTime}
-            maxTime={maxTime}
-            currentTime={cursorTime || maxTime}
-            onTimeChange={handleTimeChange}
-            isLive={isLive}
-            onLiveClick={handleLiveClick}
-            events={timelineEvents}
-            streams={session.streams || []}
-            zoomLevel={zoomLevel}
-            onZoomChange={setZoomLevel}
-            adPeriods={session?.ad_periods || []}
-          />
+        session && (
+          <div className={`${showTimeline ? 'block' : 'hidden'}`}>
+            <TimelineControl
+              minTime={minTime}
+              maxTime={maxTime}
+              currentTime={cursorTime || maxTime}
+              onTimeChange={handleTimeChange}
+              isLive={isLive}
+              onLiveClick={handleLiveClick}
+              events={timelineEvents}
+              streams={session.streams || []}
+              zoomLevel={zoomLevel}
+              onZoomChange={setZoomLevel}
+              adPeriods={session?.ad_periods || []}
+              showTimeline={showTimeline}
+              onToggleTimeline={() => setShowTimeline(!showTimeline)}
+            />
+          </div>
         )
       }
     </div >
@@ -1083,7 +1094,7 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
             formatter={(value) => [`${value.toFixed(2)}x`, 'Speed']}
           />
           <Line
-            type="stepAfter"
+            type="monotone"
             dataKey="speed"
             stroke="hsl(var(--primary))"
             strokeWidth={2}
@@ -1301,19 +1312,36 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
             });
           });
 
+          let mediaRecoveryCount = 0;
+
           hls.on(hlsLib.Events.ERROR, (event, data) => {
             if (data.fatal) {
               console.error('Fatal HLS error:', data.type, data.details);
-              // Only set error if it's truly unrecoverable
+
               if (data.type === hlsLib.ErrorTypes.NETWORK_ERROR) {
+                console.log('Network error, trying to restart loading...');
                 hls.startLoad();
               } else if (data.type === hlsLib.ErrorTypes.MEDIA_ERROR) {
-                hls.recoverMediaError();
+                if (mediaRecoveryCount < 3) {
+                  mediaRecoveryCount++;
+                  console.log(`Media error, attempt ${mediaRecoveryCount}/3. Recovering...`);
+                  hls.recoverMediaError();
+                } else {
+                  console.error('Too many media recovery attempts, forcing full reload');
+                  setError(`Stream recovery failed: ${data.details}`);
+                  handleRetry(); // This will trigger a re-mount via retryKey
+                }
               } else {
+                console.error('Unrecoverable HLS error, destroying player');
                 setError(`Stream error: ${data.details}`);
                 cleanupPlayer();
               }
             }
+          });
+
+          // Add a listener to reset error state on success
+          hls.on(hlsLib.Events.FRAG_BUFFERED, () => {
+            if (error) setError(null);
           });
 
           playerRef.current = hls;

@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, SkipForward } from "lucide-react";
+import { Play, Pause, SkipForward, ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 /**
@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
  * 
  * A video-editor style timeline with a time ruler, scrubbable playhead, and status-based subway lanes.
  */
-export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, streams = [], zoomLevel = 60, onZoomChange, adPeriods = [] }) {
+export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, streams = [], zoomLevel = 60, onZoomChange, adPeriods = [], showTimeline, onToggleTimeline }) {
     const [isPlaying, setIsPlaying] = useState(false);
     const containerRef = useRef(null);
     const playbackRef = useRef(null);
@@ -372,6 +372,14 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
                                     {streams.find(s => s.stream_id === hoveredStreamId)?.name || 'Stream'}
                                 </div>
                             )}
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={onToggleTimeline}
+                                className="h-7 text-[10px] text-zinc-400 hover:text-white hover:bg-white/10 flex items-center gap-1"
+                            >
+                                Hide Timeline <ChevronDown className="h-3 w-3" />
+                            </Button>
                         </div>
                     </div>
 
