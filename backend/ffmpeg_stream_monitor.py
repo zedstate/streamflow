@@ -102,6 +102,9 @@ class FFmpegStreamMonitor:
                 logger.warning(f"Monitor already running for {self.url}")
                 return False
             
+            # Stop any existing process/monitor before starting
+            self._stop_no_lock()
+            
             try:
                 # Validate URL to prevent command injection
                 if not self._validate_url(self.url):
@@ -223,35 +226,38 @@ class FFmpegStreamMonitor:
     def stop(self):
         """Stop monitoring the stream"""
         with self._lock:
-            if not self._running:
-                return
+            self._stop_no_lock()
             
-            self._running = False
-            
-            # Terminate FFmpeg process
-            if self._process:
+    def _stop_no_lock(self):
+        """
+        Internal stop method called while holding self._lock.
+        """
+        self._running = False
+        
+        # Terminate FFmpeg process
+        if self._process:
+            try:
+                self._process.terminate()
+                # Give it a moment to terminate gracefully
                 try:
-                    self._process.terminate()
-                    # Give it a moment to terminate gracefully
-                    try:
-                        self._process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        self._process.kill()
-                except Exception as e:
-                    logger.error(f"Error stopping FFmpeg process: {e}")
-                finally:
-                    self._process = None
-            
-            # Cleanup HLS directory
-            if self.hls_dir and os.path.exists(self.hls_dir):
-                try:
-                    shutil.rmtree(self.hls_dir)
-                except Exception as e:
-                    logger.error(f"Error cleaning up HLS directory {self.hls_dir}: {e}")
-            
-            self.stats.is_alive = False
-            
-            logger.info(f"Stopped monitoring stream: {self.url[:100]}")
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+            except Exception as e:
+                logger.error(f"Error stopping FFmpeg process: {e}")
+            finally:
+                self._process = None
+        
+        # Cleanup HLS directory
+        if self.hls_dir and os.path.exists(self.hls_dir):
+            try:
+                shutil.rmtree(self.hls_dir)
+            except Exception as e:
+                logger.error(f"Error cleaning up HLS directory {self.hls_dir}: {e}")
+        
+        self.stats.is_alive = False
+        
+        logger.info(f"Stopped monitoring stream: {self.url[:100]}")
     
     def _monitor_output(self):
         """Monitor FFmpeg stderr output for statistics"""
