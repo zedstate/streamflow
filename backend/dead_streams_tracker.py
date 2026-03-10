@@ -50,8 +50,14 @@ class DeadStreamsTracker:
                     return {}
                 with open(self.tracker_file, 'r') as f:
                     return json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError) as e:
-                logger.warning(f"Could not load dead streams from {self.tracker_file}: {e}")
+            except (json.JSONDecodeError, FileNotFoundError, UnicodeDecodeError) as e:
+                logger.warning(f"Could not load dead streams from {self.tracker_file}: {e}. Resetting file.")
+                # If corrupted, return empty and try to reset the file to valid JSON
+                try:
+                    with open(self.tracker_file, 'w') as f:
+                        json.dump({}, f)
+                except Exception as reset_err:
+                    logger.error(f"Failed to reset corrupted dead streams file: {reset_err}")
         return {}
     
     def _save_dead_streams(self):

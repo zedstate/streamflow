@@ -263,7 +263,6 @@ class FFmpegStreamMonitor:
             'error opening input:',
             'error opening input file',
             'error opening input files:',
-            'invalid data found when processing input',
             'server returned 4',  # HTTP errors
             'server returned 5',  # HTTP errors
             'connection refused',
@@ -283,6 +282,7 @@ class FFmpegStreamMonitor:
             'error while decoding mb',
             'missing picture in access unit',
             'error decoding the audio block',
+            'invalid data found when processing input',
         ]
         
         try:

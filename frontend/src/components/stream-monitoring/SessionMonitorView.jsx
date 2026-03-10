@@ -1177,7 +1177,7 @@ function LiveStreamsGrid({ streams, sessionId }) {
     <div className={cn(
       "relative transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]",
       expandedStreamId
-        ? "flex flex-col lg:flex-row gap-6 min-h-[700px] items-start"
+        ? "grid grid-cols-1 lg:grid-cols-[1fr,300px] gap-6 min-h-[750px] items-start"
         : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
     )}>
       {displayStreams.map((stream, index) => {
@@ -1185,9 +1185,7 @@ function LiveStreamsGrid({ streams, sessionId }) {
         const originalIdx = originalIndices[stream.stream_id] ?? 0;
 
         // Calculate animation origin based on original grid position
-        // lg grid has 3 columns
         const col = originalIdx % 3;
-        const row = Math.floor(originalIdx / 3);
 
         // Hide non-expanded streams on mobile to save space
         const isHiddenOnMobile = expandedStreamId && !isExpanded && typeof window !== 'undefined' && window.innerWidth < 1024;
@@ -1201,16 +1199,14 @@ function LiveStreamsGrid({ streams, sessionId }) {
               expandedStreamId ? (
                 isExpanded
                   ? cn(
-                    "flex-1 min-w-0 w-full h-full animate-in fade-in zoom-in-95 duration-700",
+                    "lg:col-span-1 lg:row-span-[50] w-full min-h-[650px] h-full animate-in fade-in zoom-in-95 duration-700",
                     col === 0 ? "slide-in-from-left-12" : col === 1 ? "slide-in-from-top-12" : "slide-in-from-right-12"
                   )
-                  : "w-full lg:w-[350px] h-[200px] lg:h-auto flex-shrink-0 animate-in fade-in slide-in-from-right-20 duration-1000 delay-100 overflow-y-auto"
+                  : "lg:col-start-2 w-full h-[180px] lg:h-auto animate-in fade-in slide-in-from-right-32 duration-1000 delay-150"
               ) : "w-full min-w-0"
             )}
             style={{
               zIndex: isExpanded ? 50 : 1,
-              // Maintain consistent height in layout
-              minHeight: isExpanded ? '600px' : 'auto'
             }}
           >
             <LiveStreamPlayer
@@ -1413,7 +1409,7 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
       )}>
         <div className={cn(
           "bg-black rounded-md overflow-hidden mb-3 relative group transition-all duration-500 shadow-inner border border-white/5",
-          isExpanded ? "flex-1 min-h-[300px]" : "aspect-video"
+          isExpanded ? "flex-1 min-h-[450px]" : "aspect-video"
         )}>
           {loading ? (
             <div className="w-full h-full flex items-center justify-center">
