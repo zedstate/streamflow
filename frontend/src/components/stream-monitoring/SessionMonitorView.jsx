@@ -1156,29 +1156,61 @@ function LiveStreamsGrid({ streams, sessionId }) {
     );
   }
 
-  // If a stream is expanded, use the Stage Manager layout
+  // Consistent sorting: Expanded stream always at index 0
+  const displayStreams = React.useMemo(() => {
+    if (!expandedStreamId) return streams;
+    const expanded = streams.find(s => s.stream_id === expandedStreamId);
+    if (!expanded) return streams;
+    const others = streams.filter(s => s.stream_id !== expandedStreamId);
+    return [expanded, ...others];
+  }, [streams, expandedStreamId]);
+
+  // Track original grid positions for animation origin context
+  const originalIndices = React.useMemo(() => {
+    const map = {};
+    streams.forEach((s, i) => map[s.stream_id] = i);
+    return map;
+  }, [streams]);
+
   // Unified layout with CSS transitions
   return (
-    <div className={`relative transition-all duration-500 ease-in-out ${expandedStreamId ? 'flex flex-col lg:flex-row gap-4 h-[700px]' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'}`}>
-      {streams.map((stream) => {
+    <div className={cn(
+      "relative transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]",
+      expandedStreamId
+        ? "flex flex-col lg:flex-row gap-6 min-h-[700px] items-start"
+        : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+    )}>
+      {displayStreams.map((stream, index) => {
         const isExpanded = expandedStreamId === stream.stream_id;
-        const isHidden = expandedStreamId && !isExpanded && typeof window !== 'undefined' && window.innerWidth < 1024;
+        const originalIdx = originalIndices[stream.stream_id] ?? 0;
 
-        if (isHidden) return null;
+        // Calculate animation origin based on original grid position
+        // lg grid has 3 columns
+        const col = originalIdx % 3;
+        const row = Math.floor(originalIdx / 3);
+
+        // Hide non-expanded streams on mobile to save space
+        const isHiddenOnMobile = expandedStreamId && !isExpanded && typeof window !== 'undefined' && window.innerWidth < 1024;
+        if (isHiddenOnMobile) return null;
 
         return (
           <div
             key={stream.stream_id}
             className={cn(
-              "transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)] origin-top-left",
+              "transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]",
               expandedStreamId ? (
                 isExpanded
-                  ? "flex-1 min-w-0 h-full"
-                  : "w-full lg:w-[320px] h-[180px] lg:h-auto flex-shrink-0 animate-in fade-in slide-in-from-right-8 duration-1000 overflow-y-auto"
+                  ? cn(
+                    "flex-1 min-w-0 w-full h-full animate-in fade-in zoom-in-95 duration-700",
+                    col === 0 ? "slide-in-from-left-12" : col === 1 ? "slide-in-from-top-12" : "slide-in-from-right-12"
+                  )
+                  : "w-full lg:w-[350px] h-[200px] lg:h-auto flex-shrink-0 animate-in fade-in slide-in-from-right-20 duration-1000 delay-100 overflow-y-auto"
               ) : "w-full min-w-0"
             )}
             style={{
               zIndex: isExpanded ? 50 : 1,
+              // Maintain consistent height in layout
+              minHeight: isExpanded ? '600px' : 'auto'
             }}
           >
             <LiveStreamPlayer
