@@ -715,27 +715,24 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       )}
 
       {/* Timeline Control */}
-      {
-        session && (
-          <div className={`${showTimeline ? 'block' : 'hidden'}`}>
-            <TimelineControl
-              minTime={minTime}
-              maxTime={maxTime}
-              currentTime={cursorTime || maxTime}
-              onTimeChange={handleTimeChange}
-              isLive={isLive}
-              onLiveClick={handleLiveClick}
-              events={timelineEvents}
-              streams={session.streams || []}
-              zoomLevel={zoomLevel}
-              onZoomChange={setZoomLevel}
-              adPeriods={session?.ad_periods || []}
-              showTimeline={showTimeline}
-              onToggleTimeline={() => setShowTimeline(!showTimeline)}
-            />
-          </div>
-        )
-      }
+      {session && (
+        <TimelineControl
+          className={!showTimeline ? 'hidden' : ''}
+          minTime={minTime}
+          maxTime={maxTime}
+          currentTime={cursorTime || maxTime}
+          onTimeChange={handleTimeChange}
+          isLive={isLive}
+          onLiveClick={handleLiveClick}
+          events={timelineEvents}
+          streams={session.streams || []}
+          zoomLevel={zoomLevel}
+          onZoomChange={setZoomLevel}
+          adPeriods={session?.ad_periods || []}
+          showTimeline={showTimeline}
+          onToggleTimeline={() => setShowTimeline(!showTimeline)}
+        />
+      )}
     </div >
   );
 }

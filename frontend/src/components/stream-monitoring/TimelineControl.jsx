@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
  * 
  * A video-editor style timeline with a time ruler, scrubbable playhead, and status-based subway lanes.
  */
-export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, streams = [], zoomLevel = 60, onZoomChange, adPeriods = [], showTimeline, onToggleTimeline }) {
+export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, isLive, onLiveClick, streams = [], zoomLevel = 60, onZoomChange, adPeriods = [], showTimeline, onToggleTimeline, className }) {
     const [isPlaying, setIsPlaying] = useState(false);
     const containerRef = useRef(null);
     const playbackRef = useRef(null);
@@ -342,7 +342,7 @@ export function TimelineControl({ minTime, maxTime, currentTime, onTimeChange, i
     const viewportWidth = getXPosition(currentTime) - viewportX;
 
     return (
-        <Card className="border-t sticky bottom-0 z-50 bg-zinc-950/95 backdrop-blur shadow-[0_-4px_10px_rgba(0,0,0,0.5)]">
+        <Card className={`border-t sticky bottom-0 z-50 bg-zinc-950/95 backdrop-blur shadow-[0_-4px_10px_rgba(0,0,0,0.5)] ${className || ''}`}>
             <div className="flex flex-row">
                 <div className="flex-1 flex flex-col">
                     <div className="flex items-center justify-between px-4 py-1.5 border-b border-white/5 bg-zinc-900/50">
