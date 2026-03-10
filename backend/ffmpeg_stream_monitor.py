@@ -283,6 +283,9 @@ class FFmpegStreamMonitor:
             'missing picture in access unit',
             'error decoding the audio block',
             'invalid data found when processing input',
+            'non-existing pps 0 referenced',
+            'no frame!',
+            'reference picture missing',
         ]
         
         try:
