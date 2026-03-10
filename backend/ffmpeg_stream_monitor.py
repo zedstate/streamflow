@@ -145,8 +145,8 @@ class FFmpegStreamMonitor:
                         '-avoid_negative_ts', 'make_zero',
                         '-f', 'hls',
                         '-hls_time', '2',          # 2-second segments for stability
-                        '-hls_list_size', '6',     # Keep 6 segments in playlist
-                        '-hls_flags', 'delete_segments+append_list+independent_segments',
+                        '-hls_list_size', '20',    # Keep 20 segments in playlist (40s buffer)
+                        '-hls_flags', 'delete_segments+independent_segments',
                         '-hls_segment_type', 'fmp4',
                         '-hls_segment_filename', os.path.join(self.hls_dir, "seg_%d.m4s"),
                         hls_playlist,
