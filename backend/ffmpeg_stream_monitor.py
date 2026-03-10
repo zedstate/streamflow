@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Callable
 
@@ -84,6 +85,9 @@ class FFmpegStreamMonitor:
         self._monitor_thread: Optional[threading.Thread] = None
         self._running = False
         self._lock = threading.Lock()
+        
+        # Error tracking for auto-restart
+        self._error_history = deque(maxlen=100)
     
     def start(self) -> bool:
         """
@@ -108,6 +112,7 @@ class FFmpegStreamMonitor:
                 cmd = [
                     'ffmpeg',
                     '-hide_banner', # Reduce log spam
+                    '-err_detect', 'ignore_err', # Ignore minor errors to prevent player stalling
                     '-fflags', '+genpts', # Regenerate timestamps (keep as input flag)
                     '-nostdin',     # Disable interactive stdin
                     '-i', self.url,
@@ -276,6 +281,7 @@ class FFmpegStreamMonitor:
             'concealing',
             'error while decoding mb',
             'missing picture in access unit',
+            'error decoding the audio block',
         ]
         
         try:
@@ -299,6 +305,20 @@ class FFmpegStreamMonitor:
                     if is_non_fatal_error:
                         # Log non-fatal errors at debug level to avoid spam
                         logger.debug(f"FFmpeg non-fatal error for {self.url[:50]}: {line.strip()}")
+                        
+                        # Track non-fatal error frequency for health checks
+                        current_time = time.time()
+                        self._error_history.append(current_time)
+                        
+                        # If more than 20 errors in 30 seconds, consider it a failing stream
+                        # But instead of failing, we can try to trigger a restart via is_alive = False
+                        recent_errors = [t for t in self._error_history if current_time - t < 30]
+                        if len(recent_errors) > 20:
+                            logger.warning(f"Excessive decoding errors ({len(recent_errors)} in 30s) for {self.url[:50]}. Triggering restart.")
+                            self.stats.error_message = "Excessive decoding errors"
+                            self.stats.is_alive = False
+                            self._running = False
+                            break
                     else:
                         # Log other errors at warning level
                         logger.warning(f"FFmpeg error for {self.url[:50]}: {line.strip()}")
