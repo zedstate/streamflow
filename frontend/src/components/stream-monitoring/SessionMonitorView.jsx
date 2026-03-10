@@ -1156,52 +1156,39 @@ function LiveStreamsGrid({ streams, sessionId }) {
   }
 
   // If a stream is expanded, use the Stage Manager layout
-  if (expandedStreamId) {
-    const mainStream = streams.find(s => s.stream_id === expandedStreamId);
-    const thumbnailStreams = streams.filter(s => s.stream_id !== expandedStreamId);
+  // Unified layout with CSS transitions
+  return (
+    <div className={`relative transition-all duration-500 ease-in-out ${expandedStreamId ? 'flex flex-col lg:flex-row gap-4 h-[700px]' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'}`}>
+      {streams.map((stream) => {
+        const isExpanded = expandedStreamId === stream.stream_id;
+        const isHidden = expandedStreamId && !isExpanded && typeof window !== 'undefined' && window.innerWidth < 1024;
 
-    return (
-      <div className="flex flex-col lg:flex-row gap-4 h-[600px]">
-        {/* Main large player */}
-        <div className="flex-1 min-w-0 h-full">
-          {mainStream && (
-            <LiveStreamPlayer
-              stream={mainStream}
-              hlsLib={hlsLib}
-              isExpanded={true}
-              onToggleExpand={() => setExpandedStreamId(null)}
-            />
-          )}
-        </div>
+        if (isHidden) return null;
 
-        {/* Thumbnails list on the right */}
-        <div className="w-full lg:w-[350px] flex-shrink-0 h-full overflow-y-auto pr-2 space-y-4 custom-scrollbar">
-          {thumbnailStreams.map((stream) => (
+        return (
+          <div
+            key={stream.stream_id}
+            className={cn(
+              "transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)] origin-top-left",
+              expandedStreamId ? (
+                isExpanded
+                  ? "flex-1 min-w-0 h-full"
+                  : "w-full lg:w-[320px] h-[180px] lg:h-auto flex-shrink-0 animate-in fade-in slide-in-from-right-8 duration-1000 overflow-y-auto"
+              ) : "w-full min-w-0"
+            )}
+            style={{
+              zIndex: isExpanded ? 50 : 1,
+            }}
+          >
             <LiveStreamPlayer
-              key={stream.stream_id}
               stream={stream}
               hlsLib={hlsLib}
-              isExpanded={false}
-              onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
+              isExpanded={isExpanded}
+              onToggleExpand={() => setExpandedStreamId(isExpanded ? null : stream.stream_id)}
             />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // Regular grid layout when no stream is expanded
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {streams.map((stream) => (
-        <LiveStreamPlayer
-          key={stream.stream_id}
-          stream={stream}
-          hlsLib={hlsLib}
-          isExpanded={false}
-          onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
-        />
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1383,9 +1370,18 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, onToggleExpand }) {
   };
 
   return (
-    <Card className={isExpanded ? "h-full flex flex-col" : ""}>
-      <CardContent className={`p-4 ${isExpanded ? "flex flex-col h-full" : ""}`}>
-        <div className={`bg-black rounded-md overflow-hidden mb-3 relative group ${isExpanded ? "flex-1 min-h-0" : "aspect-video"}`}>
+    <Card className={cn(
+      "transition-all duration-500 ease-in-out border border-white/5",
+      isExpanded ? "h-full shadow-2xl ring-1 ring-primary/20" : "hover:scale-[1.02] shadow-md"
+    )}>
+      <CardContent className={cn(
+        "p-4 transition-all duration-500",
+        isExpanded ? "flex flex-col h-full bg-zinc-950/40" : ""
+      )}>
+        <div className={cn(
+          "bg-black rounded-md overflow-hidden mb-3 relative group transition-all duration-500 shadow-inner border border-white/5",
+          isExpanded ? "flex-1 min-h-[300px]" : "aspect-video"
+        )}>
           {loading ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
