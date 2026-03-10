@@ -961,7 +961,12 @@ class StreamSessionManager:
                 session.quarantined_stream_ids.add(stream_id)
                 
                 self._save_sessions()
-        logger.info(f"Manually quarantined stream {stream_id} in session {session_id}")
+        
+        log_msg = f"Quarantined stream {stream_id} in session {session_id}"
+        if reason == "manual":
+            logger.info(f"Manually {log_msg.lower()}")
+        else:
+            logger.info(f"Automatically {log_msg.lower()} (Reason: {reason})")
         
         # Remove from Dispatcharr channel if requested
         if remove_from_dispatcharr:

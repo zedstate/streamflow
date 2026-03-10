@@ -40,6 +40,7 @@ class FFmpegStats:
     time: float = 0.0  # seconds
     last_updated: float = 0.0
     is_alive: bool = False
+    is_fatal: bool = False
     error_message: Optional[str] = None
     audio_language: Optional[str] = None
     # Additional fields for bitrate calculation
@@ -310,13 +311,14 @@ class FFmpegStreamMonitor:
                         current_time = time.time()
                         self._error_history.append(current_time)
                         
-                        # If more than 20 errors in 30 seconds, consider it a failing stream
-                        # But instead of failing, we can try to trigger a restart via is_alive = False
+                        # If more than 50 errors in 30 seconds, consider it a stalled stream that needs restart
+                        # Increased from 20 to 50 to be less sensitive to transient audio glitches
                         recent_errors = [t for t in self._error_history if current_time - t < 30]
-                        if len(recent_errors) > 20:
+                        if len(recent_errors) > 50:
                             logger.warning(f"Excessive decoding errors ({len(recent_errors)} in 30s) for {self.url[:50]}. Triggering restart.")
                             self.stats.error_message = "Excessive decoding errors"
                             self.stats.is_alive = False
+                            self.stats.is_fatal = False # Explicitly non-fatal, just needs restart
                             self._running = False
                             break
                     else:
@@ -326,6 +328,7 @@ class FFmpegStreamMonitor:
                     if is_fatal or 'fatal' in line_lower:
                         self.stats.error_message = line.strip()
                         self.stats.is_alive = False
+                        self.stats.is_fatal = True # Fatal error, stop and quarantine
                         # Stop monitoring on fatal error
                         logger.error(f"Fatal FFmpeg error detected, stopping monitor for {self.url[:50]}")
                         self._running = False

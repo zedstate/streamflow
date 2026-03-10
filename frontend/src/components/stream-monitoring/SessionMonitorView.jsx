@@ -1147,15 +1147,6 @@ function LiveStreamsGrid({ streams, sessionId }) {
 
   const [expandedStreamId, setExpandedStreamId] = useState(null);
 
-  if (loading) {
-    return (
-      <div className="text-center py-12">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-        <p className="text-muted-foreground">Loading stream player...</p>
-      </div>
-    );
-  }
-
   // Consistent sorting: Expanded stream always at index 0
   const displayStreams = React.useMemo(() => {
     if (!expandedStreamId) return streams;
@@ -1171,6 +1162,15 @@ function LiveStreamsGrid({ streams, sessionId }) {
     streams.forEach((s, i) => map[s.stream_id] = i);
     return map;
   }, [streams]);
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+        <p className="text-muted-foreground">Loading stream player...</p>
+      </div>
+    );
+  }
 
   // Unified layout with CSS transitions
   return (

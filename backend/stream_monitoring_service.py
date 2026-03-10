@@ -619,21 +619,34 @@ class StreamMonitoringService:
             return
         
         if not stats.is_alive and stats.error_message:
-            logger.warning(f"Stream {stream_id} marked as dead in session {session_id}: {stats.error_message}")
-            self.dead_streams_tracker.mark_as_dead(
-                stream_url=stream_info.url,
-                stream_id=stream_id,
-                stream_name=stream_info.name,
-                channel_id=session.channel_id
-            )
-            if session_id in self.monitors and stream_id in self.monitors[session_id]:
-                monitor = self.monitors[session_id][stream_id]
-                monitor.stop()
-                del self.monitors[session_id][stream_id]
+            # Check if this is a fatal death or just needs a restart
+            is_fatal = getattr(stats, 'is_fatal', True)  # Default to fatal for safety if not specified
             
-            # Quarantine via session manager to update blocklist
-            self.session_manager.quarantine_stream(session_id, stream_id)
-            self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
+            if is_fatal:
+                logger.warning(f"Stream {stream_id} marked as dead (FATAL) in session {session_id}: {stats.error_message}")
+                self.dead_streams_tracker.mark_as_dead(
+                    stream_url=stream_info.url,
+                    stream_id=stream_id,
+                    stream_name=stream_info.name,
+                    channel_id=session.channel_id
+                )
+                
+                # Stop and cleanup monitor
+                if session_id in self.monitors and stream_id in self.monitors[session_id]:
+                    monitor = self.monitors[session_id][stream_id]
+                    monitor.stop()
+                    del self.monitors[session_id][stream_id]
+                
+                # Quarantine via session manager to update blocklist
+                self.session_manager.quarantine_stream(session_id, stream_id, reason=stats.error_message)
+                self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
+            else:
+                logger.info(f"Stream {stream_id} needs RESTART (non-fatal error) in session {session_id}: {stats.error_message}")
+                # Just stop and remove from monitors, the next monitoring loop will restart it
+                if session_id in self.monitors and stream_id in self.monitors[session_id]:
+                    monitor = self.monitors[session_id][stream_id]
+                    monitor.stop()
+                    del self.monitors[session_id][stream_id]
             return
         
         if stats.width > 0:
@@ -798,23 +811,31 @@ class StreamMonitoringService:
                 continue
 
             if not stats.is_alive:
-                logger.warning(f"Stream {stream_id} is dead in session {session_id}, quarantining")
-                stream_info.status_reason = 'dead'
-                monitor.stop()
-                if stream_id in self.monitors.get(session_id, {}):
-                    del self.monitors[session_id][stream_id]
-                self.session_manager.quarantine_stream(session_id, stream_id)
-                self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
-            else:
-                time_since_update = current_time - stats.last_updated
-                if time_since_update > (session.timeout_ms / 1000.0):
-                    logger.warning(f"Stream {stream_id} timed out in session {session_id} (no updates for {time_since_update:.1f}s)")
-                    stream_info.status_reason = 'timeout'
+                is_fatal = getattr(stats, 'is_fatal', True)
+                if is_fatal:
+                    logger.warning(f"Stream {stream_id} is dead (FATAL) in session {session_id}, quarantining. Error: {stats.error_message}")
+                    stream_info.status_reason = 'dead'
                     monitor.stop()
                     if stream_id in self.monitors.get(session_id, {}):
                         del self.monitors[session_id][stream_id]
-                    self.session_manager.quarantine_stream(session_id, stream_id)
-                    self._remove_stream_from_dispatcharr(session_id, stream_id, "timed-out")
+                    self.session_manager.quarantine_stream(session_id, stream_id, reason='dead')
+                    self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
+                else:
+                    logger.info(f"Stream {stream_id} triggered RESTART (non-fatal) in session {session_id}. Error: {stats.error_message}")
+                    monitor.stop()
+                    if stream_id in self.monitors.get(session_id, {}):
+                        del self.monitors[session_id][stream_id]
+            else:
+                time_since_update = current_time - stats.last_updated
+                if time_since_update > (session.timeout_ms / 1000.0):
+                    # Timeout is now a RESTART first, not immediate quarantine
+                    logger.warning(f"Stream {stream_id} timed out in session {session_id} ({time_since_update:.1f}s), triggering restart")
+                    stream_info.status_reason = 'timeout-restart'
+                    monitor.stop()
+                    if stream_id in self.monitors.get(session_id, {}):
+                        del self.monitors[session_id][stream_id]
+                    # Note: We don't quarantine yet, let it try to restart once. 
+                    # If it keeps timing out, reliability score will plummet and it might be quarantined via score logic.
                 else:
                     current_speed = stats.speed if stats.speed is not None else 0.0
                     if current_speed < SLOW_SPEED_THRESHOLD:
