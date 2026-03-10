@@ -136,16 +136,16 @@ class FFmpegStreamMonitor:
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
                         
                         # HLS Output for Web Preview
-                        '-map', '0:v', '-map', '0:a?', 
+                        '-map', '0:v', '-map', '0:a:0?', 
                         '-c:v', 'copy', 
                         '-c:a', 'aac', '-ac', '2', '-ar', '44100', '-af', 'aresample=async=1',
                         '-avoid_negative_ts', 'make_zero',
                         '-f', 'hls',
-                        '-hls_time', '1',          # 1-second segments for low latency
+                        '-hls_time', '2',          # 2-second segments for stability
                         '-hls_list_size', '6',     # Keep 6 segments in playlist
                         '-hls_flags', 'delete_segments+append_list+independent_segments',
-                        '-hls_segment_type', 'mpegts',
-                        '-hls_segment_filename', os.path.join(self.hls_dir, "seg_%d.ts"),
+                        '-hls_segment_type', 'fmp4',
+                        '-hls_segment_filename', os.path.join(self.hls_dir, "seg_%d.m4s"),
                         hls_playlist,
                         
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
