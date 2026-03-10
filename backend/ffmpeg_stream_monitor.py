@@ -269,9 +269,7 @@ class FFmpegStreamMonitor:
             'no route to host',
             'connection timed out',
             'end of file',
-            'i/o error',
             'protocol not found',
-            'no such file or directory',
         ]
         
         # Non-fatal error patterns that should be logged at debug level only
@@ -286,6 +284,8 @@ class FFmpegStreamMonitor:
             'non-existing pps 0 referenced',
             'no frame!',
             'reference picture missing',
+            'i/o error',
+            'no such file or directory',
         ]
         
         try:
