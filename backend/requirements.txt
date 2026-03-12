@@ -9,3 +9,4 @@ imagehash
 imutils
 opencv-python-headless
 waitress
+m3u8

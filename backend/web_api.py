@@ -31,6 +31,7 @@ from scheduling_service import get_scheduling_service
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
 from automation_config_manager import get_automation_config_manager
+from monitoring_hls_proxy import hls_proxy_manager
 
 # Pre-compiled regex pattern for whitespace conversion (performance optimization)
 # This pattern matches one or more spaces that are NOT preceded by a backslash
@@ -5231,16 +5232,51 @@ def get_stream_viewer_url(stream_id):
 
 @app.route('/api/stream/hls/<int:stream_id>/<filename>', methods=['GET'])
 def serve_hls_file(stream_id, filename):
-    """Serve HLS playlists and segments from the temporary HLS storage."""
-    # Ensure filename is safe (though Flask does some validation)
+    """Serve HLS playlists and segments from the temporary HLS storage using the in-memory proxy."""
     filename = secure_filename(filename)
-    stream_hls_dir = os.path.join(HLS_ROOT, f"stream_{stream_id}")
     
-    # Check if directory exists
-    if not os.path.exists(stream_hls_dir):
-        return jsonify({"error": "Stream session not found or expired"}), 404
+    proxy = hls_proxy_manager.get_proxy(stream_id)
+    
+    if filename == 'playlist.m3u8':
+        playlist = proxy.generate_playlist()
+        response = make_response(playlist)
+        response.headers['Content-Type'] = 'application/vnd.apple.mpegurl'
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return response
         
-    return send_from_directory(stream_hls_dir, filename)
+    elif filename.startswith('init_') and filename.endswith('.mp4'):
+        try:
+            seq = int(filename.split('_')[1].split('.')[0])
+            data = proxy.get_init(seq)
+            if data:
+                response = make_response(data)
+                response.headers['Content-Type'] = 'video/mp4'
+                return response
+        except ValueError:
+            pass
+    
+    elif filename.startswith('seg_') and filename.endswith('.m4s'):
+        try:
+            seq = int(filename.split('_')[1].split('.')[0])
+            data = proxy.get_segment(seq)
+            if data:
+                response = make_response(data)
+                response.headers['Content-Type'] = 'video/iso.segment'
+                return response
+        except ValueError:
+            pass
+            
+    # Fallback for anything else (or if proxy buffer missed it due to restart race conditions)
+    stream_hls_dir = os.path.join(HLS_ROOT, f"stream_{stream_id}")
+    if os.path.exists(stream_hls_dir):
+        file_path = os.path.join(stream_hls_dir, filename)
+        if os.path.exists(file_path):
+            # Special case: original init.mp4 requested directly instead of proxy seq
+            if filename == 'init.mp4':
+                return send_from_directory(stream_hls_dir, filename)
+            return send_from_directory(stream_hls_dir, filename)
+            
+    return jsonify({"error": "File not found"}), 404
 
 
 @app.route('/api/stream/proxy/<int:stream_id>', methods=['GET'])
