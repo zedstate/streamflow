@@ -1106,44 +1106,33 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
 }
 
 // Screenshot Dialog Component  
-// LiveStreamsGrid Component with hls.js support
+// LiveStreamsGrid Component with mpegts.js support
 function LiveStreamsGrid({ streams, sessionId, isActive }) {
-  const [hlsLib, setHlsLib] = React.useState(null);
+  const [mpegtsLib, setMpegtsLib] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
 
   useEffect(() => {
-    // Import hls.js once for all stream players
-    const loadHls = async () => {
+    // Import mpegts.js once for all stream players
+    const loadMpegts = async () => {
       try {
-        const HlsModule = await import('hls.js');
-
-        // Robustly find the Hls constructor
-        let Hls = HlsModule.default;
-
-        // Handle various module formats (ESM default, named, or CJS export)
-        if (!Hls || (typeof Hls !== 'function' && !Hls.isSupported)) {
-          Hls = HlsModule.Hls || HlsModule;
+        const MpegtsModule = await import('mpegts.js');
+        let mpegts = MpegtsModule.default || MpegtsModule;
+        
+        if (typeof mpegts.createPlayer !== 'function') {
+           mpegts = MpegtsModule.mpegts || mpegts;
         }
 
-        // Final verification that we have something usable
-        if (typeof Hls !== 'function' && (!Hls || typeof Hls.isSupported !== 'function')) {
-          console.error('HLS constructor not found in module structure:', HlsModule);
-          setError('HLS library structure is invalid');
-          setLoading(false);
-          return;
-        }
-
-        setHlsLib(() => Hls);
+        setMpegtsLib(() => mpegts);
         setLoading(false);
       } catch (err) {
-        console.error('Failed to dynamic import hls.js:', err);
+        console.error('Failed to dynamic import mpegts.js:', err);
         setError(`Failed to load player library: ${err.message}`);
         setLoading(false);
       }
     };
 
-    loadHls();
+    loadMpegts();
   }, []);
 
   const [expandedStreamId, setExpandedStreamId] = useState(null);
@@ -1181,7 +1170,7 @@ function LiveStreamsGrid({ streams, sessionId, isActive }) {
           <div key={stream.stream_id} className="w-full min-w-0">
             <LiveStreamPlayer
               stream={stream}
-              hlsLib={hlsLib}
+              mpegtsLib={mpegtsLib}
               isExpanded={false}
               isActive={isActive}
               onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
@@ -1202,7 +1191,7 @@ function LiveStreamsGrid({ streams, sessionId, isActive }) {
       <div className="flex-1 w-full animate-in fade-in zoom-in-95 duration-700">
         <LiveStreamPlayer
           stream={expandedStream}
-          hlsLib={hlsLib}
+          mpegtsLib={mpegtsLib}
           isExpanded={true}
           isActive={isActive}
           onToggleExpand={() => setExpandedStreamId(null)}
@@ -1215,7 +1204,7 @@ function LiveStreamsGrid({ streams, sessionId, isActive }) {
           <div key={stream.stream_id} className="w-full animate-in fade-in slide-in-from-right-12 duration-500">
             <LiveStreamPlayer
               stream={stream}
-              hlsLib={hlsLib}
+              mpegtsLib={mpegtsLib}
               isExpanded={false}
               isActive={isActive}
               onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
@@ -1227,8 +1216,8 @@ function LiveStreamsGrid({ streams, sessionId, isActive }) {
   );
 }
 
-// Live Stream Player Component using hls.js
-function LiveStreamPlayer({ stream, hlsLib, isExpanded, isActive, onToggleExpand }) {
+// Live Stream Player Component using mpegts.js
+function LiveStreamPlayer({ stream, mpegtsLib, isExpanded, isActive, onToggleExpand }) {
   const videoRef = React.useRef(null);
   const playerRef = React.useRef(null);
   const [streamUrl, setStreamUrl] = React.useState(null);
@@ -1284,8 +1273,8 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, isActive, onToggleExpand
   }, [stream.stream_id]);
 
   useEffect(() => {
-    // Initialize hls.js player when stream URL is available AND active
-    if (!streamUrl || !videoRef.current || !hlsLib || !isActive) {
+    // Initialize mpegts.js player when stream URL is available AND active
+    if (!streamUrl || !videoRef.current || !mpegtsLib || !isActive) {
       cleanupPlayer();
       return;
     }
@@ -1294,116 +1283,51 @@ function LiveStreamPlayer({ stream, hlsLib, isExpanded, isActive, onToggleExpand
 
     const initPlayer = async () => {
       try {
-        // Clean up any existing player before creating a new one
         cleanupPlayer();
-
         if (!isMounted) return;
 
-        // Debug: Log the hlsLib shape if it seems wrong
-        if (hlsLib && typeof hlsLib !== 'function' && !hlsLib.isSupported) {
-          console.error('hlsLib is not a constructor or lacks isSupported:', hlsLib);
-          setError('HLS library configuration error');
-          return;
-        }
-
-        // 1. Check for native HLS support (Safari)
-        if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
-          videoRef.current.src = streamUrl;
-          videoRef.current.addEventListener('loadedmetadata', () => {
-            if (isMounted && videoRef.current) {
-              videoRef.current.play().catch(err => {
-                console.warn('Autoplay blocked by browser:', err);
-              });
-            }
-          });
-        }
-        // 2. Use hls.js for other browsers (Chrome, Firefox)
-        else if (hlsLib.isSupported && hlsLib.isSupported()) {
-          const hls = new hlsLib({
+        if (mpegtsLib.getFeatureList().mseLivePlayback) {
+          const player = mpegtsLib.createPlayer({
+            type: 'mpegts',
+            isLive: true,
+            url: streamUrl,
+            enableStashBuffer: false, // Reduced latency
+            liveBufferLatencyChasing: true, // Reduced latency
+          }, {
             enableWorker: true,
-            lowLatencyMode: true,
-            backBufferLength: 0,
-            maxBufferLength: 3,
-            maxMaxBufferLength: 5,
-            liveSyncDurationCount: 3,
-            liveMaxLatencyDurationCount: 10,
-            manifestLoadingMaxRetry: 10,
-            levelLoadingMaxRetry: 10,
+            lazyLoad: false,
           });
 
-          // Store reference immediately to ensure cleanup can find it
-          playerRef.current = hls;
-
-          // Defensive check on the instance
-          if (typeof hls.attachMedia !== 'function') {
-            console.error('Created HLS instance is missing attachMedia. hlsLib:', hlsLib, 'instance:', hls);
-            throw new Error('HLS instance initialization failed: missing attachMedia');
-          }
-
-          // Correct HLS.js sequence: attach then load
-          hls.attachMedia(videoRef.current);
-
-          hls.on(hlsLib.Events.MEDIA_ATTACHED, () => {
-            if (isMounted) hls.loadSource(streamUrl);
-          });
-
-          hls.on(hlsLib.Events.MANIFEST_PARSED, () => {
-            if (isMounted && videoRef.current) {
-              videoRef.current.play().catch(err => {
-                console.warn('Autoplay blocked by browser:', err);
-              });
+          playerRef.current = player;
+          player.attachMediaElement(videoRef.current);
+          player.load();
+          
+          player.on(mpegtsLib.Events.ERROR, (type, detail, info) => {
+            console.error('mpegts error:', type, detail, info);
+            if (isMounted) {
+              setError(`Playback error: ${detail}`);
             }
           });
 
-          let mediaRecoveryCount = 0;
-
-          hls.on(hlsLib.Events.ERROR, (event, data) => {
-            if (!isMounted) return;
-            if (data.fatal) {
-              console.error('Fatal HLS error:', data.type, data.details);
-
-              if (data.type === hlsLib.ErrorTypes.NETWORK_ERROR) {
-                console.log('Network error, trying to restart loading...');
-                hls.startLoad();
-              } else if (data.type === hlsLib.ErrorTypes.MEDIA_ERROR) {
-                if (mediaRecoveryCount < 3) {
-                  mediaRecoveryCount++;
-                  console.log(`Media error, attempt ${mediaRecoveryCount}/3. Recovering...`);
-                  hls.recoverMediaError();
-                } else {
-                  console.error('Too many media recovery attempts, forcing full reload');
-                  setError(`Stream recovery failed: ${data.details}`);
-                  handleRetry(); // This will trigger a re-mount via retryKey
-                }
-              } else {
-                console.error('Unrecoverable HLS error, destroying player');
-                setError(`Stream error: ${data.details}`);
-                cleanupPlayer();
-              }
-            }
-          });
-
-          // Add a listener to reset error state on success
-          hls.on(hlsLib.Events.FRAG_BUFFERED, () => {
-            if (isMounted && error) setError(null);
+          player.play().catch(err => {
+            console.warn('Autoplay blocked:', err);
           });
         } else {
-          setError('Your browser does not support HLS playback');
+          setError('Browser does not support MPEG-TS playback');
         }
       } catch (err) {
-        console.error('Failed to initialize HLS player:', err);
-        setError(`Failed to initialize player: ${err.message}`);
+        console.error('Error initializing mpegts player:', err);
+        if (isMounted) setError(`Player error: ${err.message}`);
       }
     };
 
     initPlayer();
 
-    // Cleanup on unmount or when dependencies change
     return () => {
       isMounted = false;
       cleanupPlayer();
     };
-  }, [streamUrl, hlsLib, retryKey, isActive, cleanupPlayer]);
+  }, [streamUrl, mpegtsLib, retryKey, isActive, cleanupPlayer]);
 
   const handleRetry = () => {
     setError(null);
