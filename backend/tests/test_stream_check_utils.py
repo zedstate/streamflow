@@ -100,22 +100,7 @@ class TestGetStreamInfo(unittest.TestCase):
 class TestGetStreamBitrate(unittest.TestCase):
     """Test extracting stream bitrate with ffmpeg."""
     
-    @patch('subprocess.run')
-    def test_bitrate_method_1_statistics(self, mock_run):
-        """Test bitrate detection using Statistics line."""
-        mock_output = """
-        Statistics: 12500000 bytes read, duration: 30s
-        """
-        mock_run.return_value = MagicMock(
-            stderr=mock_output,
-            returncode=0
-        )
-        
-        bitrate, status, elapsed = get_stream_bitrate('http://test.stream', duration=30, timeout=10)
-        
-        self.assertIsNotNone(bitrate)
-        self.assertAlmostEqual(bitrate, 3333.33, places=1)
-        self.assertEqual(status, "OK")
+    # Removed test_bitrate_method_1_statistics as Method 1 (Statistics: bytes read) is deprecated.
     
     @patch('subprocess.run')
     def test_bitrate_method_2_progress(self, mock_run):
@@ -159,6 +144,12 @@ class TestAnalyzeStream(unittest.TestCase):
             'resolution': '1920x1080',
             'fps': 30.0,
             'bitrate_kbps': 5000.0,
+            'hdr_format': None,
+            'pixel_format': None,
+            'audio_sample_rate': None,
+            'audio_channels': None,
+            'channel_layout': None,
+            'audio_bitrate': None,
             'status': 'OK',
             'elapsed_time': 30.5
         }
@@ -192,6 +183,12 @@ class TestAnalyzeStream(unittest.TestCase):
             'resolution': '0x0',
             'fps': 0,
             'bitrate_kbps': None,
+            'hdr_format': None,
+            'pixel_format': None,
+            'audio_sample_rate': None,
+            'audio_channels': None,
+            'channel_layout': None,
+            'audio_bitrate': None,
             'status': 'Error',
             'elapsed_time': 0
         }
@@ -219,6 +216,12 @@ class TestAnalyzeStream(unittest.TestCase):
                 'resolution': '1920x1080',
                 'fps': 30.0,
                 'bitrate_kbps': None,
+                'hdr_format': None,
+                'pixel_format': None,
+                'audio_sample_rate': None,
+                'audio_channels': None,
+                'channel_layout': None,
+                'audio_bitrate': None,
                 'status': 'Timeout',
                 'elapsed_time': 40
             },
@@ -228,6 +231,12 @@ class TestAnalyzeStream(unittest.TestCase):
                 'resolution': '1920x1080',
                 'fps': 30.0,
                 'bitrate_kbps': 5000.0,
+                'hdr_format': None,
+                'pixel_format': None,
+                'audio_sample_rate': None,
+                'audio_channels': None,
+                'channel_layout': None,
+                'audio_bitrate': None,
                 'status': 'OK',
                 'elapsed_time': 30.5
             }
