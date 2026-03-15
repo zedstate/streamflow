@@ -152,6 +152,7 @@ class StreamProxy:
             # Bind to all interfaces or localhost? FFmpeg sends to 127.0.0.1
             sock.bind(('127.0.0.1', self.port))
             sock.settimeout(1.0) # Short timeout to allow periodically checking for lingering cleanup
+            residual = b'' # Helper for aligning MPEG-TS packets (188 bytes)
             while self.running:
                 try:
                     # Short timeout to allow periodically checking for lingering cleanup
@@ -169,6 +170,17 @@ class StreamProxy:
                     continue
 
                 if data:
+                    data = residual + data
+                    excess = len(data) % 188
+                    if excess > 0:
+                        residual = data[-excess:]
+                        data = data[:-excess]
+                    else:
+                        residual = b''
+                    
+                    if not data:
+                        continue
+
                     with self.lock:
                         if not self.clients:
                             # Discard data while lingering, but check for timeout
