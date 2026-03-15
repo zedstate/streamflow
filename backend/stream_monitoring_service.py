@@ -727,6 +727,12 @@ class StreamMonitoringService:
             if stats.bitrate > 0:
                 stream_info.bitrate = int(stats.bitrate)
             
+            # Update transport health
+            health_report = monitor.get_transport_health()
+            stream_info.transport_health = health_report['status']
+            stream_info.transport_health_summary = health_report['summary']
+            stream_info.transport_error_density = health_report['error_density']
+            
             # Update reliability score
             scoring_window = self.session_manager.scoring_windows.get(session_id, {}).get(stream_id)
             current_score = stream_info.reliability_score

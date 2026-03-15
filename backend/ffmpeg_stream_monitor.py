@@ -14,11 +14,168 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict, Any
 
 from logging_config import setup_logging
 
 logger = setup_logging(__name__)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Transport Health Evaluation
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Diagnostic patterns grouped by impact severity
+_DIAG_PATTERNS: Dict[str, list] = {
+    # Minor decoding artefacts
+    'decode_error': [
+        'error while decoding mb',
+        'corrupt decoded frame',
+        'concealing',
+        'missing picture in access unit',
+        'reference picture missing',
+        'non-existing pps',
+        'decode_slice_header error',
+    ],
+    # Corrupt transport-layer packets
+    'corrupt_packet': [
+        'corrupt input packet',
+        'invalid data found when processing input',
+        'reference frames exceeds max',
+    ],
+    # Fatal / complete stream failure signals
+    'fatal': [
+        'connection timed out',
+        'server returned 4',
+        'server returned 5',
+        'end of file',
+        'error opening input',
+        'connection refused',
+        'no route to host',
+    ],
+}
+
+# Freeze / black-screen detection (seconds)
+_STALE_FREEZE_THRESHOLD = 5.0   # seconds without speed/bitrate update → freeze
+
+
+class DiagnosticTracker:
+    """
+    Maintains rolling 60-second error counts per category and evaluates
+    transport health according to the defined threshold matrix.
+    """
+
+    WINDOW = 60.0  # seconds
+
+    def __init__(self):
+        self._events: Dict[str, deque] = {
+            cat: deque() for cat in _DIAG_PATTERNS
+        }
+        self._lock = threading.Lock()
+        self._fatal_detected = False
+        self._last_stats_time: float = time.time()  # for freeze detection
+        self._freeze_start: Optional[float] = None
+
+    # ──────────────────────────────────────────────────────────
+    # Feed
+    # ──────────────────────────────────────────────────────────
+
+    def record_line(self, line_lower: str, ts: float = None) -> None:
+        """Parse a single FFmpeg stderr line and record any diagnostic events."""
+        if ts is None:
+            ts = time.time()
+
+        with self._lock:
+            for cat, patterns in _DIAG_PATTERNS.items():
+                if any(p in line_lower for p in patterns):
+                    self._events[cat].append(ts)
+                    if cat == 'fatal':
+                        self._fatal_detected = True
+                    break  # one category per line
+
+    def record_stats_update(self) -> None:
+        """Call every time FFmpeg emits a live stats line (speed/bitrate update)."""
+        with self._lock:
+            self._last_stats_time = time.time()
+            self._freeze_start = None  # stats flowing → no freeze
+
+    def _prune(self, ts: float) -> None:
+        """Remove events older than the rolling window."""
+        cutoff = ts - self.WINDOW
+        for dq in self._events.values():
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+
+    def _count(self, categories: list, ts: float) -> int:
+        return sum(len(self._events[c]) for c in categories if c in self._events)
+
+    # ──────────────────────────────────────────────────────────
+    # Evaluation
+    # ──────────────────────────────────────────────────────────
+
+    def get_transport_health(self) -> Dict[str, Any]:
+        """Evaluate current transport health and return a structured report."""
+        ts = time.time()
+        with self._lock:
+            self._prune(ts)
+
+            # ── Freeze detection ──────────────────────────────
+            freeze_secs = 0.0
+            if self._last_stats_time > 0:
+                stale = ts - self._last_stats_time
+                if stale >= _STALE_FREEZE_THRESHOLD:
+                    # Track when the freeze started
+                    if self._freeze_start is None:
+                        self._freeze_start = self._last_stats_time + _STALE_FREEZE_THRESHOLD
+                    freeze_secs = ts - self._freeze_start
+
+            # ── Error densities (per minute) ──────────────────
+            decode_count = self._count(['decode_error'], ts)
+            corrupt_count = self._count(['corrupt_packet'], ts)
+            fatal_detected = self._fatal_detected
+
+            # Peak density = worst category per minute
+            peak_density = max(decode_count, corrupt_count) / (self.WINDOW / 60.0)
+
+            # ── Health thresholds ─────────────────────────────
+            #
+            # CRITICAL: fatal signals, OR freeze > 15s, OR continuous corruption
+            # SEVERE:   corrupt_packet ≥ 20/min, OR freeze 5–15s
+            # DEGRADED: decode/corrupt 5–20/min, OR freeze 2–4s
+            # HEALTHY:  < 3 minor decode errors/min, no freeze/black-screen
+
+            if fatal_detected or freeze_secs > 15:
+                status = 'Critical'
+                if fatal_detected:
+                    summary = 'Critical failure due to stream connection error or total data loss.'
+                else:
+                    summary = f'Critical failure: stream frozen for {freeze_secs:.0f} seconds.'
+            elif corrupt_count >= 20 or (5 <= freeze_secs <= 15):
+                status = 'Severe'
+                if freeze_secs >= 5:
+                    summary = f'Severe degradation: stream frozen for {freeze_secs:.0f} seconds with heavy packet corruption.'
+                else:
+                    summary = f'Severe degradation: {corrupt_count} corrupt transport packets in the last 60 seconds.'
+            elif (decode_count + corrupt_count) >= 5 or (2 <= freeze_secs < 5):
+                status = 'Degraded'
+                if freeze_secs >= 2:
+                    summary = f'Noticeable instability: brief freeze of {freeze_secs:.0f} seconds detected alongside decoding artefacts.'
+                else:
+                    summary = f'Noticeable instability: {decode_count + corrupt_count} artefact/corruption errors per minute.'
+            else:
+                status = 'Healthy'
+                if decode_count > 0:
+                    summary = f'Normal network jitter: {decode_count} minor decoding error(s) in the last 60 seconds.'
+                else:
+                    summary = 'Stream transport is clean and stable.'
+
+            return {
+                'status': status,
+                'summary': summary,
+                'error_density': round(peak_density, 1),
+                'freeze_secs': round(freeze_secs, 1),
+                'decode_errors': decode_count,
+                'corrupt_packets': corrupt_count,
+            }
 
 # Constants
 # Constants for bitrate calculation
@@ -85,6 +242,9 @@ class FFmpegStreamMonitor:
         
         # Error tracking for auto-restart
         self._error_history = deque(maxlen=100)
+        
+        # Transport health diagnostic tracker
+        self.diagnostics = DiagnosticTracker()
     
     def start(self) -> bool:
         """
@@ -283,6 +443,9 @@ class FFmpegStreamMonitor:
                 # Check if this is a non-fatal error that should be logged at debug level
                 is_non_fatal_error = any(pattern in line_lower for pattern in non_fatal_error_patterns)
                 
+                # Feed diagnostic tracker for transport health evaluation
+                self.diagnostics.record_line(line_lower)
+
                 # Check for errors
                 if 'error' in line_lower or 'failed' in line_lower:
                     if is_non_fatal_error:
@@ -432,10 +595,17 @@ class FFmpegStreamMonitor:
         
         # Update timestamp
         self.stats.last_updated = time.time()
+        
+        # Notify diagnostic tracker that stats are flowing (no freeze)
+        self.diagnostics.record_stats_update()
     
     def get_stats(self) -> FFmpegStats:
         """Get current statistics"""
         return self.stats
+    
+    def get_transport_health(self) -> Dict[str, Any]:
+        """Get transport health evaluation from diagnostic tracker."""
+        return self.diagnostics.get_transport_health()
     
     def is_running(self) -> bool:
         """Check if monitor is running"""

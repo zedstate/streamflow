@@ -99,6 +99,10 @@ class StreamInfo:
     loop_duration: Optional[float] = None
     last_loop_log_time: float = 0.0
     last_logo_log_time: float = 0.0
+    # Transport health evaluation (populated from FFmpeg DiagnosticTracker)
+    transport_health: str = 'Healthy'           # Healthy | Degraded | Severe | Critical
+    transport_health_summary: str = ''
+    transport_error_density: float = 0.0        # peak errors/minute in last 60s
     
     @property
     def is_quarantined(self) -> bool:

@@ -761,6 +761,35 @@ function StatsCard({ title, value, suffix = '', icon: Icon, variant = 'default' 
   );
 }
 
+// Transport Health Badge Helper
+const TransportHealthBadge = ({ status, summary, errorDensity }) => {
+  const getStyles = () => {
+    switch (status) {
+      case 'Healthy': return 'bg-green-500/10 text-green-600 border-green-500/20';
+      case 'Degraded': return 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20';
+      case 'Severe': return 'bg-orange-500/10 text-orange-600 border-orange-500/20';
+      case 'Critical': return 'bg-red-500/10 text-red-600 border-red-500/20';
+      default: return 'bg-gray-500/10 text-gray-600 border-gray-500/20';
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1" title={summary || ''}>
+      <Badge
+        variant="outline"
+        className={`text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center ${getStyles()}`}
+      >
+        <span>{status || 'Healthy'}</span>
+      </Badge>
+      {errorDensity > 0 && (
+        <span className="text-[10px] text-muted-foreground font-medium">
+          Worst: {errorDensity}/m
+        </span>
+      )}
+    </div>
+  );
+};
+
 // Streams Table Component
 function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false, cursorTime, isLive, zoomLevel, adPeriods = [] }) {
   const formatQuality = (stream) => {
@@ -796,6 +825,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
             <TableHead>Speed</TableHead>
             <TableHead>Bitrate</TableHead>
             <TableHead>Logo Verify</TableHead>
+            <TableHead>Transport Health</TableHead>
             {!showQuarantined ? (
               <>
                 <TableHead>Reliability</TableHead>
@@ -889,6 +919,13 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                       </span>
                     )}
                   </div>
+                </TableCell>
+                <TableCell>
+                  <TransportHealthBadge 
+                    status={stream.transport_health} 
+                    summary={stream.transport_health_summary}
+                    errorDensity={stream.transport_error_density}
+                  />
                 </TableCell>
                 {!showQuarantined && (
                   <>
