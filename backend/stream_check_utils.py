@@ -315,6 +315,16 @@ def _detect_hdr_format(metadata: Optional[Dict[str, str]]) -> Optional[str]:
     return None
 
 
+def _snap_to_common_fps(fps: float) -> float:
+    """
+    Snap a given FPS reading to the closest common TV/broadcast framerate.
+    """
+    if not fps or fps <= 0:
+        return 0
+    common_values = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
+    return min(common_values, key=lambda x: abs(x - fps))
+
+
 def check_ffmpeg_installed() -> bool:
     """
     Check if ffmpeg and ffprobe are installed and available.
@@ -618,9 +628,8 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             # recovers the true source framerate (Dispatcharr parity).
             if 'bitrate=' in line and 'bits/s' in line:
 
-                # Log every stats line at INFO — visible in production without
-                # needing DEBUG mode, giving full visibility into the analysis.
-                logger.info(f"  [ffmpeg stats] {line.strip()}")
+                # Log every stats line at DEBUG — visible only when debugging
+                logger.debug(f"  [ffmpeg stats] {line.strip()}")
                 last_stats_line = line.strip()
 
                 try:
@@ -649,7 +658,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                         ffmpeg_fps = float(fps_stats_match.group(1))
                         ffmpeg_speed = float(speed_match.group(1))
                         if ffmpeg_speed > 0:
-                            actual_fps = round(ffmpeg_fps / ffmpeg_speed, 2)
+                            actual_fps = _snap_to_common_fps(ffmpeg_fps / ffmpeg_speed)
                             if actual_fps > 0:
                                 result_data['fps'] = actual_fps
 
@@ -660,7 +669,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         if progress_bitrate is not None:
             result_data['bitrate_kbps'] = progress_bitrate
             if last_stats_line:
-                logger.info(
+                logger.debug(
                     f"  [ffmpeg final] {last_stats_line} "
                     f"-> bitrate={progress_bitrate:.2f} kbps  fps={result_data['fps']}"
                 )
@@ -754,7 +763,7 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
 
         for line in output.splitlines():
             if 'bitrate=' in line and 'bits/s' in line:
-                logger.info(f"  [ffmpeg stats] {line.strip()}")
+                logger.debug(f"  [ffmpeg stats] {line.strip()}")
                 last_stats_line = line.strip()
                 try:
                     bitrate_match = re.search(
@@ -778,7 +787,7 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
         if progress_bitrate is not None:
             bitrate = progress_bitrate
             if last_stats_line:
-                logger.info(
+                logger.debug(
                     f"  [ffmpeg final] {last_stats_line} "
                     f"-> bitrate={bitrate:.2f} kbps"
                 )
@@ -862,7 +871,7 @@ def analyze_stream(
     if logger.isEnabledFor(logging.DEBUG):
         logger.info(f"Analyzing stream: {stream_name} (ID: {stream_id})")
     else:
-        logger.info(f"Checking {stream_name}")
+        logger.debug(f"Checking {stream_name}")
 
     result = {
         'stream_id': stream_id,

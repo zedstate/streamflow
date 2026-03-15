@@ -412,14 +412,15 @@ export default function StreamChecker() {
                             {stream.status === 'checking' && <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">Checking</Badge>}
                             {stream.status === 'completed' && <Badge variant="success" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Completed</Badge>}
                             {stream.status === 'error' && <Badge variant="destructive" className="text-[10px]">Error</Badge>}
+                            {stream.status === 'dead' && <Badge variant="destructive" className="text-[10px]">Dead</Badge>}
                           </td>
                           <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
                             {stream.status === 'completed' ? (
                               <div className="flex flex-col items-end gap-0.5">
-                                <span>{stream.video_codec || 'N/A'} • <span className="text-foreground">{stream.fps || 0} fps</span></span>
+                                <span>{stream.video_codec || 'N/A'} • <span className="text-foreground">{stream.fps || 0} fps </span></span>
                                 {(stream.resolution || stream.bitrate) && (
                                   <span className="text-[10px] text-muted-foreground/80">
-                                    {stream.resolution || 'Unknown'} {stream.bitrate ? `• ${Math.round(stream.bitrate / 1000)}kbps` : ''}
+                                    {stream.resolution || 'Unknown'} {stream.bitrate ? `• ${Math.round(stream.bitrate)} kbps` : ''}
                                     {stream.hdr_format && stream.hdr_format !== 'SDR' && (
                                       <Badge variant="outline" className="ml-1 px-1 py-0 text-[8px] h-3 border-amber-500/30 text-amber-600 dark:text-amber-400">HDR</Badge>
                                     )}

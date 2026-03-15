@@ -1927,9 +1927,14 @@ class StreamCheckerService:
                 temp_score = self._calculate_stream_score(result, priority_m3u_ids, priority_mode, scoring_weights)
                 
                 # Update stream status based on result
+                is_dead = self._is_stream_dead(result, channel_id)
+                
                 if stream_id in stream_statuses:
                     if result.get('status') == 'ERROR':
                         stream_statuses[stream_id]['status'] = 'error'
+                        stream_statuses[stream_id]['score'] = 0.0
+                    elif is_dead:
+                        stream_statuses[stream_id]['status'] = 'dead'
                         stream_statuses[stream_id]['score'] = 0.0
                     else:
                         stream_statuses[stream_id]['status'] = 'completed'
@@ -2512,6 +2517,17 @@ class StreamCheckerService:
             revived_stream_ids = []
             total_streams = len(streams_to_check)
             
+            # Dict to keep track of the stream details throughout the analysis
+            stream_statuses = {
+                s['id']: {
+                    'id': s['id'],
+                    'name': s.get('name', f"Stream {s['id']}"),
+                    'status': 'pending',
+                    'm3u_account': self._get_m3u_account_name(s.get('id'), udi) if hasattr(self, '_get_m3u_account_name') else 'N/A'
+                }
+                for s in streams_to_check
+            }
+            
             for idx, stream in enumerate(streams_to_check, 1):
                 self.progress.update(
                     channel_id=channel_id,
@@ -2521,8 +2537,12 @@ class StreamCheckerService:
                     current_stream=stream.get('name', 'Unknown'),
                     status='analyzing',
                     step='Analyzing stream quality',
-                    step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})'
+                    step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})',
+                    streams_detail=list(stream_statuses.values())
                 )
+                
+                if stream['id'] in stream_statuses:
+                    stream_statuses[stream['id']]['status'] = 'checking'
                 
                 # Analyze stream
                 analysis_params = self.config.get('stream_analysis', {})
@@ -2577,6 +2597,22 @@ class StreamCheckerService:
                 score = self._calculate_stream_score(analyzed, priority_m3u_ids, priority_mode, scoring_weights)
                 analyzed['score'] = score
                 analyzed_streams.append(analyzed)
+                
+                # Update stream status for progress display
+                if stream['id'] in stream_statuses:
+                    if analyzed.get('status') == 'ERROR':
+                        stream_statuses[stream['id']]['status'] = 'error'
+                        stream_statuses[stream['id']]['score'] = 0.0
+                    elif is_dead:
+                        stream_statuses[stream['id']]['status'] = 'dead'
+                        stream_statuses[stream['id']]['score'] = 0.0
+                    else:
+                        stream_statuses[stream['id']]['status'] = 'completed'
+                        stream_statuses[stream['id']]['score'] = score
+                        stream_statuses[stream['id']]['resolution'] = analyzed.get('resolution', '0x0')
+                        stream_statuses[stream['id']]['video_codec'] = analyzed.get('video_codec', 'N/A')
+                        stream_statuses[stream['id']]['fps'] = analyzed.get('fps', 0)
+                        stream_statuses[stream['id']]['bitrate'] = analyzed.get('bitrate_kbps')
                 
                 logger.info(f"Stream {idx}/{total_streams}: {stream.get('name')} - Score: {score:.2f}")
             
