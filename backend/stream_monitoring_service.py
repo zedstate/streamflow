@@ -1168,7 +1168,7 @@ class StreamMonitoringService:
                 # Synchronous logo verification so we can batch them atomically 
                 # Restrict: Only if logo detection is enabled AND stream is in 'review' status
                 if session.logo_id and getattr(session, 'enable_logo_detection', True):
-                    if stream_info.status == 'review':
+                    if stream_info.status in ('review', 'stable'):
                         try:
                             from logo_verification_service import verify_logo
                             status = verify_logo(path, session.logo_id)
