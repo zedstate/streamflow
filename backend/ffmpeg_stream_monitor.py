@@ -233,7 +233,6 @@ class FFmpegStreamMonitor:
         if stream_id is not None:
             self.port_a = 10000 + stream_id
             self.port_b = 20000 + stream_id
-            self.port_viewer = 30000 + stream_id
         
         self._process: Optional[subprocess.Popen] = None
         self._monitor_thread: Optional[threading.Thread] = None
@@ -278,7 +277,7 @@ class FFmpegStreamMonitor:
                     '-i', self.url,
                 ]
                 
-                if self.port_a and self.port_b and self.port_viewer:
+                if self.port_a and self.port_b:
                     # Duplicate to:
                     # - two local UDP ports (port_a & port_b) for sidecar processes
                     # - one UDP port (port_viewer) for direct MPEG-TS viewing via HTTP proxy
@@ -286,7 +285,6 @@ class FFmpegStreamMonitor:
                     cmd.extend([
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_a}',
                         '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_b}',
-                        '-map', '0', '-c', 'copy', '-f', 'fifo', '-fifo_format', 'mpegts', '-drop_pkts_on_overflow', '1', '-attempt_recovery', '1', f'udp://127.0.0.1:{self.port_viewer}',
                         '-map', '0', '-c', 'copy', '-f', 'null', '-'
                     ])
                 else:
@@ -384,10 +382,7 @@ class FFmpegStreamMonitor:
             finally:
                 self._process = None
         
-        if self.port_viewer:
-            # UDPProxyManager handles its own cleanup of listeners when clients disconnect
-            pass
-        
+        # Cleanup process
         self.stats.is_alive = False
         
         logger.info(f"Stopped monitoring stream: {self.url[:100]}")

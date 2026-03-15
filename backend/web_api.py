@@ -5234,8 +5234,8 @@ def get_stream_viewer_url(stream_id):
             }), 404
         
         # Use the direct MPEG-TS proxy URL
-        base_url = request.host_url.rstrip('/')
-        stream_url = f"{base_url}/api/stream/proxy/{stream_id}"
+        # Return the upstream URL directly to save CPU overhead
+        stream_url = stream.get('url')
         
         return jsonify({
             'success': True,
