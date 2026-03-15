@@ -1293,6 +1293,7 @@ function LiveStreamPlayer({ stream, mpegtsLib, isExpanded, isActive, onToggleExp
             url: streamUrl,
             enableStashBuffer: false, // Reduced latency
             liveBufferLatencyChasing: true, // Reduced latency
+            fixAudioTimestampGap: true, // Tolerate minor TS timestamp issues
           }, {
             enableWorker: true,
             lazyLoad: false,
@@ -1303,8 +1304,15 @@ function LiveStreamPlayer({ stream, mpegtsLib, isExpanded, isActive, onToggleExp
           player.load();
           
           player.on(mpegtsLib.Events.ERROR, (type, detail, info) => {
-            console.error('mpegts error:', type, detail, info);
-            if (isMounted) {
+            console.warn('mpegts error:', type, detail, info);
+            // Only show error UI for fatal network or media errors.
+            // Non-fatal demux warnings (e.g. sync_byte mismatches during initial
+            // buffering) are logged to console but don't break playback.
+            const isFatal =
+              type === mpegtsLib.ErrorTypes.NETWORK_ERROR ||
+              (type === mpegtsLib.ErrorTypes.MEDIA_ERROR &&
+                detail === mpegtsLib.ErrorDetails.MEDIA_MSE_ERROR);
+            if (isMounted && isFatal) {
               setError(`Playback error: ${detail}`);
             }
           });

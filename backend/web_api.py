@@ -111,9 +111,13 @@ class StreamProxy:
 
     def add_client(self):
         # Buffer for about 2-4 seconds of stream (2000 packets)
-        q = queue.Queue(maxsize=2000) 
+        q = queue.Queue(maxsize=2000)
         with self.lock:
-            self.clients[q] = False # Initially does not need resync
+            # Always start in resync mode so the client waits for the first
+            # valid 0x47 MPEG-TS sync byte. This prevents TSDemuxer errors
+            # when connecting mid-packet or receiving a partially-filled
+            # UDP datagram from FFmpeg's fifo muxer (which pads with 0xFF).
+            self.clients[q] = True  # needs_resync = True
             if not self.running:
                 self._start()
         return q

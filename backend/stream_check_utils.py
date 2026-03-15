@@ -707,13 +707,14 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     parts = line.split("bytes read")
                     size_str = parts[0].strip().split()[-1]
                     total_bytes = int(size_str)
-                    if total_bytes > 0 and duration > 0:
-                        result_data['bitrate_kbps'] = (total_bytes * 8) / 1000 / duration
-                        logger.debug(f"  → Calculated bitrate (method 1): {result_data['bitrate_kbps']:.2f} kbps from {total_bytes} bytes")
+                    if total_bytes > 0 and elapsed > 0:
+                        result_data['bitrate_kbps'] = (total_bytes * 8) / 1000 / elapsed
+                        logger.debug(f"  → Calculated bitrate (method 1): {result_data['bitrate_kbps']:.2f} kbps "
+                                     f"from {total_bytes} bytes over {elapsed:.2f}s (not {duration}s)")
                 except ValueError:
                     pass
 
-            # Method 2: Parse progress output
+            # Method 2: Parse progress output — most accurate, FFmpeg's own measurement
             if "bitrate=" in line and "kbits/s" in line:
                 try:
                     bitrate_match = re.search(r'bitrate=\s*(\d+\.?\d*)\s*kbits/s', line)
@@ -729,17 +730,21 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     bytes_match = re.search(r'(\d+)\s+bytes read', line)
                     if bytes_match:
                         total_bytes = int(bytes_match.group(1))
-                        if total_bytes > 0 and duration > 0:
-                            calculated_bitrate = (total_bytes * 8) / 1000 / duration
-                            logger.debug(f"  → Calculated bitrate (method 3): {calculated_bitrate:.2f} kbps from {total_bytes} bytes")
+                        if total_bytes > 0 and elapsed > 0:
+                            calculated_bitrate = (total_bytes * 8) / 1000 / elapsed
+                            logger.debug(f"  → Calculated bitrate (method 3): {calculated_bitrate:.2f} kbps "
+                                         f"from {total_bytes} bytes over {elapsed:.2f}s (not {duration}s)")
                             result_data['bitrate_kbps'] = calculated_bitrate
                 except (ValueError, AttributeError):
                     pass
 
-        # Use progress bitrate as final fallback
-        if result_data['bitrate_kbps'] is None and progress_bitrate is not None:
+        # Method 2 (FFmpeg's own bitrate= line) is the most accurate — prefer it over byte-counting.
+        # Byte-counting methods (1 & 3) are used as fallbacks when progress output isn't available.
+        if progress_bitrate is not None:
             result_data['bitrate_kbps'] = progress_bitrate
-            logger.debug(f"  → Using last progress bitrate as fallback: {result_data['bitrate_kbps']:.2f} kbps")
+            logger.debug(f"  → Using method 2 (FFmpeg progress bitrate) as primary: {progress_bitrate:.2f} kbps")
+        elif result_data['bitrate_kbps'] is not None:
+            logger.debug(f"  → Using byte-count bitrate as fallback: {result_data['bitrate_kbps']:.2f} kbps")
 
         # Check if ffmpeg exited early with errors
         expected_min_time = duration * EARLY_EXIT_THRESHOLD
@@ -839,14 +844,16 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
                     parts = line.split("bytes read")
                     size_str = parts[0].strip().split()[-1]
                     total_bytes = int(size_str)
-                    if total_bytes > 0 and duration > 0:
-                        bitrate = (total_bytes * 8) / 1000 / duration
-                        logger.debug(f"  → Calculated bitrate (method 1): {bitrate:.2f} kbps from {total_bytes} bytes")
+                    if total_bytes > 0 and elapsed > 0:
+                        bitrate = (total_bytes * 8) / 1000 / elapsed
+                        logger.debug(f"  → Calculated bitrate (method 1): {bitrate:.2f} kbps "
+                                     f"from {total_bytes} bytes over {elapsed:.2f}s (not {duration}s)")
                 except ValueError:
                     pass
 
             # Method 2: Parse progress output (e.g., "size=12345kB time=00:00:30.00 bitrate=3333.3kbits/s")
-            # Track latest progress bitrate as fallback, will use last one found
+            # Most accurate — FFmpeg computes this from actual decoded frames.
+            # Track latest value; will be promoted to primary result after the loop.
             if "bitrate=" in line and "kbits/s" in line:
                 try:
                     bitrate_match = re.search(r'bitrate=\s*(\d+\.?\d*)\s*kbits/s', line)
@@ -864,17 +871,21 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
                     bytes_match = re.search(r'(\d+)\s+bytes read', line)
                     if bytes_match:
                         total_bytes = int(bytes_match.group(1))
-                        if total_bytes > 0 and duration > 0:
-                            calculated_bitrate = (total_bytes * 8) / 1000 / duration
-                            logger.debug(f"  → Calculated bitrate (method 3): {calculated_bitrate:.2f} kbps from {total_bytes} bytes")
+                        if total_bytes > 0 and elapsed > 0:
+                            calculated_bitrate = (total_bytes * 8) / 1000 / elapsed
+                            logger.debug(f"  → Calculated bitrate (method 3): {calculated_bitrate:.2f} kbps "
+                                         f"from {total_bytes} bytes over {elapsed:.2f}s (not {duration}s)")
                             bitrate = calculated_bitrate
                 except (ValueError, AttributeError):
                     pass
 
-        # Use progress bitrate as final fallback if primary methods didn't find anything
-        if bitrate is None and progress_bitrate is not None:
+        # Method 2 (FFmpeg's own bitrate= progress line) is the most accurate — prefer it over
+        # byte-counting. Byte-counting methods (1 & 3) are used as fallbacks only.
+        if progress_bitrate is not None:
             bitrate = progress_bitrate
-            logger.debug(f"  → Using last progress bitrate as fallback: {bitrate:.2f} kbps")
+            logger.debug(f"  → Using method 2 (FFmpeg progress bitrate) as primary: {bitrate:.2f} kbps")
+        elif bitrate is not None:
+            logger.debug(f"  → Using byte-count bitrate as fallback: {bitrate:.2f} kbps")
 
         # Check if ffmpeg exited early with errors
         # If elapsed time is much less than duration, ffmpeg likely encountered an error
