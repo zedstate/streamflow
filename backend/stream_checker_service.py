@@ -940,6 +940,10 @@ class StreamCheckerService:
         self.config_changed = threading.Event()
         logger.debug("Config changed event created")
         
+        # Event for aborting current channel check
+        self.abort_current_check = threading.Event()
+        logger.debug("Abort current check event created")
+        
         logger.info("Stream Checker Service initialized")
         log_function_return(logger, "__init__")
     
@@ -1009,6 +1013,8 @@ class StreamCheckerService:
                     self._start_batch_changelog()
                 
                 logger.debug(f"Worker processing channel {channel_id}")
+                # Clear abort flag before checking
+                self.abort_current_check.clear()
                 # Check this channel
                 self._check_channel(channel_id)
                 logger.debug(f"Worker completed channel {channel_id}")
@@ -1979,6 +1985,7 @@ class StreamCheckerService:
                     progress_callback=progress_callback,
                     start_callback=start_callback,
                     stagger_delay=stagger_delay,
+                    abort_event=self.abort_current_check,
                     ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
@@ -2529,6 +2536,10 @@ class StreamCheckerService:
             }
             
             for idx, stream in enumerate(streams_to_check, 1):
+                if self.abort_current_check.is_set():
+                    logger.info("Abort requested, stopping sequential stream checks")
+                    break
+                    
                 self.progress.update(
                     channel_id=channel_id,
                     channel_name=channel_name,
@@ -3722,7 +3733,8 @@ class StreamCheckerService:
     def clear_queue(self):
         """Clear the checking queue."""
         self.check_queue.clear()
-        logger.info("Checking queue cleared")
+        self.abort_current_check.set()
+        logger.info("Checking queue cleared and current check aborted")
     
     def trigger_check_updated_channels(self):
         """Trigger immediate check of channels with M3U updates.

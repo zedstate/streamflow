@@ -282,6 +282,7 @@ class SmartStreamScheduler:
         progress_callback: Optional[Callable] = None,
         start_callback: Optional[Callable] = None,
         stagger_delay: float = 0.0,
+        abort_event: Optional[threading.Event] = None,
         **check_params
     ) -> List[Dict[str, Any]]:
         """
@@ -445,6 +446,10 @@ class SmartStreamScheduler:
             # Process completed tasks as they finish (in completion order for better parallelism)
             from concurrent.futures import as_completed
             for future in as_completed(futures):
+                if abort_event and abort_event.is_set():
+                    logger.info("Abort requested, breaking parallel check loop")
+                    break
+                    
                 stream = futures[future]
                 try:
                     # Wait for completion
