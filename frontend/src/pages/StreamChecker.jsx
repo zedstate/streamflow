@@ -53,12 +53,12 @@ export default function StreamChecker() {
   useEffect(() => {
     loadData()
     // Poll for updates - use shorter interval when checking is active
-    const pollInterval = (status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)) ? 1000 : 3000
+    const pollInterval = (status?.checking || (status?.queue?.queue_size > 0)) ? 1000 : 3000
     const interval = setInterval(() => {
       loadData()
     }, pollInterval)
     return () => clearInterval(interval)
-  }, [status?.checking, status?.global_action_in_progress, status?.queue?.queue_size])
+  }, [status?.checking, status?.queue?.queue_size])
 
   const loadData = async () => {
     try {
@@ -80,25 +80,6 @@ export default function StreamChecker() {
     }
   }
 
-  const handleTriggerGlobalAction = async () => {
-    try {
-      setActionLoading('global-action')
-      await streamCheckerAPI.triggerGlobalAction()
-      toast({
-        title: "Success",
-        description: "Global action initiated successfully"
-      })
-      await loadData()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err.response?.data?.error || "Failed to trigger global action",
-        variant: "destructive"
-      })
-    } finally {
-      setActionLoading('')
-    }
-  }
 
   const handleClearQueue = async () => {
     try {
@@ -257,11 +238,14 @@ export default function StreamChecker() {
     )
   }
 
-  const isChecking = status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)
+  const isChecking = status?.checking || (status?.queue?.queue_size > 0)
   const queueSize = status?.queue?.queue_size || 0
   const inProgress = status?.queue?.in_progress || 0
   const completed = status?.queue?.completed || 0
   const failed = status?.queue?.failed || 0
+  const queued = status?.queue?.queued || 0
+  const totalBatch = queued + inProgress + completed + failed
+  const batchProgress = totalBatch > 0 ? ((completed + failed) / totalBatch) * 100 : 0
 
   return (
     <div className="space-y-6">
@@ -273,18 +257,6 @@ export default function StreamChecker() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            onClick={handleTriggerGlobalAction}
-            disabled={actionLoading === 'global-action' || isChecking}
-            variant="default"
-          >
-            {actionLoading === 'global-action' ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Global Action
-          </Button>
         </div>
       </div>
 
@@ -300,9 +272,6 @@ export default function StreamChecker() {
               <Badge variant={isChecking ? "default" : "secondary"}>
                 {isChecking ? "Active" : "Idle"}
               </Badge>
-              {status?.global_action_in_progress && (
-                <Badge variant="destructive">Global Action</Badge>
-              )}
             </div>
             <p className="text-xs text-muted-foreground mt-2">
               Mode: {status?.parallel?.mode || 'sequential'}
@@ -350,6 +319,38 @@ export default function StreamChecker() {
         </Card>
       </div>
 
+      {/* Batch Progress */}
+      {isChecking && totalBatch > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex justify-between items-center">
+              <CardTitle>Batch Progress</CardTitle>
+              {status?.queue?.eta_seconds > 0 ? (
+                <span className="text-sm text-muted-foreground font-medium bg-secondary/50 px-2 py-1 rounded-md">
+                  ~{status.queue.eta_seconds > 60
+                    ? `${Math.floor(status.queue.eta_seconds / 60)}m ${status.queue.eta_seconds % 60}s`
+                    : `${status.queue.eta_seconds}s`} remaining
+                </span>
+              ) : (
+                <span className="text-sm text-muted-foreground font-medium bg-secondary/50 px-2 py-1 rounded-md animate-pulse">
+                  Calculating ETA...
+                </span>
+              )}
+            </div>
+            <CardDescription>Checking {totalBatch} channels</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{completed + failed} of {totalBatch} channels processed</span>
+                <span className="font-medium">{Math.round(batchProgress)}%</span>
+              </div>
+              <Progress value={batchProgress} className="h-2" />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Current Progress */}
       {progress && isChecking && (
         <Card>
@@ -369,26 +370,7 @@ export default function StreamChecker() {
               <p className="text-xs text-muted-foreground">{progress.step_detail}</p>
             </div>
 
-            {progress.current_stream_name && (
-              <div className="space-y-2">
-                <Label className="text-sm">
-                  {status?.parallel?.enabled ? 'Recently Completed Stream' : 'Current Stream'}
-                </Label>
-                <div className="text-sm font-mono bg-muted p-2 rounded-md">
-                  {progress.current_stream_name}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Stream {progress.current_stream}/{progress.total_streams}
-                  {status?.parallel?.enabled && inProgress > 1 && (
-                    <span className="ml-2 text-blue-600 dark:text-blue-400">
-                      ({inProgress} streams checking concurrently)
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-2 text-sm pb-2 border-b">
               <Badge variant="outline">{progress.status}</Badge>
               {status?.parallel?.enabled && (
                 <Badge variant="secondary">
@@ -396,6 +378,67 @@ export default function StreamChecker() {
                 </Badge>
               )}
             </div>
+
+            {/* Streams Detail Progress List */}
+            {progress.streams_detail && progress.streams_detail.length > 0 && (
+              <div className="mt-4">
+                <Label className="text-sm font-semibold mb-2 block">Stream Progress Tracking</Label>
+                <div className="rounded-md border max-h-64 overflow-y-auto w-full">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-muted sticky top-0 z-10 text-xs text-muted-foreground uppercase h-8">
+                      <tr>
+                        <th className="px-3 py-1 font-medium">Stream</th>
+                        <th className="px-3 py-1 font-medium">Account</th>
+                        <th className="px-3 py-1 font-medium text-center">Status</th>
+                        <th className="px-3 py-1 font-medium text-right">Specs</th>
+                        <th className="px-3 py-1 font-medium text-right">Score</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {progress.streams_detail.map((stream) => (
+                        <tr key={stream.id} className="hover:bg-muted/50 transition-colors bg-card">
+                          <td className="px-3 py-1.5 align-middle">
+                            <div className="font-medium max-w-[200px] truncate" title={stream.name}>
+                              {stream.name}
+                            </div>
+                          </td>
+                          <td className="px-3 py-1.5 align-middle">
+                            <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={stream.m3u_account}>
+                              {stream.m3u_account}
+                            </div>
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-center">
+                            {stream.status === 'pending' && <Badge variant="outline" className="text-[10px] text-muted-foreground">Pending</Badge>}
+                            {stream.status === 'checking' && <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">Checking</Badge>}
+                            {stream.status === 'completed' && <Badge variant="success" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Completed</Badge>}
+                            {stream.status === 'error' && <Badge variant="destructive" className="text-[10px]">Error</Badge>}
+                            {stream.status === 'dead' && <Badge variant="destructive" className="text-[10px]">Dead</Badge>}
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
+                            {stream.status === 'completed' ? (
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span>{stream.video_codec || 'N/A'} • <span className="text-foreground">{stream.fps || 0} fps </span></span>
+                                {(stream.resolution || stream.bitrate) && (
+                                  <span className="text-[10px] text-muted-foreground/80">
+                                    {stream.resolution || 'Unknown'} {stream.bitrate ? `• ${Math.round(stream.bitrate)} kbps` : ''}
+                                    {stream.hdr_format && stream.hdr_format !== 'SDR' && (
+                                      <Badge variant="outline" className="ml-1 px-1 py-0 text-[8px] h-3 border-amber-500/30 text-amber-600 dark:text-amber-400">HDR</Badge>
+                                    )}
+                                  </span>
+                                )}
+                              </div>
+                            ) : '-'}
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-right text-xs font-mono">
+                            {stream.status === 'completed' && stream.score !== undefined ? stream.score.toFixed(2) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -463,10 +506,9 @@ export default function StreamChecker() {
 
               {/* Tabs for Configuration Sections */}
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
-                  <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
                 </TabsList>
 
@@ -621,190 +663,13 @@ export default function StreamChecker() {
                   </div>
                 </TabsContent>
 
-                {/* Stream Scoring Weights Tab */}
-                <TabsContent value="scoring" className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    Adjust how different quality metrics are weighted when scoring streams
-                  </p>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_bitrate">Bitrate Weight</Label>
-                      <Input
-                        id="weight_bitrate"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.bitrate || 0.40}
-                        onChange={(e) => updateConfigValue('scoring.weights.bitrate', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_resolution">Resolution Weight</Label>
-                      <Input
-                        id="weight_resolution"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.resolution || 0.35}
-                        onChange={(e) => updateConfigValue('scoring.weights.resolution', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_fps">FPS Weight</Label>
-                      <Input
-                        id="weight_fps"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.fps || 0.15}
-                        onChange={(e) => updateConfigValue('scoring.weights.fps', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="weight_codec">Codec Weight</Label>
-                      <Input
-                        id="weight_codec"
-                        type="number"
-                        step="0.05"
-                        value={editedConfig?.scoring?.weights?.codec || 0.10}
-                        onChange={(e) => updateConfigValue('scoring.weights.codec', parseFloat(e.target.value))}
-                        disabled={!configEditing}
-                        min={0}
-                        max={1}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="prefer_h265">Prefer H.265/HEVC</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Give preference to H.265 codec over H.264
-                      </p>
-                    </div>
-                    <Switch
-                      id="prefer_h265"
-                      checked={editedConfig?.scoring?.prefer_h265 !== false}
-                      onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
-                      disabled={!configEditing}
-                    />
-                  </div>
-                </TabsContent>
 
                 {/* Dead Streams Tab */}
                 <TabsContent value="dead-streams" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    View and manage streams that have been marked as dead. Dead streams are automatically removed from channels during stream checking cycles.
+                  </p>
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="dead_stream_enabled">Enable Dead Stream Removal</Label>
-                        <p className="text-sm text-muted-foreground">
-                          Automatically remove streams that are detected as dead or below quality thresholds
-                        </p>
-                      </div>
-                      <Switch
-                        id="dead_stream_enabled"
-                        checked={editedConfig?.dead_stream_handling?.enabled !== false}
-                        onCheckedChange={(checked) => updateConfigValue('dead_stream_handling.enabled', checked)}
-                        disabled={!configEditing}
-                      />
-                    </div>
-
-                    {editedConfig?.dead_stream_handling?.enabled !== false && (
-                      <>
-                        <div className="space-y-4 pt-4 border-t">
-                          <h4 className="font-medium">Quality Thresholds</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Streams below these thresholds will be considered dead and removed. Set to 0 to disable a specific threshold.
-                          </p>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label htmlFor="min_resolution_width">Minimum Width (pixels)</Label>
-                              <Input
-                                id="min_resolution_width"
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={editedConfig?.dead_stream_handling?.min_resolution_width ?? 0}
-                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_width', parseInt(e.target.value) || 0)}
-                                disabled={!configEditing}
-                              />
-                              <p className="text-sm text-muted-foreground">
-                                e.g., 1280 for 720p minimum (0 = no minimum)
-                              </p>
-                            </div>
-
-                            <div className="space-y-2">
-                              <Label htmlFor="min_resolution_height">Minimum Height (pixels)</Label>
-                              <Input
-                                id="min_resolution_height"
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={editedConfig?.dead_stream_handling?.min_resolution_height ?? 0}
-                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_height', parseInt(e.target.value) || 0)}
-                                disabled={!configEditing}
-                              />
-                              <p className="text-sm text-muted-foreground">
-                                e.g., 720 for 720p minimum (0 = no minimum)
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="min_bitrate_kbps">Minimum Bitrate (kbps)</Label>
-                            <Input
-                              id="min_bitrate_kbps"
-                              type="number"
-                              min="0"
-                              step="100"
-                              value={editedConfig?.dead_stream_handling?.min_bitrate_kbps ?? 0}
-                              onChange={(e) => updateConfigValue('dead_stream_handling.min_bitrate_kbps', parseInt(e.target.value) || 0)}
-                              disabled={!configEditing}
-                            />
-                            <p className="text-sm text-muted-foreground">
-                              e.g., 1000 for 1 Mbps minimum (0 = no minimum)
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="min_score">Minimum Quality Score</Label>
-                            <Input
-                              id="min_score"
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="1"
-                              value={editedConfig?.dead_stream_handling?.min_score ?? 0}
-                              onChange={(e) => updateConfigValue('dead_stream_handling.min_score', parseInt(e.target.value) || 0)}
-                              disabled={!configEditing}
-                            />
-                            <p className="text-sm text-muted-foreground">
-                              Overall quality score from 0-100 (0 = no minimum)
-                            </p>
-                          </div>
-                        </div>
-
-                        <Alert>
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertTitle>Important</AlertTitle>
-                          <AlertDescription>
-                            Streams with 0x0 resolution or 0 bitrate are always considered dead, regardless of these settings.
-                            These thresholds provide additional quality controls beyond basic dead stream detection.
-                          </AlertDescription>
-                        </Alert>
-                      </>
-                    )}
 
                     {/* Dead Streams List */}
                     <Separator className="my-6" />

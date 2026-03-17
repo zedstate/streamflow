@@ -4,3 +4,9 @@ pandas
 flask
 flask-cors
 croniter
+Pillow
+imagehash
+imutils
+opencv-python-headless
+waitress
+m3u8

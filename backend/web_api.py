@@ -9,26 +9,28 @@ the automated stream management system.
 import json
 import logging
 import os
+import queue
 import re
 import requests
+import socket
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 from dataclasses import asdict
-from werkzeug.utils import secure_filename
-
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, make_response, Response
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import _get_base_url
 from stream_checker_service import get_stream_checker_service
 from scheduling_service import get_scheduling_service
-from channel_settings_manager import get_channel_settings_manager
+
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
+from automation_config_manager import get_automation_config_manager
 
 # Pre-compiled regex pattern for whitespace conversion (performance optimization)
 # This pattern matches one or more spaces that are NOT preceded by a backslash
@@ -73,6 +75,8 @@ DEAD_STREAMS_MAX_PER_PAGE = 100
 EPG_REFRESH_INITIAL_DELAY_SECONDS = 5  # Delay before first EPG refresh
 EPG_REFRESH_ERROR_RETRY_SECONDS = 300  # Retry interval after errors (5 minutes)
 THREAD_SHUTDOWN_TIMEOUT_SECONDS = 5  # Timeout for graceful thread shutdown
+# HLS Constants
+# Constants
 
 # Initialize Flask app with static file serving
 # Note: static_folder set to None to disable Flask's built-in static route
@@ -90,6 +94,161 @@ scheduled_event_processor_wake = None  # threading.Event to wake up the processo
 epg_refresh_thread = None
 epg_refresh_running = False
 epg_refresh_wake = None  # threading.Event to wake up the refresh early
+
+class StreamProxy:
+    """Manages a single UDP listener for a stream and broadcasts to multiple HTTP clients."""
+    def __init__(self, stream_id, manager):
+        self.stream_id = stream_id
+        self.manager = manager
+        self.port = 30000 + stream_id
+        self.clients = {} # dict of queue.Queue -> bool (needs_resync)
+        self.lock = threading.Lock()
+        self.running = False
+        self.thread = None
+        self.last_client_time = None
+        self.LINGER_SECONDS = 60
+        self.last_drop_log_time = 0
+
+    def add_client(self):
+        # Buffer for about 2-4 seconds of stream (2000 packets)
+        q = queue.Queue(maxsize=2000)
+        with self.lock:
+            # Always start in resync mode so the client waits for the first
+            # valid 0x47 MPEG-TS sync byte. This prevents TSDemuxer errors
+            # when connecting mid-packet or receiving a partially-filled
+            # UDP datagram from FFmpeg's fifo muxer (which pads with 0xFF).
+            self.clients[q] = True  # needs_resync = True
+            if not self.running:
+                self._start()
+        return q
+
+    def remove_client(self, q):
+        with self.lock:
+            if q in self.clients:
+                del self.clients[q]
+            if not self.clients:
+                self.last_client_time = datetime.now()
+                logger.info(f"Last client disconnected from stream {self.stream_id}. Entering {self.LINGER_SECONDS}s linger period.")
+
+    def _start(self):
+        self.running = True
+        self.thread = threading.Thread(
+            target=self._run, 
+            daemon=True, 
+            name=f"ProxyUDP-{self.stream_id}"
+        )
+        self.thread.start()
+        logger.info(f"Started shared UDP listener for stream {self.stream_id} on port {self.port}")
+
+    def _stop(self):
+        self.running = False
+        logger.info(f"Stopped shared UDP listener for stream {self.stream_id}")
+
+    def _run(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Allow immediate reuse of the port
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            # Bind to all interfaces or localhost? FFmpeg sends to 127.0.0.1
+            sock.bind(('127.0.0.1', self.port))
+            sock.settimeout(1.0) # Short timeout to allow periodically checking for lingering cleanup
+            residual = b'' # Helper for aligning MPEG-TS packets (188 bytes)
+            while self.running:
+                try:
+                    # Short timeout to allow periodically checking for lingering cleanup
+                    data, _ = sock.recvfrom(65535)
+                except socket.timeout:
+                    # Check if we should shut down due to lingering timeout
+                    with self.lock:
+                        if not self.clients and self.last_client_time:
+                            elapsed = (datetime.now() - self.last_client_time).total_seconds()
+                            if elapsed >= self.LINGER_SECONDS:
+                                logger.info(f"Linger timeout reached for stream {self.stream_id}. Shutting down listener.")
+                                self.running = False
+                                self.manager.remove_proxy(self.stream_id)
+                                break
+                    continue
+
+                if data:
+                    data = residual + data
+                    excess = len(data) % 188
+                    if excess > 0:
+                        residual = data[-excess:]
+                        data = data[:-excess]
+                    else:
+                        residual = b''
+                    
+                    if not data:
+                        continue
+
+                    with self.lock:
+                        if not self.clients:
+                            # Discard data while lingering, but check for timeout
+                            if self.last_client_time:
+                                elapsed = (datetime.now() - self.last_client_time).total_seconds()
+                                if elapsed >= self.LINGER_SECONDS:
+                                    logger.info(f"Linger timeout reached during data recv for stream {self.stream_id}. Shutting down.")
+                                    self.running = False
+                                    self.manager.remove_proxy(self.stream_id)
+                                    break
+                            continue
+                        
+                        # We have clients, so we are active - clear linger timestamp
+                        self.last_client_time = None
+                        
+                        for q, needs_resync in list(self.clients.items()):
+                            try:
+                                # If client previously dropped data, wait for next TS sync byte (0x47)
+                                if needs_resync:
+                                    if data and data[0] == 0x47:
+                                        self.clients[q] = False
+                                        # Proceed to put data
+                                    else:
+                                        continue # Still searching for sync
+                                
+                                q.put_nowait(data)
+                            except queue.Full:
+                                # Mark for resync to avoid pushing malformed fragments
+                                self.clients[q] = True
+                                
+                                # Optimization: Clear the entire queue to "jump to live"
+                                # This prevents the client from being permanently lagged
+                                try:
+                                    while not q.empty():
+                                        q.get_nowait()
+                                except queue.Empty:
+                                    pass
+
+                                # Log packet drops at most once every 5 seconds per stream
+                                now = time.time()
+                                if now - self.last_drop_log_time > 5:
+                                    logger.warning(f"Shared proxy for {self.stream_id} buffer full - clearing queue (Jump-to-Live). Client processing too slow.")
+                                    self.last_drop_log_time = now
+                                pass # Data dropped for this specific slow client
+        except Exception as e:
+            logger.error(f"UDP listener error for stream {self.stream_id}: {e}")
+        finally:
+            sock.close()
+
+class UDPProxyManager:
+    """Singleton-like manager for all active UDP-to-HTTP proxies."""
+    def __init__(self):
+        self.proxies = {} # stream_id -> StreamProxy
+        self.lock = threading.Lock()
+
+    def get_proxy(self, stream_id):
+        with self.lock:
+            if stream_id not in self.proxies:
+                self.proxies[stream_id] = StreamProxy(stream_id, self)
+            return self.proxies[stream_id]
+
+    def remove_proxy(self, stream_id):
+        with self.lock:
+            if stream_id in self.proxies:
+                del self.proxies[stream_id]
+
+# Initialize the global proxy manager
+udp_proxy_manager = UDPProxyManager()
 
 def get_automation_manager():
     """Get or create automation manager instance."""
@@ -114,10 +273,9 @@ def check_wizard_complete():
     """
     try:
         config_file = CONFIG_DIR / 'automation_config.json'
-        regex_file = CONFIG_DIR / 'channel_regex_config.json'
         
         # Check if configuration files exist
-        if not config_file.exists() or not regex_file.exists():
+        if not config_file.exists():
             return False
         
         # Check if we can connect to Dispatcharr (optional - use cached result)
@@ -264,8 +422,8 @@ def epg_refresh_processor():
             
             # Fetch EPG data (this will also trigger match_programs_to_rules)
             logger.info(f"Fetching EPG data and matching programs to auto-create rules...")
-            programs = service.fetch_epg_grid(force_refresh=True)
-            logger.info(f"EPG refresh complete. Fetched {len(programs)} programs.")
+            result = service.match_programs_to_rules()
+            logger.info(f"EPG refresh complete. Created {result.get('created', 0)} events.")
             
             # Wait for the next refresh interval or wake event
             if epg_refresh_wake is None:
@@ -379,74 +537,7 @@ def get_version():
         logger.error(f"Failed to read version: {e}")
         return jsonify({"version": "dev-unknown"})
 
-@app.route('/api/automation/status', methods=['GET'])
-def get_automation_status():
-    """Get current automation status."""
-    try:
-        manager = get_automation_manager()
-        status = manager.get_status()
-        return jsonify(status)
-    except Exception as e:
-        logger.error(f"Error getting automation status: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/automation/start', methods=['POST'])
-def start_automation():
-    """Start the automation system."""
-    try:
-        manager = get_automation_manager()
-        manager.start_automation()
-        return jsonify({"message": "Automation started successfully", "status": "running"})
-    except Exception as e:
-        logger.error(f"Error starting automation: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/automation/stop', methods=['POST'])
-def stop_automation():
-    """Stop the automation system."""
-    try:
-        manager = get_automation_manager()
-        manager.stop_automation()
-        return jsonify({"message": "Automation stopped successfully", "status": "stopped"})
-    except Exception as e:
-        logger.error(f"Error stopping automation: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/automation/cycle', methods=['POST'])
-def run_automation_cycle():
-    """Run one automation cycle manually."""
-    try:
-        manager = get_automation_manager()
-        manager.run_automation_cycle()
-        return jsonify({"message": "Automation cycle completed successfully"})
-    except Exception as e:
-        logger.error(f"Error running automation cycle: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/automation/config', methods=['GET'])
-def get_automation_config():
-    """Get automation configuration."""
-    try:
-        manager = get_automation_manager()
-        return jsonify(manager.config)
-    except Exception as e:
-        logger.error(f"Error getting automation config: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/automation/config', methods=['PUT'])
-def update_automation_config():
-    """Update automation configuration."""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No configuration data provided"}), 400
-        
-        manager = get_automation_manager()
-        manager.update_config(data)
-        return jsonify({"message": "Configuration updated successfully", "config": manager.config})
-    except Exception as e:
-        logger.error(f"Error updating automation config: {e}")
-        return jsonify({"error": str(e)}), 500
+# Legacy automation endpoints removed. Using newer implementations in 'Automation Service API' section.
 
 @app.route('/api/channels', methods=['GET'])
 def get_channels():
@@ -458,9 +549,29 @@ def get_channels():
         if channels is None:
             return jsonify({"error": "Failed to fetch channels"}), 500
         
+        # Inject automation profile assignments
+        automation_config = get_automation_config_manager()
+        channels_with_profiles = []
+        for channel in channels:
+            # Create a copy to avoid modifying the cached UDI object
+            ch_copy = channel.copy()
+            # Get effective profile (explicit assignment > group assignment > default)
+            ch_copy['automation_profile_id'] = automation_config.get_effective_profile_id(
+                ch_copy.get('id'), 
+                ch_copy.get('channel_group_id')
+            )
+            # Also include explicit assignment for UI logic if needed
+            ch_copy['assigned_profile_id'] = automation_config.get_channel_assignment(ch_copy.get('id'))
+            
+            # Get automation periods count
+            periods = automation_config.get_channel_periods(ch_copy.get('id'))
+            ch_copy['automation_periods_count'] = len(periods)
+            
+            channels_with_profiles.append(ch_copy)
+            
         # Apply custom channel order if configured
         order_manager = get_channel_order_manager()
-        channels = order_manager.apply_order(channels)
+        channels = order_manager.apply_order(channels_with_profiles)
         
         return jsonify(channels)
     except Exception as e:
@@ -764,6 +875,25 @@ def delete_regex_pattern(channel_id):
         logger.error(f"Error deleting regex pattern: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/channels/<channel_id>/match-settings', methods=['POST'])
+def update_channel_match_settings(channel_id):
+    """Update matching settings for a channel (e.g., match_by_tvg_id)."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No settings provided"}), 400
+            
+        matcher = get_regex_matcher()
+        
+        # Handle match_by_tvg_id setting
+        if 'match_by_tvg_id' in data:
+            matcher.set_match_by_tvg_id(channel_id, data['match_by_tvg_id'])
+            
+        return jsonify({"message": "Match settings updated successfully"})
+    except Exception as e:
+        logger.error(f"Error updating match settings for channel {channel_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/regex-patterns/bulk', methods=['POST'])
 def add_bulk_regex_patterns():
     """Add the same regex patterns to multiple channels."""
@@ -799,6 +929,7 @@ def add_bulk_regex_patterns():
         success_count = 0
         failed_channels = []
         
+
         for channel_id in channel_ids:
             try:
                 # Get channel name from UDI
@@ -829,11 +960,9 @@ def add_bulk_regex_patterns():
                             if isinstance(p, dict):
                                 normalized_existing.append(p)
                             else:
-                                # Legacy string in new format (shouldn't happen but be safe)
                                 normalized_existing.append({
                                     "pattern": p,
-                                    "m3u_accounts": existing_pattern_data.get('m3u_accounts'),
-                                    "priority": 0
+                                    "m3u_accounts": existing_pattern_data.get('m3u_accounts')
                                 })
                     else:
                         # Old format: regex list
@@ -842,19 +971,15 @@ def add_bulk_regex_patterns():
                         for p in old_regex:
                             normalized_existing.append({
                                 "pattern": p,
-                                "m3u_accounts": old_m3u_accounts,
-                                "priority": 0
+                                "m3u_accounts": old_m3u_accounts
                             })
                     
                     # Normalize new patterns to list of objects
                     normalized_new = []
                     for p in regex_patterns:
-                        # Use provided m3u_accounts or None (applies to all)
-                        # For bulk add, we default priority to 0
                         normalized_new.append({
                             "pattern": p,
-                            "m3u_accounts": m3u_accounts,
-                            "priority": 0
+                            "m3u_accounts": m3u_accounts
                         })
                     
                     # Merge patterns (avoid duplicates based on pattern string)
@@ -905,6 +1030,193 @@ def add_bulk_regex_patterns():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error adding bulk regex patterns: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ==========================================
+# Automation Profiles & Settings Endpoints
+# ==========================================
+
+@app.route('/api/settings/automation', methods=['GET'])
+def get_global_automation_settings():
+    """Get global automation settings."""
+    try:
+        manager = get_automation_config_manager()
+        return jsonify(manager.get_global_settings())
+    except Exception as e:
+        logger.error(f"Error getting global automation settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation', methods=['POST'])
+def update_global_automation_settings():
+    """Update global automation settings."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        manager = get_automation_config_manager()
+        success = manager.update_global_settings(
+            regular_automation_enabled=data.get('regular_automation_enabled')
+        )
+        
+        if success:
+            return jsonify({"message": "Settings updated successfully", "settings": manager.get_global_settings()})
+        else:
+            return jsonify({"error": "Failed to update settings"}), 500
+    except Exception as e:
+        logger.error(f"Error updating global automation settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/profiles', methods=['GET'])
+def get_automation_profiles():
+    """Get all automation profiles."""
+    try:
+        manager = get_automation_config_manager()
+        return jsonify(manager.get_all_profiles())
+    except Exception as e:
+        logger.error(f"Error getting automation profiles: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/profiles', methods=['POST'])
+def create_automation_profile():
+    """Create a new automation profile."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        manager = get_automation_config_manager()
+        profile_id = manager.create_profile(data)
+        
+        if profile_id:
+            return jsonify({"message": "Profile created successfully", "id": profile_id, "profile": manager.get_profile(profile_id)})
+        else:
+            return jsonify({"error": "Failed to create profile"}), 500
+    except Exception as e:
+        logger.error(f"Error creating automation profile: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/profiles/<profile_id>', methods=['GET'])
+def get_automation_profile(profile_id):
+    """Get a specific automation profile."""
+    try:
+        manager = get_automation_config_manager()
+        profile = manager.get_profile(profile_id)
+        if profile:
+            return jsonify(profile)
+        else:
+            return jsonify({"error": "Profile not found"}), 404
+    except Exception as e:
+        logger.error(f"Error getting automation profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/profiles/<profile_id>', methods=['PUT'])
+def update_automation_profile(profile_id):
+    """Update a specific automation profile."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        manager = get_automation_config_manager()
+        success = manager.update_profile(profile_id, data)
+        
+        if success:
+            return jsonify({"message": "Profile updated successfully", "profile": manager.get_profile(profile_id)})
+        else:
+            return jsonify({"error": "Failed to update profile (not found or save error)"}), 404
+    except Exception as e:
+        logger.error(f"Error updating automation profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/profiles/<profile_id>', methods=['DELETE'])
+def delete_automation_profile(profile_id):
+    """Delete a specific automation profile."""
+    try:
+        manager = get_automation_config_manager()
+        success = manager.delete_profile(profile_id)
+        
+        if success:
+            return jsonify({"message": "Profile deleted successfully"})
+        else:
+            return jsonify({"error": "Failed to delete profile (not found or save error)"}), 404
+    except Exception as e:
+        logger.error(f"Error deleting automation profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/assign/channel', methods=['POST'])
+def assign_profile_to_channel():
+    """Assign a profile to a channel."""
+    try:
+        data = request.get_json()
+        if not data or 'channel_id' not in data:
+            return jsonify({"error": "Missing channel_id"}), 400
+            
+        channel_id = data['channel_id']
+        profile_id = data.get('profile_id')  # None is valid (unassign)
+        
+        manager = get_automation_config_manager()
+        success = manager.assign_profile_to_channel(channel_id, profile_id)
+        
+        if success:
+            return jsonify({"message": "Assignment updated successfully"})
+        else:
+            return jsonify({"error": "Failed to update assignment"}), 500
+    except Exception as e:
+        logger.error(f"Error assigning profile to channel: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/assign/group', methods=['POST'])
+def assign_profile_to_group():
+    """Assign a profile to a group."""
+    try:
+        data = request.get_json()
+        if not data or 'group_id' not in data:
+            return jsonify({"error": "Missing group_id"}), 400
+            
+        group_id = data['group_id']
+        profile_id = data.get('profile_id')  # None is valid (unassign)
+        
+        manager = get_automation_config_manager()
+        success = manager.assign_profile_to_group(group_id, profile_id)
+        
+        if success:
+            return jsonify({"message": "Assignment updated successfully"})
+        else:
+            return jsonify({"error": "Failed to update assignment"}), 500
+    except Exception as e:
+        logger.error(f"Error assigning profile to group: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/effective/<int:channel_id>', methods=['GET'])
+def get_effective_profile(channel_id):
+    """Get the effective profile for a channel (resolving assignments)."""
+    try:
+        # We need the group ID to resolve fully.
+        # Ideally frontend provides it, or we look it up.
+        # Looking it up is safer.
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(channel_id)
+        group_id = None
+        if channel:
+             group_id = channel.get('group_id')
+             
+        manager = get_automation_config_manager()
+        profile = manager.get_effective_profile(channel_id, group_id)
+        
+        effective_id = manager.get_effective_profile_id(channel_id, group_id)
+        assigned_profile_id = manager.get_channel_assignment(channel_id)
+        assigned_group_profile_id = manager.get_group_assignment(group_id) if group_id else None
+        
+        return jsonify({
+            "effective_profile": profile,
+            "effective_profile_id": effective_id,
+            "channel_assignment": assigned_profile_id,
+            "group_assignment": assigned_group_profile_id,
+            "source": "channel" if assigned_profile_id else ("group" if assigned_group_profile_id else "default")
+        })
+    except Exception as e:
+        logger.error(f"Error getting effective profile for channel {channel_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns/import', methods=['POST'])
@@ -1160,7 +1472,7 @@ def bulk_edit_regex_pattern():
                     # Fallback to old format
                     old_regex = existing_patterns.get('regex', [])
                     old_m3u_accounts = existing_patterns.get('m3u_accounts')
-                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts, "priority": 0} for p in old_regex]
+                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
                 
                 # Find and replace pattern
                 pattern_found = False
@@ -1171,22 +1483,19 @@ def bulk_edit_regex_pattern():
                     if isinstance(pattern_obj, dict):
                         pattern = pattern_obj.get("pattern", "")
                         pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
-                        pattern_priority = pattern_obj.get("priority", 0)
                     else:
                         # Legacy string format
                         pattern = pattern_obj
                         pattern_m3u_accounts = None
-                        pattern_priority = 0
                     
                     if pattern == old_pattern:
                         pattern_found = True
-                        # Update the pattern and optionally the m3u_accounts and priority
+                        # Update the pattern and optionally the m3u_accounts
                         # Only add if we haven't seen the new pattern yet (avoid duplicates)
                         if new_pattern not in seen_patterns:
                             updated_pattern = {
                                 "pattern": new_pattern,
-                                "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts,
-                                "priority": new_priority if new_priority is not None else pattern_priority
+                                "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts
                             }
                             updated_patterns.append(updated_pattern)
                             seen_patterns.add(new_pattern)
@@ -1195,8 +1504,7 @@ def bulk_edit_regex_pattern():
                         if pattern not in seen_patterns:
                             updated_patterns.append({
                                 "pattern": pattern,
-                                "m3u_accounts": pattern_m3u_accounts,
-                                "priority": pattern_priority
+                                "m3u_accounts": pattern_m3u_accounts
                             })
                             seen_patterns.add(pattern)
                 
@@ -1240,6 +1548,100 @@ def bulk_edit_regex_pattern():
     except Exception as e:
         logger.error(f"Error bulk editing regex pattern: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/regex-patterns/bulk-settings', methods=['POST'])
+def bulk_update_match_settings():
+    """Update match settings (e.g., match_by_tvg_id) for multiple channels."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        channel_ids = data.get('channel_ids', [])
+        settings = data.get('settings', {})
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+            
+        if not settings:
+            return jsonify({"error": "settings must be provided"}), 400
+            
+        matcher = get_regex_matcher()
+        success_count = 0
+        failed_channels = []
+        
+        # Iterate and update
+        for channel_id in channel_ids:
+            try:
+                # Assuming settings currently only contains 'match_by_tvg_id'
+                # but could be expanded.
+                if 'match_by_tvg_id' in settings:
+                    if matcher.set_match_by_tvg_id(channel_id, bool(settings['match_by_tvg_id'])):
+                        success_count += 1
+                    else:
+                        failed_channels.append({"channel_id": channel_id, "error": "Failed to set setting"})
+            except Exception as e:
+                failed_channels.append({"channel_id": channel_id, "error": str(e)})
+        
+        return jsonify({
+            "message": f"Updated settings for {success_count} channels",
+            "success_count": success_count,
+            "failed_count": len(failed_channels),
+            "failed_channels": failed_channels
+        })
+    except Exception as e:
+        logger.error(f"Error bulk updating match settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/settings/automation/global', methods=['GET', 'PUT'])
+def handle_global_automation_settings():
+    """Get or update global automation settings."""
+    config_manager = get_automation_config_manager()
+    
+    if request.method == 'GET':
+        try:
+            settings = config_manager.get_global_settings()
+            return jsonify(settings)
+        except Exception as e:
+            logger.error(f"Error getting global automation settings: {e}")
+            return jsonify({"error": str(e)}), 500
+            
+    elif request.method == 'PUT':
+        try:
+            updates = request.json
+            if not updates:
+                return jsonify({"error": "No data provided"}), 400
+                
+            # Get current settings before update to detect changes
+            old_settings = config_manager.get_global_settings()
+            old_regular_enabled = old_settings.get('regular_automation_enabled', False)
+                
+            if config_manager.update_global_settings(settings=updates):
+                # Return updated settings
+                new_settings = config_manager.get_global_settings()
+                new_regular_enabled = new_settings.get('regular_automation_enabled', False)
+                
+                # Control automation service lifecycle if regular_automation_enabled changed
+                if old_regular_enabled != new_regular_enabled and check_wizard_complete():
+                    manager = get_automation_manager()
+                    
+                    if new_regular_enabled:
+                        # Start automation service if not already running
+                        if not manager.automation_running:
+                            manager.start_automation()
+                            logger.info("Automation service started (Enable Regular Automation toggled ON via /settings)")
+                    else:
+                        # Stop automation service if running
+                        if manager.automation_running:
+                            manager.stop_automation()
+                            logger.info("Automation service stopped (Enable Regular Automation toggled OFF via /settings)")
+                
+                return jsonify(new_settings)
+            else:
+                return jsonify({"error": "Failed to update global settings"}), 500
+        except Exception as e:
+            logger.error(f"Error updating global automation settings: {e}")
+            return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns/mass-edit-preview', methods=['POST'])
 def mass_edit_preview():
@@ -1675,551 +2077,7 @@ def test_regex_pattern_live():
         logger.error(f"Error testing regex patterns live: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ============================================================
-# PROFILE CONFIGURATION API ENDPOINTS
-# ============================================================
 
-@app.route('/api/profile-config', methods=['GET'])
-@log_function_call
-def get_profile_config():
-    """Get the current profile configuration.
-    
-    Returns:
-        JSON with profile configuration
-    """
-    try:
-        from profile_config import get_profile_config
-        profile_config = get_profile_config()
-        
-        config = profile_config.get_config()
-        
-        return jsonify(config)
-    except Exception as e:
-        logger.error(f"Error getting profile config: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profile-config', methods=['PUT'])
-@log_function_call
-def update_profile_config():
-    """Update profile configuration.
-    
-    Expects JSON with configuration options:
-    - selected_profile_id: Profile ID to use (null for general)
-    - selected_profile_name: Profile name (for display)
-    - dead_streams.enabled: Enable empty channel management
-    - dead_streams.target_profile_id: Profile to disable channels in
-    - dead_streams.target_profile_name: Profile name
-    - dead_streams.use_snapshot: Use snapshot for re-enabling
-    
-    Returns:
-        JSON with result
-    """
-    try:
-        from profile_config import get_profile_config
-        profile_config = get_profile_config()
-        
-        data = request.get_json()
-        
-        # Update selected profile
-        if 'selected_profile_id' in data or 'use_profile' in data:
-            # Get the profile IDs from the request, defaulting to current values if not provided
-            profile_id = data.get('selected_profile_id')
-            profile_name = data.get('selected_profile_name')
-            
-            # If use_profile is explicitly set to False, clear the selected profile
-            if 'use_profile' in data and not data['use_profile']:
-                profile_id = None
-                profile_name = None
-            
-            profile_config.set_selected_profile(profile_id, profile_name)
-        
-        # Update dead stream config
-        if 'dead_streams' in data:
-            ds_config = data['dead_streams']
-            profile_config.set_dead_stream_config(
-                enabled=ds_config.get('enabled'),
-                target_profile_id=ds_config.get('target_profile_id'),
-                target_profile_name=ds_config.get('target_profile_name'),
-                use_snapshot=ds_config.get('use_snapshot')
-            )
-        
-        return jsonify({"message": "Profile configuration updated successfully"})
-    except Exception as e:
-        logger.error(f"Error updating profile config: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profiles', methods=['GET'])
-@log_function_call
-def get_profiles():
-    """Get all available channel profiles from Dispatcharr.
-    
-    Returns:
-        JSON list of profiles
-    """
-    try:
-        # Get profiles from UDI
-        udi = get_udi_manager()
-        profiles = udi.get_channel_profiles()
-        
-        logger.info(f"Returning {len(profiles)} channel profiles")
-        if len(profiles) == 0:
-            logger.warning("No channel profiles found in UDI cache")
-        
-        return jsonify(profiles)
-    except Exception as e:
-        logger.error(f"Error getting profiles: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profiles/refresh', methods=['POST'])
-@log_function_call
-def refresh_profiles():
-    """Force refresh channel profiles from Dispatcharr API.
-    
-    This endpoint can be used to manually trigger a profile refresh
-    when profiles are not appearing in the UI.
-    
-    Returns:
-        JSON with refresh status and profile count
-    """
-    try:
-        udi = get_udi_manager()
-        logger.info("Forcing channel profiles refresh...")
-        
-        success = udi.refresh_channel_profiles()
-        
-        if success:
-            profiles = udi.get_channel_profiles()
-            return jsonify({
-                "success": True,
-                "message": f"Successfully refreshed {len(profiles)} channel profiles",
-                "profile_count": len(profiles),
-                "profiles": profiles
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Failed to refresh channel profiles"
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"Error refreshing profiles: {e}", exc_info=True)
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-@app.route('/api/profiles/diagnose', methods=['GET'])
-@log_function_call
-def diagnose_profiles():
-    """Diagnostic endpoint to check profile fetching status.
-    
-    Returns detailed information about:
-    - UDI initialization status
-    - Profile cache contents
-    - Dispatcharr API connectivity
-    - Recent refresh attempts
-    
-    Returns:
-        JSON with diagnostic information
-    """
-    try:
-        udi = get_udi_manager()
-        
-        # Check if UDI is initialized
-        is_initialized = udi.is_initialized()
-        
-        # Get current profile cache
-        profiles = udi.get_channel_profiles()
-        
-        # Check Dispatcharr configuration
-        from dispatcharr_config import get_dispatcharr_config
-        config = get_dispatcharr_config()
-        is_configured = config.is_configured()
-        base_url = config.get_base_url()
-        
-        # Check if profiles exist in storage
-        storage_count = udi.get_storage_count('channel_profiles')
-        
-        # Get last refresh time
-        last_refresh = udi.get_cache_last_refresh('channel_profiles')
-        
-        diagnostic_info = {
-            "udi_initialized": is_initialized,
-            "dispatcharr_configured": is_configured,
-            "dispatcharr_base_url": base_url,
-            "cache_profile_count": len(profiles),
-            "storage_profile_count": storage_count,
-            "last_refresh_time": last_refresh.isoformat() if last_refresh else None,
-            "profiles_in_cache": profiles
-        }
-        
-        if len(profiles) == 0:
-            diagnostic_info["diagnosis"] = "No profiles found"
-            diagnostic_info["possible_causes"] = [
-                "No channel profiles have been created in Dispatcharr yet",
-                "Profile fetch failed during initialization",
-                "Authentication issue preventing API access",
-                "Network connectivity problem"
-            ]
-            diagnostic_info["recommended_actions"] = [
-                "Create channel profiles in Dispatcharr web UI (Channels > Profiles)",
-                "Click 'Refresh Profiles' button to force a refresh",
-                "Check Dispatcharr logs for errors",
-                "Verify DISPATCHARR_BASE_URL, DISPATCHARR_USER, and DISPATCHARR_PASS in .env"
-            ]
-        
-        return jsonify(diagnostic_info)
-        
-    except Exception as e:
-        logger.error(f"Error in profile diagnostics: {e}", exc_info=True)
-        return jsonify({
-            "error": str(e),
-            "message": "Failed to run profile diagnostics"
-        }), 500
-
-
-def _get_all_channels_as_enabled():
-    """Helper function to get all channels formatted with enabled=True.
-    
-    This is used as a fallback when profile channel parsing fails.
-    
-    Returns:
-        List of channel dicts in format [{channel_id, enabled}, ...]
-    """
-    udi = get_udi_manager()
-    all_channels = udi.get_channels()
-    return [
-        {'channel_id': ch['id'], 'enabled': True}
-        for ch in all_channels if ch.get('id')
-    ]
-
-
-@app.route('/api/profiles/<int:profile_id>/channels', methods=['GET'])
-@log_function_call
-def get_profile_channels(profile_id):
-    """Get channels for a specific profile from UDI cache.
-    
-    Uses cached data from UDI instead of making direct API calls to Dispatcharr.
-    The cache is updated when playlists are refreshed.
-    
-    Args:
-        profile_id: Profile ID
-        
-    Query Parameters:
-        include_snapshot: If 'true', also include channels from the profile snapshot
-                         even if they're currently disabled
-        
-    Returns:
-        JSON with profile and channels
-    """
-    try:
-        # Check if we should include snapshot channels
-        include_snapshot = request.args.get('include_snapshot', '').lower() == 'true'
-        
-        # Get data from UDI cache
-        udi = get_udi_manager()
-        
-        # Get profile info
-        profile = udi.get_channel_profile_by_id(profile_id)
-        if not profile:
-            return jsonify({"error": f"Profile {profile_id} not found in UDI cache"}), 404
-        
-        # Get cached profile channels
-        profile_channels_data = udi.get_profile_channels(profile_id)
-        
-        if profile_channels_data:
-            # Use cached data
-            channels = profile_channels_data.get('channels', [])
-            
-            # If include_snapshot is requested, merge with snapshot channels
-            if include_snapshot:
-                from profile_config import get_profile_config
-                profile_config = get_profile_config()
-                snapshot = profile_config.get_snapshot(profile_id)
-                
-                if snapshot:
-                    snapshot_channel_ids = set(snapshot.get('channel_ids', []))
-                    # Get current channel IDs from the profile
-                    current_channel_ids = set()
-                    for ch in channels:
-                        # Channels can be integers or objects with channel_id
-                        if isinstance(ch, int):
-                            current_channel_ids.add(ch)
-                        elif isinstance(ch, dict):
-                            ch_id = ch.get('channel_id') or ch.get('id')
-                            if ch_id:
-                                current_channel_ids.add(ch_id)
-                    
-                    # Find channel IDs in snapshot but not in current channels
-                    missing_channel_ids = snapshot_channel_ids - current_channel_ids
-                    
-                    if missing_channel_ids:
-                        logger.info(f"Including {len(missing_channel_ids)} snapshot channels that are not currently in profile {profile_id}")
-                        # Add the missing channels to the list
-                        # Convert channels to list to make it mutable, then extend with missing IDs
-                        channels = list(channels)
-                        channels.extend(missing_channel_ids)
-            
-            logger.info(f"Returning {len(channels)} cached channel associations for profile {profile_id}" + 
-                       (f" (including snapshot channels)" if include_snapshot else ""))
-            return jsonify({
-                'profile': profile,
-                'channels': channels
-            })
-        else:
-            # If not in cache yet (e.g., first load), fall back to direct API call
-            # This will only happen once until the next playlist refresh
-            logger.warning(f"Profile channels not in UDI cache for profile {profile_id}, making direct API call")
-            base_url = _get_base_url()
-            if not base_url:
-                return jsonify({"error": "Dispatcharr base URL not configured"}), 500
-            
-            # Import here to avoid circular dependency
-            from udi.fetcher import _get_auth_headers
-            
-            # Get profile details directly from Dispatcharr
-            profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
-            resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
-            resp.raise_for_status()
-            profile_data = resp.json()
-            
-            # Parse the channels field
-            channels_data = profile_data.get('channels', '')
-            
-            # Try to parse if it's a JSON string
-            if isinstance(channels_data, str) and channels_data.strip():
-                try:
-                    channels_data = json.loads(channels_data)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
-                    channels_data = []
-            elif not isinstance(channels_data, list):
-                channels_data = []
-            
-            # Return the data and cache it for future use
-            profile_channels_to_cache = {
-                'profile': profile_data,
-                'channels': channels_data
-            }
-            # Store in UDI for future use
-            udi.update_profile_channels(profile_id, profile_channels_to_cache)
-            
-            return jsonify(profile_channels_to_cache)
-    
-    except Exception as e:
-        logger.error(f"Error fetching profile channels: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['POST'])
-@log_function_call
-def create_profile_snapshot(profile_id):
-    """Create a snapshot of the current channels in a profile.
-    
-    This records which channels are in the profile so we can re-enable them
-    after they've been filled back again.
-    
-    Args:
-        profile_id: Profile ID
-        
-    Returns:
-        JSON with result
-    """
-    try:
-        from profile_config import get_profile_config
-        
-        # Get profile info from UDI
-        udi = get_udi_manager()
-        profile = udi.get_channel_profile_by_id(profile_id)
-        
-        if not profile:
-            return jsonify({"error": "Profile not found"}), 404
-        
-        # Get channels for this profile - only enabled channels
-        # First try to get from cache
-        profile_channels_data = udi.get_profile_channels(profile_id)
-        
-        if profile_channels_data:
-            # Use cached data
-            # The 'channels' field is a list of channel IDs (integers)
-            # Being in the profile means the channel is enabled
-            channels = profile_channels_data.get('channels', [])
-            
-            # Ensure channels is a list and contains integers
-            if isinstance(channels, list):
-                channel_ids = [ch for ch in channels if isinstance(ch, int)]
-            else:
-                logger.warning(f"Unexpected channels data type: {type(channels)}")
-                channel_ids = []
-            
-            logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from cache")
-        else:
-            # Fall back to direct API call if not in cache
-            logger.info("Profile channels not in cache, fetching from Dispatcharr API")
-            base_url = _get_base_url()
-            if not base_url:
-                return jsonify({"error": "Dispatcharr base URL not configured"}), 500
-            
-            from udi.fetcher import _get_auth_headers
-            
-            # Get profile details directly from Dispatcharr
-            profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
-            resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
-            resp.raise_for_status()
-            profile_data = resp.json()
-            
-            # Parse the channels field
-            # According to swagger.json, this is a JSON string containing a list of channel IDs
-            channels_data = profile_data.get('channels', '')
-            
-            # Try to parse if it's a JSON string
-            if isinstance(channels_data, str) and channels_data.strip():
-                try:
-                    channels_data = json.loads(channels_data)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
-                    channels_data = []
-            elif not isinstance(channels_data, list):
-                channels_data = []
-            
-            # channels_data is a list of channel IDs (integers)
-            # Being in the profile means the channel is enabled
-            if isinstance(channels_data, list):
-                channel_ids = [ch for ch in channels_data if isinstance(ch, int)]
-            else:
-                logger.warning(f"Unexpected channels_data type: {type(channels_data)}")
-                channel_ids = []
-            
-            logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from API")
-        
-        # Create snapshot
-        profile_config = get_profile_config()
-        success = profile_config.create_snapshot(
-            profile_id,
-            profile.get('name', 'Unknown'),
-            channel_ids
-        )
-        
-        if success:
-            snapshot = profile_config.get_snapshot(profile_id)
-            return jsonify({
-                "message": "Snapshot created successfully",
-                "snapshot": snapshot
-            })
-        else:
-            return jsonify({"error": "Failed to create snapshot"}), 500
-            
-    except Exception as e:
-        logger.error(f"Error creating profile snapshot: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['GET'])
-@log_function_call
-def get_profile_snapshot(profile_id):
-    """Get the snapshot for a profile.
-    
-    Args:
-        profile_id: Profile ID
-        
-    Returns:
-        JSON with snapshot data
-    """
-    try:
-        from profile_config import get_profile_config
-        profile_config = get_profile_config()
-        
-        snapshot = profile_config.get_snapshot(profile_id)
-        
-        if snapshot:
-            return jsonify(snapshot)
-        else:
-            return jsonify({"message": "No snapshot found for this profile"}), 404
-            
-    except Exception as e:
-        logger.error(f"Error getting profile snapshot: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['DELETE'])
-@log_function_call
-def delete_profile_snapshot(profile_id):
-    """Delete the snapshot for a profile.
-    
-    Args:
-        profile_id: Profile ID
-        
-    Returns:
-        JSON with result
-    """
-    try:
-        from profile_config import get_profile_config
-        profile_config = get_profile_config()
-        
-        success = profile_config.delete_snapshot(profile_id)
-        
-        if success:
-            return jsonify({"message": "Snapshot deleted successfully"})
-        else:
-            return jsonify({"error": "Failed to delete snapshot"}), 500
-            
-    except Exception as e:
-        logger.error(f"Error deleting profile snapshot: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profiles/snapshots', methods=['GET'])
-@log_function_call
-def get_all_snapshots():
-    """Get all profile snapshots.
-    
-    Returns:
-        JSON with all snapshots
-    """
-    try:
-        from profile_config import get_profile_config
-        profile_config = get_profile_config()
-        
-        snapshots = profile_config.get_all_snapshots()
-        
-        return jsonify(snapshots)
-    except Exception as e:
-        logger.error(f"Error getting snapshots: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/profiles/<int:profile_id>/disable-empty-channels', methods=['POST'])
-@log_function_call
-def disable_empty_channels_in_profile_endpoint(profile_id):
-    """Disable channels with no streams in a specific profile.
-    
-    This removes channels from the profile if they have no working streams.
-    Uses the dead_streams_tracker to identify empty channels.
-    
-    Args:
-        profile_id: Profile ID
-        
-    Returns:
-        JSON with result and count of disabled channels
-    """
-    try:
-        from empty_channel_manager import disable_empty_channels_in_profile
-        
-        disabled_count, total_checked = disable_empty_channels_in_profile(profile_id)
-        
-        return jsonify({
-            "message": f"Disabled {disabled_count} empty channels",
-            "disabled_count": disabled_count,
-            "total_checked": total_checked
-        })
-        
-    except Exception as e:
-        logger.error(f"Error disabling empty channels: {e}")
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/changelog', methods=['GET'])
@@ -2227,6 +2085,8 @@ def get_changelog():
     """Get recent changelog entries from both automation and stream checker."""
     try:
         days = request.args.get('days', 7, type=int)
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 10, type=int)
         
         # Get automation changelog entries
         manager = get_automation_manager()
@@ -2245,7 +2105,20 @@ def get_changelog():
         merged_changelog = automation_changelog + stream_checker_changelog
         merged_changelog.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         
-        return jsonify(merged_changelog)
+        # Apply pagination
+        total = len(merged_changelog)
+        total_pages = (total + limit - 1) // limit if limit > 0 else 0
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_data = merged_changelog[start_idx:end_idx] if limit > 0 else merged_changelog
+        
+        return jsonify({
+            'data': paginated_data,
+            'page': page,
+            'limit': limit,
+            'total': total,
+            'total_pages': total_pages
+        })
     except Exception as e:
         logger.error(f"Error getting changelog: {e}")
         return jsonify({"error": str(e)}), 500
@@ -2361,237 +2234,7 @@ def clear_all_dead_streams():
         logger.error(f"Error clearing dead streams: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/channel-settings', methods=['GET'])
-def get_all_channel_settings():
-    """Get settings for all channels with group inheritance info."""
-    try:
-        settings_manager = get_channel_settings_manager()
-        udi = get_udi_manager()
-        
-        # Get all channels to retrieve their group IDs
-        all_channels = udi.get_channels()
-        
-        # Build a map of effective settings for all channels
-        all_effective_settings = {}
-        for channel in all_channels:
-            if isinstance(channel, dict) and 'id' in channel:
-                channel_id = channel['id']
-                channel_group_id = channel.get('channel_group_id')
-                all_effective_settings[channel_id] = settings_manager.get_channel_effective_settings(
-                    channel_id, 
-                    channel_group_id
-                )
-        
-        return jsonify(all_effective_settings)
-    except Exception as e:
-        logger.error(f"Error getting all channel settings: {e}")
-        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/channel-settings/<int:channel_id>', methods=['GET'])
-def get_channel_settings_endpoint(channel_id):
-    """Get settings for a specific channel with group inheritance info."""
-    try:
-        settings_manager = get_channel_settings_manager()
-        
-        # Get the channel to retrieve its group ID
-        udi = get_udi_manager()
-        channel = udi.get_channel_by_id(channel_id)
-        channel_group_id = channel.get('channel_group_id') if channel else None
-        
-        # Get effective settings with inheritance info
-        effective_settings = settings_manager.get_channel_effective_settings(channel_id, channel_group_id)
-        
-        return jsonify(effective_settings)
-    except Exception as e:
-        logger.error(f"Error getting channel settings: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/channel-settings/<int:channel_id>', methods=['PUT', 'PATCH'])
-def update_channel_settings_endpoint(channel_id):
-    """Update settings for a specific channel."""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        matching_mode = data.get('matching_mode')
-        checking_mode = data.get('checking_mode')
-        
-        # Validate modes if provided
-        valid_modes = ['enabled', 'disabled']
-        if matching_mode and matching_mode not in valid_modes:
-            return jsonify({"error": f"Invalid matching_mode. Must be one of: {valid_modes}"}), 400
-        if checking_mode and checking_mode not in valid_modes:
-            return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
-        
-        settings_manager = get_channel_settings_manager()
-        success = settings_manager.set_channel_settings(
-            channel_id,
-            matching_mode=matching_mode,
-            checking_mode=checking_mode
-        )
-        
-        if success:
-            updated_settings = settings_manager.get_channel_settings(channel_id)
-            return jsonify({
-                "message": "Channel settings updated successfully",
-                "settings": updated_settings
-            })
-        else:
-            return jsonify({"error": "Failed to update channel settings"}), 500
-    except Exception as e:
-        logger.error(f"Error updating channel settings: {e}")
-        return jsonify({"error": str(e)}), 500
-
-# ==================== GROUP SETTINGS ENDPOINTS ====================
-
-@app.route('/api/group-settings', methods=['GET'])
-def get_all_group_settings():
-    """Get settings for all channel groups."""
-    try:
-        settings_manager = get_channel_settings_manager()
-        all_settings = settings_manager.get_all_group_settings()
-        return jsonify(all_settings)
-    except Exception as e:
-        logger.error(f"Error getting all group settings: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/group-settings/<int:group_id>', methods=['GET'])
-def get_group_settings_endpoint(group_id):
-    """Get settings for a specific channel group."""
-    try:
-        settings_manager = get_channel_settings_manager()
-        settings = settings_manager.get_group_settings(group_id)
-        return jsonify(settings)
-    except Exception as e:
-        logger.error(f"Error getting group settings: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/group-settings/<int:group_id>', methods=['PUT', 'PATCH'])
-def update_group_settings_endpoint(group_id):
-    """Update settings for a specific channel group and cascade to all channels in the group."""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        matching_mode = data.get('matching_mode')
-        checking_mode = data.get('checking_mode')
-        cascade_to_channels = data.get('cascade_to_channels', False)  # Default to False to preserve individual channel settings
-        
-        # Validate modes if provided
-        valid_modes = ['enabled', 'disabled']
-        if matching_mode and matching_mode not in valid_modes:
-            return jsonify({"error": f"Invalid matching_mode. Must be one of: {valid_modes}"}), 400
-        if checking_mode and checking_mode not in valid_modes:
-            return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
-        
-        settings_manager = get_channel_settings_manager()
-        
-        # Update the group settings
-        success = settings_manager.set_group_settings(
-            group_id,
-            matching_mode=matching_mode,
-            checking_mode=checking_mode
-        )
-        
-        if not success:
-            return jsonify({"error": "Failed to update group settings"}), 500
-        
-        # Cascade to all channels in the group if requested
-        channels_updated = 0
-        if cascade_to_channels:
-            try:
-                # Get all channels in this group
-                udi = get_udi_manager()
-                all_channels = udi.get_channels()
-                
-                for channel in all_channels:
-                    if isinstance(channel, dict) and channel.get('channel_group_id') == group_id:
-                        channel_id = channel.get('id')
-                        if channel_id:
-                            # Update channel to match group settings
-                            settings_manager.set_channel_settings(
-                                channel_id,
-                                matching_mode=matching_mode,
-                                checking_mode=checking_mode
-                            )
-                            channels_updated += 1
-                
-                logger.info(f"Cascaded group {group_id} settings to {channels_updated} channel(s)")
-            except Exception as e:
-                logger.error(f"Error cascading settings to channels: {e}")
-                # Continue even if cascade fails
-        
-        updated_settings = settings_manager.get_group_settings(group_id)
-        return jsonify({
-            "message": "Group settings updated successfully",
-            "settings": updated_settings,
-            "channels_updated": channels_updated
-        })
-    except Exception as e:
-        logger.error(f"Error updating group settings: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/group-settings/bulk-disable-matching', methods=['POST'])
-def bulk_disable_group_matching():
-    """Disable matching for all channel groups."""
-    try:
-        settings_manager = get_channel_settings_manager()
-        udi = get_udi_manager()
-        
-        # Get all groups (with channels)
-        groups = udi.get_channel_groups()
-        
-        updated_count = 0
-        for group in groups:
-            group_id = group.get('id')
-            if group_id:
-                success = settings_manager.set_group_settings(
-                    group_id,
-                    matching_mode='disabled'
-                )
-                if success:
-                    updated_count += 1
-        
-        logger.info(f"Bulk disabled matching for {updated_count} group(s)")
-        return jsonify({
-            "message": f"Disabled matching for {updated_count} group(s)",
-            "groups_updated": updated_count
-        })
-    except Exception as e:
-        logger.error(f"Error in bulk disable matching: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/group-settings/bulk-disable-checking', methods=['POST'])
-def bulk_disable_group_checking():
-    """Disable checking for all channel groups."""
-    try:
-        settings_manager = get_channel_settings_manager()
-        udi = get_udi_manager()
-        
-        # Get all groups (with channels)
-        groups = udi.get_channel_groups()
-        
-        updated_count = 0
-        for group in groups:
-            group_id = group.get('id')
-            if group_id:
-                success = settings_manager.set_group_settings(
-                    group_id,
-                    checking_mode='disabled'
-                )
-                if success:
-                    updated_count += 1
-        
-        logger.info(f"Bulk disabled checking for {updated_count} group(s)")
-        return jsonify({
-            "message": f"Disabled checking for {updated_count} group(s)",
-            "groups_updated": updated_count
-        })
-    except Exception as e:
-        logger.error(f"Error in bulk disable checking: {e}")
-        return jsonify({"error": str(e)}), 500
 
 # ==================== CHANNEL ORDER ENDPOINTS ====================
 
@@ -2676,7 +2319,7 @@ def refresh_playlist():
         
         manager = get_automation_manager()
         # Use force=True to bypass feature flags for manual Quick Actions
-        success = manager.refresh_playlists(force=True)
+        success, _ = manager.refresh_playlists(force=True)
         
         if success:
             return jsonify({"message": "Playlist refresh completed successfully"})
@@ -2690,14 +2333,13 @@ def refresh_playlist():
 def get_m3u_accounts_endpoint():
     """Get all M3U accounts from Dispatcharr, filtering out 'custom' account if no custom streams exist and non-active accounts.
     
-    Also merges priority_mode settings from local configuration and returns global priority mode.
+    (Priority is now handled per-profile).
     """
     try:
         from api_utils import get_m3u_accounts, has_custom_streams
-        from m3u_priority_config import get_m3u_priority_config
         
+        # Get accounts from UDI
         accounts = get_m3u_accounts()
-        
         if accounts is None:
             return jsonify({"error": "Failed to fetch M3U accounts"}), 500
         
@@ -2719,121 +2361,17 @@ def get_m3u_accounts_endpoint():
                 if acc.get('name', '').lower() != 'custom'
             ]
         
-        # Get global priority mode
-        priority_config = get_m3u_priority_config()
-        global_priority_mode = priority_config.get_global_priority_mode()
-        
-        # Return accounts with global priority mode
         return jsonify({
             "accounts": accounts,
-            "global_priority_mode": global_priority_mode
+            "global_priority_mode": "disabled" # Deprecated
         })
     except Exception as e:
         logger.error(f"Error fetching M3U accounts: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/m3u-accounts/<int:account_id>/priority', methods=['PATCH'])
-@log_function_call
-def update_m3u_account_priority(account_id):
-    """Update M3U account priority settings.
-    
-    This endpoint:
-    - Updates the 'priority' field in Dispatcharr via API
-    - Stores the 'priority_mode' field locally (StreamFlow-specific)
-    
-    Request body:
-        {
-            "priority": int (0-100) - optional, updates Dispatcharr
-            "priority_mode": str ("disabled", "same_resolution", "all_streams") - optional, stored locally
-        }
-    """
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        # Update priority in Dispatcharr if provided
-        if 'priority' in data:
-            priority = data.get('priority', 0)
-            if not isinstance(priority, int) or priority < 0:
-                return jsonify({"error": "Priority must be a non-negative integer"}), 400
-            
-            # Update via Dispatcharr API
-            from api_utils import _get_base_url, _get_auth_headers
-            base_url = _get_base_url()
-            headers = _get_auth_headers()
-            
-            if not base_url or not headers:
-                return jsonify({"error": "Dispatcharr not configured"}), 500
-            
-            # PATCH request to update priority
-            url = f"{base_url}/api/m3u/accounts/{account_id}/"
-            resp = requests.patch(
-                url,
-                headers=headers,
-                json={"priority": priority},
-                timeout=10
-            )
-            
-            if resp.status_code not in [200, 201]:
-                logger.error(f"Failed to update priority in Dispatcharr: {resp.status_code} - {resp.text}")
-                return jsonify({"error": f"Failed to update priority: {resp.text}"}), resp.status_code
-            
-            logger.info(f"Updated priority for M3U account {account_id} to {priority} in Dispatcharr")
-        
-        # Store priority_mode locally (StreamFlow-specific configuration)
-        if 'priority_mode' in data:
-            priority_mode = data.get('priority_mode', 'disabled')
-            from m3u_priority_config import get_m3u_priority_config
-            
-            priority_config = get_m3u_priority_config()
-            if not priority_config.set_priority_mode(account_id, priority_mode):
-                return jsonify({"error": "Failed to save priority_mode"}), 500
-            
-            logger.info(f"Updated priority_mode for M3U account {account_id} to {priority_mode}")
-        
-        # Refresh UDI to get updated data from Dispatcharr
-        if 'priority' in data:
-            udi = get_udi_manager()
-            udi.refresh_m3u_accounts()
-        
-        return jsonify({"message": "M3U account priority updated successfully"})
-        
-    except Exception as e:
-        logger.error(f"Error updating M3U account priority: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/m3u-priority/global-mode', methods=['PUT'])
-@log_function_call
-def update_global_priority_mode():
-    """Update the global priority mode for all M3U accounts.
-    
-    Request body:
-        {
-            "priority_mode": str ("disabled", "same_resolution", "all_streams")
-        }
-    """
-    try:
-        data = request.get_json()
-        
-        if not data or 'priority_mode' not in data:
-            return jsonify({"error": "priority_mode is required"}), 400
-        
-        priority_mode = data.get('priority_mode')
-        
-        from m3u_priority_config import get_m3u_priority_config
-        priority_config = get_m3u_priority_config()
-        
-        if not priority_config.set_global_priority_mode(priority_mode):
-            return jsonify({"error": "Failed to save global priority_mode"}), 500
-        
-        logger.info(f"Updated global priority_mode to {priority_mode}")
-        return jsonify({"message": "Global priority mode updated successfully", "priority_mode": priority_mode})
-        
-    except Exception as e:
-        logger.error(f"Error updating global priority mode: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+
+
 
 @app.route('/api/setup-wizard', methods=['GET'])
 def get_setup_wizard_status():
@@ -2880,18 +2418,170 @@ def get_setup_wizard_status():
                 except:
                     pass
         
-        # Patterns are now optional - wizard can be completed without them
+        # Setup is complete if configurations exist and Dispatcharr is reachable
         status["setup_complete"] = all([
             status["automation_config_exists"],
             status["regex_config_exists"],
-            # Removed has_patterns requirement - it's now optional
-            status["has_channels"],
             status["dispatcharr_connection"]
         ])
         
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting setup wizard status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/test-match-live', methods=['POST'])
+def test_match_live():
+    """
+    Test stream matching against all available streams with full configuration 
+    (Regex + TVG-ID + Priority).
+    
+    Used for the enhanced preview in Channel Configuration.
+    """
+    try:
+        from api_utils import get_streams, get_m3u_accounts
+        import re
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Missing request body"}), 400
+        
+        # Configuration
+        channel_name = data.get('channel_name', 'Unknown Channel')
+        # match_by_tvg_id can be passed as explicit boolean
+        match_by_tvg_id = data.get('match_by_tvg_id', False)
+        tvg_id = data.get('tvg_id', None)
+        
+        regex_patterns = data.get('regex_patterns', [])
+        # Normalization: ensure patterns are list of dicts
+        normalized_patterns = []
+        for p in regex_patterns:
+            if isinstance(p, dict):
+                normalized_patterns.append(p)
+            elif isinstance(p, str):
+                normalized_patterns.append({"pattern": p, "priority": 0})
+        
+        match_priority_order = data.get('match_priority_order', ['tvg', 'regex'])
+        case_sensitive = data.get('case_sensitive', True)
+        max_matches = data.get('max_matches', 100)
+        
+        # Get all streams
+        all_streams = get_streams()
+        if not all_streams:
+            return jsonify({
+                "matches": [],
+                "total_streams": 0
+            })
+            
+        # Get M3U accounts for mapping
+        m3u_accounts_list = get_m3u_accounts() or []
+        m3u_account_map = {acc.get('id'): acc.get('name', f'Account {acc.get("id")}') 
+                          for acc in m3u_accounts_list if acc.get('id') is not None}
+
+        # Whitespace regex (duplicated from automated_stream_manager.py)
+        _WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
+
+        matches = []
+        
+        for stream in all_streams:
+            if not isinstance(stream, dict):
+                continue
+            
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+            
+            if not stream_name:
+                continue
+                
+            stream_tvg_id = stream.get('tvg_id')
+            stream_m3u_account = stream.get('m3u_account')
+            
+            matched = False
+            priority = 0
+            match_source = "regex"
+            matched_pattern = None
+            
+            # Check based on priority order
+            for match_type in match_priority_order:
+                if match_type == 'tvg':
+                    if match_by_tvg_id and tvg_id and stream_tvg_id:
+                        if stream_tvg_id == tvg_id:
+                            matched = True
+                            match_source = "tvg_id"
+                            if match_priority_order[0] == 'tvg':
+                                priority = 1000
+                            else:
+                                priority = 0
+                            break
+                            
+                elif match_type == 'regex':
+                    if matched: continue
+                    
+                    search_name = stream_name if case_sensitive else stream_name.lower()
+                    
+                    regex_matched = False
+                    best_regex_priority = 0
+                    best_pattern_str = None
+                    
+                    for pattern_obj in normalized_patterns:
+                        pattern = pattern_obj.get("pattern", "")
+                        pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                        pattern_priority = pattern_obj.get("priority", 0)
+                        
+                        if not pattern: continue
+                        
+                        # M3U Filter
+                        if pattern_m3u_accounts and len(pattern_m3u_accounts) > 0:
+                            if stream_m3u_account is None or stream_m3u_account not in pattern_m3u_accounts:
+                                continue
+                                
+                        # Substitution
+                        # Substitute CHANNEL_NAME variable
+                        escaped_channel_name = re.escape(channel_name)
+                        substituted_pattern = pattern.replace('CHANNEL_NAME', escaped_channel_name)
+                        
+                        search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
+                        search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
+                        
+                        try:
+                            if re.search(search_pattern, search_name):
+                                regex_matched = True
+                                if pattern_priority >= best_regex_priority:
+                                    best_regex_priority = pattern_priority
+                                    best_pattern_str = pattern
+                                # Matches logic in AutomatedStreamManager now finds BEST priority
+                        except re.error:
+                            continue
+                            
+                    if regex_matched:
+                        matched = True
+                        match_source = "regex"
+                        priority = best_regex_priority
+                        matched_pattern = best_pattern_str
+                        break
+            
+            if matched:
+                matches.append({
+                    "stream_id": stream_id,
+                    "stream_name": stream_name,
+                    "stream_tvg_id": stream_tvg_id,
+                    "m3u_account_name": m3u_account_map.get(stream_m3u_account),
+                    "source": match_source,
+                    "priority": priority,
+                    "matched_pattern": matched_pattern
+                })
+                
+                if len(matches) >= max_matches:
+                    break
+        
+        return jsonify({
+            "matches": matches,
+            "total_tested_streams": len(all_streams),
+            "total_matches": len(matches)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error testing match live: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/setup-wizard/ensure-config', methods=['POST'])
@@ -2916,6 +2606,23 @@ def ensure_wizard_config():
             with open(regex_file, 'w') as f:
                 json.dump(default_regex_config, f, indent=2)
             logger.info("Created empty regex config file for wizard")
+            
+        # Ensure automation config exists (even if default)
+        auto_file = CONFIG_DIR / 'automation_config.json'
+        if not auto_file.exists():
+            default_auto_config = {
+                "regular_automation_enabled": False,
+                "global_action_enabled": False,
+                "validate_existing_streams": False,
+                "global_schedule": {"type": "interval", "value": 60},
+                "profiles": {},
+                "channel_assignments": {},
+                "group_assignments": {}
+            }
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(auto_file, 'w') as f:
+                json.dump(default_auto_config, f, indent=2)
+            logger.info("Created default automation config file for wizard")
         
         return jsonify({"message": "Configuration files ensured"})
     except Exception as e:
@@ -3116,6 +2823,17 @@ def test_dispatcharr_connection():
         logger.error(f"Error testing Dispatcharr connection: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/dispatcharr/initialization-status', methods=['GET'])
+def get_udi_initialization_status():
+    """Get the current UDI initialization progress."""
+    try:
+        udi = get_udi_manager()
+        progress = udi.get_init_progress()
+        return jsonify(progress)
+    except Exception as e:
+        logger.error(f"Error getting UDI initialization status: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/dispatcharr/initialize-udi', methods=['POST'])
 def initialize_udi():
     """Initialize UDI Manager with current Dispatcharr credentials.
@@ -3314,6 +3032,11 @@ def update_stream_checker_config():
         if 'automation_controls' in data and check_wizard_complete():
             automation_controls = data['automation_controls']
             manager = get_automation_manager()
+            automation_config = get_automation_config_manager()
+            
+            # Check the master switch for regular automation
+            global_settings = automation_config.get_global_settings()
+            regular_automation_enabled = global_settings.get('regular_automation_enabled', False)
             
             # Check if any automation is enabled
             any_automation_enabled = (
@@ -3328,7 +3051,7 @@ def update_stream_checker_config():
                 if service.running:
                     service.stop()
                     logger.info("Stream checker service stopped (all automation disabled)")
-                if manager.running:
+                if manager.automation_running:
                     manager.stop_automation()
                     logger.info("Automation service stopped (all automation disabled)")
                 # Stop background processors
@@ -3336,12 +3059,20 @@ def update_stream_checker_config():
                 stop_epg_refresh_processor()
             else:
                 # Start services if automation is enabled and they're not already running
+                # But respect the regular_automation_enabled master switch for automation service
                 if not service.running:
                     service.start()
                     logger.info(f"Stream checker service auto-started after config update")
-                if not manager.running:
+                
+                # Only start automation service if regular automation is enabled
+                if regular_automation_enabled and not manager.automation_running:
                     manager.start_automation()
                     logger.info(f"Automation service auto-started after config update")
+                elif not regular_automation_enabled and manager.automation_running:
+                    # Don't auto-start if master switch is off, but also don't stop it
+                    # (user might have it on for testing, we only stop via the master switch)
+                    pass
+                
                 # Start background processors if not running
                 if not (scheduled_event_processor_thread and scheduled_event_processor_thread.is_alive()):
                     start_scheduled_event_processor()
@@ -3470,35 +3201,6 @@ def queue_all_channels():
         logger.error(f"Error queueing all channels: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/stream-checker/global-action', methods=['POST'])
-def trigger_global_action():
-    """Trigger a manual global action (Update M3U, Match streams, Check all channels).
-    
-    This performs a complete global action that:
-    1. Reloads enabled M3U accounts
-    2. Matches new streams with regex patterns
-    3. Checks every channel, bypassing 2-hour immunity
-    """
-    try:
-        service = get_stream_checker_service()
-        
-        if not service.running:
-            return jsonify({"error": "Stream checker service is not running"}), 400
-        
-        success = service.trigger_global_action()
-        
-        if success:
-            return jsonify({
-                "message": "Global action triggered successfully",
-                "status": "in_progress",
-                "description": "Update, Match, and Check all channels in progress"
-            })
-        else:
-            return jsonify({"error": "Failed to trigger global action"}), 500
-    
-    except Exception as e:
-        logger.error(f"Error triggering global action: {e}")
-        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
 # Scheduling API Endpoints
@@ -3633,7 +3335,6 @@ def create_scheduled_event():
         event = service.create_scheduled_event(event_data)
         
         # Wake up the processor to check for new events immediately
-        global scheduled_event_processor_wake
         if scheduled_event_processor_wake:
             scheduled_event_processor_wake.set()
         
@@ -3693,7 +3394,9 @@ def create_auto_create_rule():
         "name": "Rule Name",
         "channel_ids": [123, 456],  // or "channel_id": 123 for backward compatibility
         "regex_pattern": "^Breaking News",
-        "minutes_before": 5
+        "minutes_before": 5,
+        "enable_looping_detection": true,
+        "enable_logo_detection": true
     }
     """
     try:
@@ -3724,7 +3427,6 @@ def create_auto_create_rule():
             logger.warning(f"Failed to immediately match programs to new rule: {e}")
         
         # Wake up the processor to check for new events immediately
-        global scheduled_event_processor_wake
         if scheduled_event_processor_wake:
             scheduled_event_processor_wake.set()
         
@@ -3774,7 +3476,9 @@ def update_auto_create_rule(rule_id):
         "name": "Updated Rule Name",
         "channel_id": 123,
         "regex_pattern": "^Updated Pattern",
-        "minutes_before": 10
+        "minutes_before": 10,
+        "enable_looping_detection": false,
+        "enable_logo_detection": false
     }
     """
     try:
@@ -3796,7 +3500,6 @@ def update_auto_create_rule(rule_id):
                 logger.warning(f"Failed to immediately match programs to updated rule: {e}")
             
             # Wake up the processor to check for new events immediately
-            global scheduled_event_processor_wake
             if scheduled_event_processor_wake:
                 scheduled_event_processor_wake.set()
             
@@ -3904,7 +3607,6 @@ def import_auto_create_rules():
         result = service.import_auto_create_rules(rules_data)
         
         # Wake up the processor to check for new events immediately
-        global scheduled_event_processor_wake
         if scheduled_event_processor_wake:
             scheduled_event_processor_wake.set()
         
@@ -4127,6 +3829,750 @@ def trigger_epg_refresh():
         logger.error(f"Error triggering EPG refresh: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ==================== Automation Service API ====================
+
+@app.route('/api/automation/status', methods=['GET'])
+@log_function_call
+def get_automation_status():
+    """Get the status of the automation background service.
+    
+    Returns:
+        JSON with service status
+    """
+    try:
+        manager = get_automation_manager()
+        
+        # Check thread status
+        thread_alive = manager.automation_thread is not None and manager.automation_thread.is_alive()
+        is_running = thread_alive and manager.automation_running
+        
+        # Aggregate logic for new Dashboard UI readouts
+        from automation_config_manager import get_automation_config_manager
+        config_manager = get_automation_config_manager()
+        profiles = config_manager.get_all_profiles()
+        
+        profiles_count = len(profiles)
+        # Verify if ANY profile has stream checking currently toggled 'on'
+        stream_checking_enabled = any(p.get("stream_checking", {}).get("enabled", False) for p in profiles)
+        
+        return jsonify({
+            "running": is_running,
+            "thread_alive": thread_alive,
+            "last_playlist_update": manager.last_playlist_update.isoformat() if manager.last_playlist_update else None,
+            "profiles_count": profiles_count,
+            "stream_checking_enabled": stream_checking_enabled
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting automation status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/start', methods=['POST'])
+@log_function_call
+def start_automation_service_api():
+    """Start the automation background service.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        manager = get_automation_manager()
+        
+        if manager.automation_thread and manager.automation_thread.is_alive():
+            return jsonify({"message": "Automation service is already running"}), 200
+            
+        manager.start_automation()
+        return jsonify({"message": "Automation service started"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error starting automation service: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/stop', methods=['POST'])
+@log_function_call
+def stop_automation_service_api():
+    """Stop the automation background service.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        manager = get_automation_manager()
+        manager.stop_automation()
+        return jsonify({"message": "Automation service stopped"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error stopping automation service: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/trigger', methods=['POST'])
+@log_function_call
+def trigger_automation_cycle():
+    """Manually trigger an immediate automation cycle."""
+    try:
+        data = request.json or {}
+        period_id = data.get('period_id')
+        force = data.get('force', True)
+        
+        manager = get_automation_manager()
+        
+        # We can trigger it by waking up the thread if it's running
+        # We can trigger it by waking up the thread if it's running
+        if manager.automation_running:
+            manager.trigger_automation(period_id=period_id, force=force)
+            return jsonify({"message": f"Automation cycle triggered{' for period ' + period_id if period_id else ''}"}), 200
+        elif force:
+            # Allow forcing a cycle even if service is not running (e.g. for testing)
+            # Run in background to avoid blocking
+            import threading
+            def run_forced():
+                try:
+                    manager.run_automation_cycle(forced=True, forced_period_id=period_id)
+                except Exception as e:
+                    logger.error(f"Error in forced automation cycle: {e}")
+            
+            threading.Thread(target=run_forced).start()
+            return jsonify({"message": f"Forced automation cycle started{' for period ' + period_id if period_id else ''}"}), 200
+        else:
+            return jsonify({"error": "Automation service is not running"}), 400
+    
+    except Exception as e:
+        logger.error(f"Error triggering automation cycle: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/config', methods=['GET', 'PUT'])
+@log_function_call
+def handle_automation_global_config():
+    """Get or update global automation configuration."""
+    try:
+        automation_config = get_automation_config_manager()
+        
+        if request.method == 'GET':
+            settings = automation_config.get_global_settings()
+            return jsonify(settings), 200
+            
+        elif request.method == 'PUT':
+            data = request.json
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+            
+            # Get current settings before update to detect changes
+            old_settings = automation_config.get_global_settings()
+            old_regular_enabled = old_settings.get('regular_automation_enabled', False)
+                
+            if automation_config.update_global_settings(settings=data):
+                new_settings = automation_config.get_global_settings()
+                new_regular_enabled = new_settings.get('regular_automation_enabled', False)
+                
+                # Control automation service lifecycle if regular_automation_enabled changed
+                if old_regular_enabled != new_regular_enabled and check_wizard_complete():
+                    manager = get_automation_manager()
+                    
+                    if new_regular_enabled:
+                        # Start automation service if not already running
+                        if not manager.automation_running:
+                            manager.start_automation()
+                            logger.info("Automation service started (Enable Regular Automation toggled ON)")
+                    else:
+                        # Stop automation service if running
+                        if manager.automation_running:
+                            manager.stop_automation()
+                            logger.info("Automation service stopped (Enable Regular Automation toggled OFF)")
+                
+                return jsonify({"message": "Global automation settings updated", "settings": new_settings}), 200
+            else:
+                return jsonify({"error": "Failed to update global settings"}), 500
+                
+    except Exception as e:
+        logger.error(f"Error handling automation global config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/profiles', methods=['GET', 'POST'])
+@log_function_call
+def handle_automation_profiles():
+    """Get all profiles or create a new profile."""
+    try:
+        automation_config = get_automation_config_manager()
+        
+        if request.method == 'GET':
+            profiles = automation_config.get_all_profiles()
+            return jsonify(profiles), 200
+            
+        elif request.method == 'POST':
+            data = request.json
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+                
+            # Validate required fields (name)
+            if 'name' not in data:
+                return jsonify({"error": "Profile name is required"}), 400
+                
+            profile = automation_config.create_profile(data)
+            if profile:
+                return jsonify(profile), 201
+            else:
+                return jsonify({"error": "Failed to create profile"}), 500
+                
+    except Exception as e:
+        logger.error(f"Error handling automation profiles: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/profiles/bulk-delete', methods=['POST'])
+@log_function_call
+def bulk_delete_automation_profiles():
+    """Delete multiple automation profiles at once."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        if not data or 'profile_ids' not in data:
+            return jsonify({"error": "No profile_ids provided"}), 400
+            
+        profile_ids = data['profile_ids']
+        if not isinstance(profile_ids, list):
+            return jsonify({"error": "profile_ids must be a list"}), 400
+            
+        deleted_count = 0
+        failed_ids = []
+        
+        for pid in profile_ids:
+            # Don't allow deleting the default profile via bulk delete
+            if pid == 'default':
+                continue
+            if automation_config.delete_profile(pid):
+                deleted_count += 1
+            else:
+                failed_ids.append(pid)
+                
+        return jsonify({
+            "message": f"Deleted {deleted_count} profiles",
+            "deleted_count": deleted_count,
+            "failed_ids": failed_ids
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error bulk deleting automation profiles: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/profiles/<profile_id>', methods=['GET', 'PUT', 'DELETE'])
+@log_function_call
+def handle_automation_profile(profile_id):
+    """Get, update, or delete a specific automation profile."""
+    try:
+        automation_config = get_automation_config_manager()
+        
+        if request.method == 'GET':
+            profile = automation_config.get_profile(profile_id)
+            if profile:
+                return jsonify(profile), 200
+            else:
+                return jsonify({"error": "Profile not found"}), 404
+                
+        elif request.method == 'PUT':
+            data = request.json
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+                
+            updated_profile = automation_config.update_profile(profile_id, data)
+            if updated_profile:
+                return jsonify(updated_profile), 200
+            else:
+                return jsonify({"error": "Profile not found or update failed"}), 404
+                
+        elif request.method == 'DELETE':
+            if automation_config.delete_profile(profile_id):
+                return jsonify({"message": "Profile deleted"}), 200
+            else:
+                return jsonify({"error": "Profile not found or delete failed"}), 404
+                
+    except Exception as e:
+        logger.error(f"Error handling automation profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/assign/channel', methods=['POST'])
+@log_function_call
+def assign_automation_profile_channel():
+    """Assign an automation profile to a channel."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_id = data.get('channel_id')
+        profile_id = data.get('profile_id') # Can be None to unassign
+        
+        if channel_id is None:
+            return jsonify({"error": "channel_id is required"}), 400
+            
+        if automation_config.assign_profile_to_channel(channel_id, profile_id):
+            return jsonify({"message": f"Profile {profile_id} assigned to channel {channel_id}"}), 200
+        else:
+            return jsonify({"error": "Failed to assign profile"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error assigning profile to channel: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/assign/channels', methods=['POST'])
+@log_function_call
+def assign_automation_profile_channels():
+    """Assign an automation profile to multiple channels."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_ids = data.get('channel_ids')
+        profile_id = data.get('profile_id') # Can be None to unassign
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+            
+        if automation_config.assign_profile_to_channels(channel_ids, profile_id):
+            return jsonify({"message": f"Profile {profile_id} assigned to {len(channel_ids)} channels"}), 200
+        else:
+            return jsonify({"error": "Failed to assign profile to channels"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error assigning profile to channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/assign/group', methods=['POST'])
+@log_function_call
+def assign_automation_profile_group():
+    """Assign an automation profile to a channel group."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        group_id = data.get('group_id')
+        profile_id = data.get('profile_id') # Can be None to unassign
+        
+        if group_id is None:
+            return jsonify({"error": "group_id is required"}), 400
+            
+        if automation_config.assign_profile_to_group(group_id, profile_id):
+            return jsonify({"message": f"Profile {profile_id} assigned to group {group_id}"}), 200
+        else:
+            return jsonify({"error": "Failed to assign profile"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error assigning profile to group: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ==================== Automation Periods API ====================
+# Manage automation periods - multiple scheduled automation configurations per channel
+
+@app.route('/api/automation/periods', methods=['GET', 'POST'])
+@log_function_call
+def handle_automation_periods():
+    """Get all automation periods or create a new period."""
+    try:
+        automation_config = get_automation_config_manager()
+        
+        if request.method == 'GET':
+            periods = automation_config.get_all_periods()
+            # Add channel count to each period
+            for period in periods:
+                channels = automation_config.get_period_channels(period['id'])
+                period['channel_count'] = len(channels)
+            return jsonify(periods), 200
+            
+        elif request.method == 'POST':
+            data = request.json
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+                
+            # Validate required fields (profile_id is no longer required here)
+            if 'name' not in data:
+                return jsonify({"error": "Period name is required"}), 400
+            if 'schedule' not in data:
+                return jsonify({"error": "Schedule is required"}), 400
+            
+            schedule = data['schedule']
+            if schedule.get('type') == 'cron':
+                if not CRONITER_AVAILABLE:
+                    return jsonify({"error": "Cron scheduling is not available because the 'croniter' package is missing"}), 400
+                if not croniter.is_valid(schedule.get('value', '')):
+                    return jsonify({"error": "Invalid cron expression"}), 400
+                
+            period_id = automation_config.create_period(data)
+            if period_id:
+                period = automation_config.get_period(period_id)
+                return jsonify(period), 201
+            else:
+                return jsonify({"error": "Failed to create period"}), 500
+                
+    except Exception as e:
+        logger.error(f"Error handling automation periods: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>', methods=['GET', 'PUT', 'DELETE'])
+@log_function_call
+def handle_automation_period(period_id):
+    """Get, update, or delete a specific automation period."""
+    try:
+        automation_config = get_automation_config_manager()
+        
+        if request.method == 'GET':
+            period = automation_config.get_period(period_id)
+            if period:
+                # Add channel list
+                channels = automation_config.get_period_channels(period_id)
+                period['channels'] = channels
+                return jsonify(period), 200
+            else:
+                return jsonify({"error": "Period not found"}), 404
+                
+        elif request.method == 'PUT':
+            data = request.json
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+                
+            if 'schedule' in data:
+                schedule = data['schedule']
+                if schedule.get('type') == 'cron':
+                    if not CRONITER_AVAILABLE:
+                        return jsonify({"error": "Cron scheduling is not available because the 'croniter' package is missing"}), 400
+                    if not croniter.is_valid(schedule.get('value', '')):
+                        return jsonify({"error": "Invalid cron expression"}), 400
+                
+            if automation_config.update_period(period_id, data):
+                period = automation_config.get_period(period_id)
+                return jsonify(period), 200
+            else:
+                return jsonify({"error": "Period not found or update failed"}), 404
+                
+        elif request.method == 'DELETE':
+            if automation_config.delete_period(period_id):
+                return jsonify({"message": "Period deleted"}), 200
+            else:
+                return jsonify({"error": "Period not found or delete failed"}), 404
+                
+    except Exception as e:
+        logger.error(f"Error handling automation period {period_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/assign-channels', methods=['POST'])
+@log_function_call
+def assign_period_to_channels(period_id):
+    """Assign an automation period to multiple channels with a profile."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_ids = data.get('channel_ids')
+        profile_id = data.get('profile_id')  # Now required
+        replace = data.get('replace', False)  # If True, replace existing periods
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+        if not profile_id:
+            return jsonify({"error": "profile_id is required"}), 400
+            
+        if automation_config.assign_period_to_channels(period_id, channel_ids, profile_id, replace):
+            return jsonify({
+                "message": f"Period {period_id} with profile {profile_id} assigned to {len(channel_ids)} channels",
+                "channel_ids": channel_ids
+            }), 200
+        else:
+            return jsonify({"error": "Failed to assign period to channels"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error assigning period to channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/remove-channels', methods=['POST'])
+@log_function_call
+def remove_period_from_channels(period_id):
+    """Remove an automation period from specific channels."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_ids = data.get('channel_ids')
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+            
+        if automation_config.remove_period_from_channels(period_id, channel_ids):
+            return jsonify({
+                "message": f"Period {period_id} removed from {len(channel_ids)} channels"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to remove period from channels"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error removing period from channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/channels', methods=['GET'])
+@log_function_call
+def get_period_channels(period_id):
+    """Get all channels assigned to a period."""
+    try:
+        automation_config = get_automation_config_manager()
+        period = automation_config.get_period(period_id)
+        
+        if not period:
+            return jsonify({"error": "Period not found"}), 404
+            
+        channel_ids = automation_config.get_period_channels(period_id)
+        
+        # Get channel details from UDI if possible
+        try:
+            udi = get_udi_manager()
+            channels = []
+            for cid in channel_ids:
+                channel = udi.get_channel(cid)
+                if channel:
+                    channels.append({
+                        "id": cid,
+                        "number": channel.get('number'),
+                        "name": channel.get('name')
+                    })
+                else:
+                    channels.append({"id": cid})
+            return jsonify(channels), 200
+        except:
+            # If UDI fails, just return IDs
+            return jsonify([{"id": cid} for cid in channel_ids]), 200
+            
+    except Exception as e:
+        logger.error(f"Error getting channels for period {period_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/channels/batch/period-usage', methods=['POST'])
+@log_function_call
+def get_batch_period_usage():
+    """Analyze automation period usage across multiple channels."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        channel_ids = data.get('channel_ids', [])
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+            
+        automation_config = get_automation_config_manager()
+        
+        # Structure: {period_id: {"count": N, "profile_ids": {profile_id: [channel_ids]}}}
+        period_usage = {}
+        
+        for ch_id in channel_ids:
+            # get_channel_periods returns {period_id: profile_id}
+            assignments = automation_config.get_channel_periods(ch_id)
+            for pid, prof_id in assignments.items():
+                if pid not in period_usage:
+                    period = automation_config.get_period(pid)
+                    if not period:
+                        continue
+                    period_usage[pid] = {
+                        "id": pid,
+                        "name": period.get('name', 'Unknown'),
+                        "count": 0,
+                        "profile_breakdown": {} # {profile_id: {"name": str, "channel_ids": []}}
+                    }
+                
+                usage = period_usage[pid]
+                usage["count"] += 1
+                
+                if prof_id not in usage["profile_breakdown"]:
+                    profile = automation_config.get_profile(prof_id)
+                    usage["profile_breakdown"][prof_id] = {
+                        "id": prof_id,
+                        "name": profile.get('name', 'Unknown') if profile else 'Unknown',
+                        "channel_ids": []
+                    }
+                
+                usage["profile_breakdown"][prof_id]["channel_ids"].append(ch_id)
+                
+        # Format for frontend
+        results = []
+        for pid, usage in period_usage.items():
+            results.append({
+                "id": pid,
+                "name": usage["name"],
+                "count": usage["count"],
+                "percentage": round((usage["count"] / len(channel_ids)) * 100, 1),
+                "profiles": list(usage["profile_breakdown"].values())
+            })
+            
+        # Sort by frequency
+        results.sort(key=lambda x: x['count'], reverse=True)
+        
+        return jsonify({
+            "periods": results,
+            "total_channels": len(channel_ids)
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting batch period usage: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channels/<int:channel_id>/automation-periods', methods=['GET'])
+@log_function_call
+def get_channel_automation_periods(channel_id):
+    """Get all automation periods assigned to a channel."""
+    try:
+        automation_config = get_automation_config_manager()
+        # get_channel_periods returns a dict {period_id: profile_id}
+        period_assignments = automation_config.get_channel_periods(channel_id)
+        
+        periods = []
+        for pid, profile_id in period_assignments.items():
+            period = automation_config.get_period(pid)
+            if period:
+                period_copy = period.copy()
+                period_copy['profile_id'] = profile_id
+                # Include profile name
+                profile = automation_config.get_profile(profile_id)
+                if profile:
+                    period_copy['profile_name'] = profile.get('name')
+                periods.append(period_copy)
+        
+        return jsonify(periods), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting automation periods for channel {channel_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/channels/batch/assign-periods', methods=['POST'])
+@log_function_call
+def batch_assign_periods_to_channels():
+    """Batch assign automation periods to multiple channels with profiles.
+    
+    Expects format:
+    {
+        "channel_ids": [1, 2, 3],
+        "period_assignments": [
+            {"period_id": "period1", "profile_id": "profile1"},
+            {"period_id": "period2", "profile_id": "profile2"}
+        ],
+        "replace": false
+    }
+    """
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+        
+        channel_ids = data.get('channel_ids')
+        period_assignments = data.get('period_assignments')
+        replace = data.get('replace', False)
+        
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+        if not period_assignments or not isinstance(period_assignments, list):
+            return jsonify({"error": "period_assignments list is required"}), 400
+        
+        # Validate period_assignments format
+        for assignment in period_assignments:
+            if 'period_id' not in assignment or 'profile_id' not in assignment:
+                return jsonify({"error": "Each period assignment must have period_id and profile_id"}), 400
+        
+        # Assign each period-profile pair to all channels
+        is_first = True
+        for assignment in period_assignments:
+            pid = assignment['period_id']
+            profile_id = assignment['profile_id']
+            # Only the first period should replace if replace=True
+            automation_config.assign_period_to_channels(pid, channel_ids, profile_id, replace and is_first)
+            is_first = False
+        
+        return jsonify({
+            "message": f"Assigned {len(period_assignments)} period-profile pairs to {len(channel_ids)} channels"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error batch assigning periods: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ==================== Automation Events API ====================
+# Calculate and retrieve upcoming automation events based on periods
+
+from automation_events_scheduler import get_events_scheduler
+
+
+@app.route('/api/automation/events/upcoming', methods=['GET'])
+@log_function_call
+def get_upcoming_automation_events():
+    """Get upcoming automation events based on configured periods.
+    
+    Query parameters:
+    - hours: Number of hours ahead to calculate (default: 24, max: 168)
+    - max_events: Maximum number of events to return (default: 100, max: 500)
+    - period_id: Filter by specific period ID
+    - force_refresh: Force cache refresh (true/false)
+    """
+    try:
+        events_scheduler = get_events_scheduler()
+        
+        # Parse query parameters
+        hours_ahead = min(int(request.args.get('hours', 24)), 168)  # Max 1 week
+        max_events = min(int(request.args.get('max_events', 100)), 500)
+        period_id_filter = request.args.get('period_id')
+        force_refresh = request.args.get('force_refresh', '').lower() == 'true'
+        
+        # Get cached or fresh events
+        result = events_scheduler.get_cached_events(hours_ahead, max_events, force_refresh)
+        
+        # Check global settings
+        from automation_config_manager import get_automation_config_manager
+        config_manager = get_automation_config_manager()
+        global_settings = config_manager.get_global_settings()
+        automation_enabled = global_settings.get('regular_automation_enabled', False)
+        
+        # Inject the enabled status into the payload
+        result['automation_enabled'] = automation_enabled
+        
+        if not automation_enabled:
+            # If globally disabled, don't return any events
+            result['events'] = []
+            return jsonify(result), 200
+        
+        # Filter by period if requested
+        if period_id_filter:
+            result['events'] = [e for e in result['events'] if e.get('period_id') == period_id_filter]
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting upcoming automation events: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/automation/events/invalidate-cache', methods=['POST'])
+@log_function_call
+def invalidate_automation_events_cache():
+    """Invalidate the automation events cache.
+    
+    This should be called whenever automation periods are modified.
+    """
+    try:
+        events_scheduler = get_events_scheduler()
+        events_scheduler.invalidate_cache()
+        
+        return jsonify({"message": "Cache invalidated successfully"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error invalidating cache: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 # ==================== Stream Monitoring Session API ====================
 # Advanced stream monitoring with live quality tracking, reliability scoring,
@@ -4203,17 +4649,30 @@ def create_stream_session():
         if not channel_id:
             return jsonify({"error": "channel_id is required"}), 400
         
-        # Get regex filter - if not provided, use channel's configured regex
+        # Determine regex and matching config for this channel
         regex_filter = data.get('regex_filter')
+        match_by_tvg_id = False
+        
         if not regex_filter:
-            # Try to get channel's configured regex from regex matcher
+            # Try to get channel's configured regex and match settings
             try:
                 regex_matcher = get_regex_matcher()
-                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
-                logger.info(f"Using channel's configured regex for manual session: {regex_filter}")
+                
+                # Get match config to check for match_by_tvg_id
+                match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+                
+                # Get regex filter
+                # We default to None if no regex is configured.
+                # This ensures that if match_by_tvg_id is False AND no regex is set, we match NOTHING.
+                # Previously we defaulted to ".*" which matched EVERYTHING.
+                default_regex = None
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                
+                logger.info(f"Using channel config for manual session: regex='{regex_filter}', match_by_tvg_id={match_by_tvg_id}")
             except Exception as e:
-                logger.debug(f"Could not get channel regex from matcher: {e}")
-                regex_filter = '.*'  # Default fallback
+                logger.debug(f"Could not get channel match config: {e}")
+                regex_filter = '.*'  # Default fallback if error
         
         pre_event_minutes = data.get('pre_event_minutes', 30)
         stagger_ms = data.get('stagger_ms', 200)
@@ -4235,7 +4694,10 @@ def create_stream_session():
             timeout_ms=timeout_ms,
             epg_event=epg_event,
             auto_created=auto_created,
-            auto_create_rule_id=auto_create_rule_id
+            auto_create_rule_id=auto_create_rule_id,
+            match_by_tvg_id=match_by_tvg_id,
+            enable_looping_detection=data.get('enable_looping_detection', True),
+            enable_logo_detection=data.get('enable_logo_detection', True)
         )
         
         return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
@@ -4285,15 +4747,25 @@ def create_group_stream_sessions():
             try:
                 channel_id = channel.get('id')
                 
-                # Determine regex for this channel
+                # Determine regex and match config for this channel
                 channel_regex = regex_filter
+                match_by_tvg_id = False
+                
                 if not channel_regex:
-                    # Try to get channel's configured regex
+                    # Try to get channel's configured regex and match settings
                     try:
                         regex_matcher = get_regex_matcher()
-                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id))
+                        
+                        # Get match config
+                        match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                        match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+                        
+                        # Get regex filter with appropriate default
+                        # Default to None so we don't match everything by default if no rules exist
+                        default_regex = None
+                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
                     except Exception:
-                        channel_regex = '.*'
+                        channel_regex = None
                 
                 # Create session (skip stream refresh as we did it once above)
                 session_id = session_manager.create_session(
@@ -4302,7 +4774,10 @@ def create_group_stream_sessions():
                     pre_event_minutes=pre_event_minutes,
                     stagger_ms=stagger_ms,
                     timeout_ms=timeout_ms,
-                    skip_stream_refresh=True
+                    skip_stream_refresh=True,
+                    match_by_tvg_id=match_by_tvg_id,
+                    enable_looping_detection=data.get('enable_looping_detection', True),
+                    enable_logo_detection=data.get('enable_logo_detection', True)
                 )
                 
                 # Start session
@@ -4357,10 +4832,23 @@ def get_stream_session(session_id):
                     'fps': stream_info.fps,
                     'bitrate': stream_info.bitrate,
                     'm3u_account': stream_info.m3u_account,
+                    'hdr_format': stream_info.hdr_format,
                     'status': stream_info.status,
+                    'status_reason': getattr(stream_info, 'status_reason', None),
+                    'transport_health': getattr(stream_info, 'transport_health', 'Healthy'),
+                    'transport_health_summary': getattr(stream_info, 'transport_health_summary', ''),
+                    'transport_error_density': getattr(stream_info, 'transport_error_density', 0.0),
+                    'last_loop_time': getattr(stream_info, 'last_loop_time', None),
+                    'loop_duration': getattr(stream_info, 'loop_duration', None),
                     'is_quarantined': stream_info.is_quarantined,
                     'reliability_score': stream_info.reliability_score,
+                    'current_speed': stream_info.metrics_history[-1].speed if stream_info.metrics_history else 0.0,
+                    'rank': stream_info.rank,
+                    'last_logo_status': getattr(stream_info, 'last_logo_status', 'PENDING'),
+                    'display_logo_status': getattr(stream_info, 'display_logo_status', 'PENDING'),
+                    'consecutive_logo_misses': getattr(stream_info, 'consecutive_logo_misses', 0),
                     'screenshot_path': stream_info.screenshot_path,
+                    'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}" if stream_info.screenshot_path else None,
                     'last_screenshot_time': stream_info.last_screenshot_time,
                     'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0,
                     'metrics_history': [asdict(m) for m in stream_info.metrics_history] if stream_info.metrics_history else []
@@ -4398,6 +4886,10 @@ def get_stream_session(session_id):
                     return (1, -stream_data['reliability_score']) # Non-channel streams sorted by score desc
                 
                 streams_data.sort(key=get_sort_key)
+                
+                # Update rank in the return data based on final sorted order for UI consistency
+                for i, sdata in enumerate(streams_data, start=1):
+                    sdata['rank'] = i
             else:
                 # Fallback if channel not found: sort by reliability score
                 streams_data.sort(key=lambda x: x['reliability_score'], reverse=True)
@@ -4421,6 +4913,7 @@ def get_stream_session(session_id):
             'screenshot_interval_seconds': session.screenshot_interval_seconds,
             'window_size': session.window_size,
             'streams': streams_data,
+            'ad_periods': session.ad_periods,
             # EPG event info
             'epg_event_id': session.epg_event_id,
             'epg_event_title': session.epg_event_title,
@@ -4636,12 +5129,16 @@ def get_stream_metrics(session_id, stream_id):
 
 
 # Serve screenshots
-@app.route('/data/screenshots/<filename>')
+@app.route('/api/data/screenshots/<filename>')
 def serve_screenshot(filename):
     """Serve screenshot files."""
     try:
         screenshots_dir = CONFIG_DIR / 'screenshots'
-        return send_from_directory(screenshots_dir, filename)
+        response = make_response(send_from_directory(screenshots_dir, filename))
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     except Exception as e:
         logger.error(f"Error serving screenshot {filename}: {e}")
         return jsonify({"error": "Screenshot not found"}), 404
@@ -4662,10 +5159,16 @@ def get_alive_screenshots(session_id):
         if session.streams:
             for stream_id, stream_info in session.streams.items():
                 if not stream_info.is_quarantined and stream_info.screenshot_path:
-                    screenshots_data.append({
+                    # Only show screenshots for streams with good speed (>= 1.0)
+                    latest_speed = 0.0
+                    if stream_info.metrics_history:
+                        latest_speed = stream_info.metrics_history[-1].speed
+                    
+                    if latest_speed >= 0.9:
+                        screenshots_data.append({
                         'stream_id': stream_info.stream_id,
                         'stream_name': stream_info.name,
-                        'screenshot_url': f"/data/screenshots/{Path(stream_info.screenshot_path).name}",
+                        'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}",
                         'reliability_score': stream_info.reliability_score,
                         'm3u_account': stream_info.m3u_account
                     })
@@ -4719,7 +5222,7 @@ def get_playing_streams():
 
 @app.route('/api/stream-viewer/<int:stream_id>', methods=['GET'])
 def get_stream_viewer_url(stream_id):
-    """Get the stream's direct URL for live viewing in browser."""
+    """Get the stream's direct HLS URL for live viewing in browser."""
     try:
         udi = get_udi_manager()
         stream = udi.get_stream_by_id(stream_id)
@@ -4730,12 +5233,9 @@ def get_stream_viewer_url(stream_id):
                 'error': f'Stream {stream_id} not found'
             }), 404
         
-        stream_url = stream.get('url', '')
-        if not stream_url:
-            return jsonify({
-                'success': False,
-                'error': f'Stream {stream_id} has no URL'
-            }), 404
+        # Use the direct MPEG-TS proxy URL
+        # Return the upstream URL directly to save CPU overhead
+        stream_url = stream.get('url')
         
         return jsonify({
             'success': True,
@@ -4744,11 +5244,39 @@ def get_stream_viewer_url(stream_id):
             'stream_name': stream.get('name', 'Unknown')
         })
     except Exception as e:
-        logger.error(f"Error getting stream viewer URL for stream {stream_id}: {e}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        logger.error(f"Error getting stream viewer URL: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+
+
+@app.route('/api/stream/proxy/<int:stream_id>', methods=['GET'])
+def stream_proxy_url(stream_id):
+    """Proxy the local UDP stream from FFmpeg out via HTTP using a shared listener."""
+    proxy = udp_proxy_manager.get_proxy(stream_id)
+    q = proxy.add_client()
+    
+    def generate():
+        try:
+            # Use a slightly longer timeout for the initial packet to account for FFmpeg startup
+            while True:
+                try:
+                    # Block on the queue with a timeout
+                    data = q.get(timeout=10.0)
+                    yield data
+                except queue.Empty:
+                    # If we time out and the proxy is no longer running, stop
+                    if not proxy.running:
+                        logger.warning(f"Shared proxy for {stream_id} stopped, closing HTTP client")
+                        break
+                    # Otherwise, just keep waiting – maybe just a temporary gap in stream
+                    continue
+        except Exception as e:
+            logger.debug(f"HTTP streaming client for {stream_id} disconnected: {e}")
+        finally:
+            proxy.remove_client(q)
+
+    return Response(generate(), mimetype='video/mp2t')
 
 
 @app.route('/api/scheduled-events/<event_id>/create-session', methods=['POST'])
@@ -4796,21 +5324,34 @@ def handle_session_settings():
         
         if request.method == 'GET':
             return jsonify({
-                "review_duration": session_manager.get_review_duration()
+                "review_duration": session_manager.get_review_duration(),
+                "loop_review_duration": session_manager.get_loop_review_duration()
             })
             
         elif request.method == 'POST':
             data = request.json
             duration = data.get('review_duration')
+            loop_duration = data.get('loop_review_duration')
+            
+            updated = {}
             if duration is not None:
                 try:
                     val = float(duration)
-                    if val < 0:
-                        return jsonify({"error": "Duration must be positive"}), 400
-                    session_manager.set_review_duration(val)
-                    return jsonify({"message": "Settings updated", "review_duration": val})
-                except ValueError:
-                    return jsonify({"error": "Invalid duration"}), 400
+                    if val >= 0:
+                        session_manager.set_review_duration(val)
+                        updated['review_duration'] = val
+                except ValueError: pass
+                
+            if loop_duration is not None:
+                try:
+                    val = float(loop_duration)
+                    if val >= 0:
+                        session_manager.set_loop_review_duration(val)
+                        updated['loop_review_duration'] = val
+                except ValueError: pass
+            
+            if updated:
+                return jsonify({"message": "Settings updated", **updated})
             
             return jsonify({"error": "No settings provided"}), 400
             
@@ -4831,86 +5372,102 @@ if __name__ == '__main__':
     
     logger.info(f"Starting StreamFlow for Dispatcharr Web API on {args.host}:{args.port}")
     
-    # Auto-start stream checker service if enabled and automation is configured AND wizard is complete
-    try:
-        # Check if wizard has been completed
-        if not check_wizard_complete():
-            logger.info("Stream checker service will not start - setup wizard has not been completed")
-        else:
-            service = get_stream_checker_service()
-            automation_controls = service.config.get('automation_controls', {})
-            
-            # Check if any automation is enabled
-            any_automation_enabled = (
-                automation_controls.get('auto_m3u_updates', True) or
-                automation_controls.get('auto_stream_matching', True) or
-                automation_controls.get('auto_quality_checking', True) or
-                automation_controls.get('scheduled_global_action', False)
-            )
-            
-            if not any_automation_enabled:
-                logger.info("Stream checker service is disabled (all automation controls disabled)")
-            elif service.config.get('enabled', True):
-                service.start()
-                logger.info(f"Stream checker service auto-started")
+    # Only start background services in the reloader process (or if not using reloader)
+    # WERKZEUG_RUN_MAIN is set to 'true' in the child process spawned by the reloader
+    if not args.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        logger.info("Starting background services (active process)...")
+        
+        # Auto-start stream checker service if enabled and automation is configured AND wizard is complete
+        try:
+            # Check if wizard has been completed
+            if not check_wizard_complete():
+                logger.info("Stream checker service will not start - setup wizard has not been completed")
             else:
-                logger.info("Stream checker service is disabled in configuration")
-    except Exception as e:
-        logger.error(f"Failed to auto-start stream checker service: {e}")
-    
-    # Auto-start automation service if automation is configured AND wizard is complete
-    try:
-        # Check if wizard has been completed
-        if not check_wizard_complete():
-            logger.info("Automation service will not start - setup wizard has not been completed")
-        else:
-            manager = get_automation_manager()
-            service = get_stream_checker_service()
-            automation_controls = service.config.get('automation_controls', {})
-            
-            # Check if any automation is enabled
-            any_automation_enabled = (
-                automation_controls.get('auto_m3u_updates', True) or
-                automation_controls.get('auto_stream_matching', True) or
-                automation_controls.get('auto_quality_checking', True) or
-                automation_controls.get('scheduled_global_action', False)
-            )
-            
-            if not any_automation_enabled:
-                logger.info("Automation service is disabled (all automation controls disabled)")
+                service = get_stream_checker_service()
+                automation_controls = service.config.get('automation_controls', {})
+                
+                # Check if any automation is enabled
+                any_automation_enabled = (
+                    automation_controls.get('auto_m3u_updates', True) or
+                    automation_controls.get('auto_stream_matching', True) or
+                    automation_controls.get('auto_quality_checking', True) or
+                    automation_controls.get('scheduled_global_action', False)
+                )
+                
+                if not any_automation_enabled:
+                    logger.info("Stream checker service is disabled (all automation controls disabled)")
+                elif service.config.get('enabled', True):
+                    service.start()
+                    logger.info(f"Stream checker service auto-started")
+                else:
+                    logger.info("Stream checker service is disabled in configuration")
+        except Exception as e:
+            logger.error(f"Failed to auto-start stream checker service: {e}")
+        
+        # Auto-start automation service if automation is configured AND wizard is complete
+        try:
+            # Check if wizard has been completed
+            if not check_wizard_complete():
+                logger.info("Automation service will not start - setup wizard has not been completed")
             else:
-                # Auto-start automation
-                manager.start_automation()
-                logger.info(f"Automation service auto-started")
-    except Exception as e:
-        logger.error(f"Failed to auto-start automation service: {e}")
+                manager = get_automation_manager()
+                service = get_stream_checker_service()
+                automation_controls = service.config.get('automation_controls', {})
+                
+                # Check the master switch for regular automation
+                from automation_config_manager import get_automation_config_manager
+                automation_config = get_automation_config_manager()
+                global_settings = automation_config.get_global_settings()
+                regular_automation_enabled = global_settings.get('regular_automation_enabled', False)
+                
+                if not regular_automation_enabled:
+                    logger.info("Automation service is disabled (regular_automation_enabled is False)")
+                else:
+                    # Auto-start automation
+                    manager.start_automation()
+                    logger.info(f"Automation service auto-started")
+        except Exception as e:
+            logger.error(f"Failed to auto-start automation service: {e}")
+        
+        # Auto-start scheduled event processor if wizard is complete
+        try:
+            if not check_wizard_complete():
+                logger.info("Scheduled event processor will not start - setup wizard has not been completed")
+            else:
+                start_scheduled_event_processor()
+                logger.info("Scheduled event processor auto-started")
+        except Exception as e:
+            logger.error(f"Failed to auto-start scheduled event processor: {e}")
+        
+        # Auto-start EPG refresh processor if wizard is complete
+        try:
+            if not check_wizard_complete():
+                logger.info("EPG refresh processor will not start - setup wizard has not been completed")
+            else:
+                start_epg_refresh_processor()
+                logger.info("EPG refresh processor auto-started")
+        except Exception as e:
+            logger.error(f"Failed to auto-start EPG refresh processor: {e}")
+        
+        # Auto-start stream monitoring service (always starts, independent of wizard)
+        try:
+            monitoring_service = get_monitoring_service()
+            monitoring_service.start()
+            logger.info("Stream monitoring service auto-started")
+        except Exception as e:
+            logger.error(f"Failed to auto-start stream monitoring service: {e}")
+    else:
+        logger.info("Skipping background service startup in reloader parent process")
     
-    # Auto-start scheduled event processor if wizard is complete
-    try:
-        if not check_wizard_complete():
-            logger.info("Scheduled event processor will not start - setup wizard has not been completed")
-        else:
-            start_scheduled_event_processor()
-            logger.info("Scheduled event processor auto-started")
-    except Exception as e:
-        logger.error(f"Failed to auto-start scheduled event processor: {e}")
-    
-    # Auto-start EPG refresh processor if wizard is complete
-    try:
-        if not check_wizard_complete():
-            logger.info("EPG refresh processor will not start - setup wizard has not been completed")
-        else:
-            start_epg_refresh_processor()
-            logger.info("EPG refresh processor auto-started")
-    except Exception as e:
-        logger.error(f"Failed to auto-start EPG refresh processor: {e}")
-    
-    # Auto-start stream monitoring service (always starts, independent of wizard)
-    try:
-        monitoring_service = get_monitoring_service()
-        monitoring_service.start()
-        logger.info("Stream monitoring service auto-started")
-    except Exception as e:
-        logger.error(f"Failed to auto-start stream monitoring service: {e}")
-    
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    if args.debug:
+        logger.info(f"Starting development server on {args.host}:{args.port}")
+        app.run(host=args.host, port=args.port, debug=True)
+    else:
+        logger.info(f"Starting production WSGI server on {args.host}:{args.port}")
+        try:
+            from waitress import serve
+            serve(app, host=args.host, port=args.port, threads=8)
+        except ImportError:
+            logger.warning("Waitress not installed, falling back to development server.")
+            logger.warning("Please install waitress: pip install waitress")
+            app.run(host=args.host, port=args.port, debug=False)

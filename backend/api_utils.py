@@ -74,8 +74,6 @@ def _validate_token(token: str) -> bool:
     Returns:
         bool: True if token is valid, False otherwise
     """
-    global _token_validation_cache
-    
     log_function_call(logger, "_validate_token", token="<redacted>")
     base_url = _get_base_url()
     if not base_url or not token:
@@ -135,7 +133,6 @@ def _clear_token_validation_cache() -> None:
     This should be called when the token changes (e.g., after login or token refresh)
     to ensure the new token is properly validated.
     """
-    global _token_validation_cache
     _token_validation_cache.clear()
     logger.debug("Token validation cache cleared")
 
@@ -353,17 +350,18 @@ def fetch_data_from_url(url: str) -> Optional[Any]:
         log_exception(logger, e, f"fetch_data_from_url ({url})")
         return None
 
-def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
+def patch_request(url: str, payload: Dict[str, Any], max_retries: int = 2) -> requests.Response:
     """
     Send a PATCH request with authentication and retry logic.
     
     Makes an authenticated PATCH request to the specified URL. If the
     request fails with a 401 error, automatically refreshes the token
-    and retries once.
+    and retries once. Handle 5xx errors and network issues with retries.
     
     Parameters:
         url (str): The URL to send the PATCH request to.
         payload (Dict[str, Any]): The JSON payload to send.
+        max_retries (int): Maximum attempts for transient 500 errors.
         
     Returns:
         requests.Response: The response object from the request.
@@ -371,43 +369,58 @@ def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     Raises:
         requests.exceptions.RequestException: If request fails.
     """
-    try:
-        resp = requests.patch(
-            url, json=payload, headers=_get_auth_headers(), timeout=30
-        )
-        resp.raise_for_status()
-        return resp
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            if _refresh_token():
-                logger.info("Retrying PATCH request with new token...")
-                resp = requests.patch(
-                    url, json=payload, headers=_get_auth_headers(), timeout=30
-                )
-                resp.raise_for_status()
-                return resp
-            else:
-                raise
-        else:
-            logger.error(
-                f"Error patching data to {url}: {e.response.text}"
+    retries = 0
+    while retries <= max_retries:
+        try:
+            resp = requests.patch(
+                url, json=payload, headers=_get_auth_headers(), timeout=30
             )
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                if _refresh_token():
+                    logger.info("Retrying PATCH request with new token...")
+                    resp = requests.patch(
+                        url, json=payload, headers=_get_auth_headers(), timeout=30
+                    )
+                    resp.raise_for_status()
+                    return resp
+                else:
+                    raise
+            elif e.response.status_code >= 500 and retries < max_retries:
+                logger.warning(f"Got HTTP {e.response.status_code} patching data to {url}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            else:
+                logger.error(
+                    f"Error patching data to {url}: {e.response.text}"
+                )
+                raise
+        except requests.exceptions.RequestException as e:
+            if retries < max_retries:
+                logger.warning(f"Network error patching data to {url}: {e}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            logger.error(f"Error patching data to {url}: {e}")
             raise
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error patching data to {url}: {e}")
-        raise
 
-def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
+def post_request(url: str, payload: Dict[str, Any], max_retries: int = 2) -> requests.Response:
     """
     Send a POST request with authentication and retry logic.
     
     Makes an authenticated POST request to the specified URL. If the
     request fails with a 401 error, automatically refreshes the token
-    and retries once.
+    and retries once. Handle 5xx errors and network issues with retries.
     
     Parameters:
         url (str): The URL to send the POST request to.
         payload (Dict[str, Any]): The JSON payload to send.
+        max_retries (int): Maximum attempts for transient 500 errors.
         
     Returns:
         requests.Response: The response object from the request.
@@ -415,31 +428,45 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     Raises:
         requests.exceptions.RequestException: If request fails.
     """
-    try:
-        resp = requests.post(
-            url, json=payload, headers=_get_auth_headers(), timeout=30
-        )
-        resp.raise_for_status()
-        return resp
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            if _refresh_token():
-                logger.info("Retrying POST request with new token...")
-                resp = requests.post(
-                    url, json=payload, headers=_get_auth_headers(), timeout=30
-                )
-                resp.raise_for_status()
-                return resp
-            else:
-                raise
-        else:
-            logger.error(
-                f"Error posting data to {url}: {e.response.text}"
+    retries = 0
+    while retries <= max_retries:
+        try:
+            resp = requests.post(
+                url, json=payload, headers=_get_auth_headers(), timeout=30
             )
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                if _refresh_token():
+                    logger.info("Retrying POST request with new token...")
+                    resp = requests.post(
+                        url, json=payload, headers=_get_auth_headers(), timeout=30
+                    )
+                    resp.raise_for_status()
+                    return resp
+                else:
+                    raise
+            elif e.response.status_code >= 500 and retries < max_retries:
+                logger.warning(f"Got HTTP {e.response.status_code} posting data to {url}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            else:
+                logger.error(
+                    f"Error posting data to {url}: {e.response.text}"
+                )
+                raise
+        except requests.exceptions.RequestException as e:
+            if retries < max_retries:
+                logger.warning(f"Network error posting data to {url}: {e}. Retrying {retries+1}/{max_retries}...")
+                import time
+                time.sleep(2)
+                retries += 1
+                continue
+            logger.error(f"Error posting data to {url}: {e}")
             raise
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error posting data to {url}: {e}")
-        raise
 
 def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
     """
@@ -514,10 +541,20 @@ def update_channel_streams(
     try:
         response = patch_request(url, data)
         if response and response.status_code in [200, 204]:
-            logger.info(
+            logger.debug(
                 f"Successfully updated channel {channel_id} with "
                 f"{len(filtered_stream_ids)} streams"
             )
+            
+            # Refresh the channel in UDI cache to ensure fresh stream data
+            # This is critical for immediate stream checking after assignment
+            try:
+                udi = get_udi_manager()
+                udi.refresh_channel_by_id(channel_id)
+                logger.debug(f"Refreshed UDI cache for channel {channel_id} after stream update")
+            except Exception as e:
+                logger.warning(f"Failed to refresh UDI cache for channel {channel_id}: {e}")
+            
             return True
         else:
             status = response.status_code if response else 'None'
@@ -579,6 +616,42 @@ def update_channel_streams(
             f"Failed to update channel {channel_id} streams: {e}"
         )
         raise
+
+def change_channel_stream(channel_id: int, stream_id: Optional[int] = None, url: Optional[str] = None) -> bool:
+    """
+    Force change the currently playing stream for a channel in Dispatcharr.
+    
+    Parameters:
+        channel_id (int): The ID of the channel.
+        stream_id (Optional[int]): The ID of the stream to change to.
+        url (Optional[str]): The URL of the stream to change to.
+        
+    Returns:
+        bool: True if the stream was successfully changed, False otherwise.
+    """
+    if not stream_id and not url:
+        logger.error(f"Cannot change stream for channel {channel_id}: neither stream_id nor url provided")
+        return False
+        
+    endpoint = f"{_get_base_url()}/api/proxy/ts/change_stream/{channel_id}"
+    payload = {}
+    if stream_id:
+        payload["stream_id"] = stream_id
+    if url:
+        payload["url"] = url
+        
+    try:
+        response = post_request(endpoint, payload)
+        if response and response.status_code == 200:
+            logger.info(f"Successfully forced stream change for channel {channel_id} (Target Stream ID: {stream_id})")
+            return True
+        else:
+            status = response.status_code if response else 'None'
+            logger.warning(f"Failed to force stream change for channel {channel_id}. Status: {status}")
+            return False
+    except Exception as e:
+        logger.error(f"Error calling change_stream API for channel {channel_id}: {e}")
+        return False
 
 def refresh_m3u_playlists(
     account_id: Optional[int] = None
@@ -678,26 +751,19 @@ def get_dead_stream_urls() -> set:
         return set()
 
 
-def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[int, str]] = None) -> Tuple[List[int], int]:
+def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[int, str]] = None, only_offline: bool = True) -> Tuple[List[int], int]:
     """
     Filter out dead streams from a list of stream IDs.
     
-    This function removes stream IDs whose URLs are marked as dead in the
-    DeadStreamsTracker. It's used to prevent dead streams from being added
-    back to channels during update operations.
-    
-    Performance Note: When processing multiple channels, pass stream_id_to_url
-    to avoid redundant API calls. Example:
-        all_streams = get_streams(log_result=False)
-        mapping = {s['id']: s.get('url') for s in all_streams if 'id' in s}
-        for channel_id in channels:
-            filtered, count = filter_dead_streams(stream_ids, mapping)
+    By default (only_offline=True), this function only removes streams that are 
+    marked as 'offline' (truly dead). If only_offline=False, it removes ALL 
+    dead streams regardless of reason.
     
     Parameters:
         stream_ids: List of stream IDs to filter
-        stream_id_to_url: Optional mapping of stream IDs to URLs. If None,
-            will fetch from API. Pass this when filtering multiple batches
-            to optimize performance.
+        stream_id_to_url: Optional mapping of stream IDs to URLs.
+        only_offline: If True (default), only filters out truly offline streams.
+                      If False, filters out all streams in the dead tracker.
     
     Returns:
         Tuple of (filtered_stream_ids, count_filtered)
@@ -708,22 +774,39 @@ def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[i
     # Get stream ID to URL mapping if not provided
     if stream_id_to_url is None:
         all_streams = get_streams(log_result=False)
-        # Use None as default instead of empty string to distinguish missing streams
         stream_id_to_url = {s['id']: s.get('url') for s in all_streams if isinstance(s, dict) and 'id' in s}
     
-    # Get dead stream URLs (will not contain None or empty strings)
-    dead_urls = get_dead_stream_urls()
+    # Get tracker
+    try:
+        from dead_streams_tracker import DeadStreamsTracker
+        tracker = DeadStreamsTracker()
+    except Exception as e:
+        logger.warning(f"Could not load dead streams tracker in filter_dead_streams: {e}")
+        return stream_ids, 0
     
-    # Filter out streams with dead URLs
-    # Keep streams where:
-    # 1. URL is not in dead_urls (not dead)
-    # 2. URL is None (stream not found in mapping - keep for safety, will be filtered by existence check)
-    filtered_stream_ids = [
-        sid for sid in stream_ids
-        if stream_id_to_url.get(sid) not in dead_urls or stream_id_to_url.get(sid) is None
-    ]
+    filtered_stream_ids = []
+    count_filtered = 0
     
-    count_filtered = len(stream_ids) - len(filtered_stream_ids)
+    for sid in stream_ids:
+        url = stream_id_to_url.get(sid)
+        if url is None:
+            # Keep for safety, will be filtered by existence check elsewhere
+            filtered_stream_ids.append(sid)
+            continue
+            
+        is_dead = False
+        if only_offline:
+            # Only filter if truly offline
+            is_dead = tracker.is_offline(url)
+        else:
+            # Filter if dead for any reason
+            is_dead = tracker.is_dead(url)
+            
+        if is_dead:
+            count_filtered += 1
+        else:
+            filtered_stream_ids.append(sid)
+            
     return filtered_stream_ids, count_filtered
 
 def has_custom_streams() -> bool:
@@ -943,5 +1026,5 @@ def batch_update_stream_stats(stream_stats_list: List[Dict[str, Any]], batch_siz
                 logger.error(f"Error updating stream {stream_id} stats: {e}")
                 failed += 1
     
-    logger.info(f"Batch stats update complete: {successful} successful, {failed} failed out of {total} total")
+    logger.debug(f"Batch stats update complete: {successful} successful, {failed} failed out of {total} total")
     return successful, failed

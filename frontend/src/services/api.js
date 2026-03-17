@@ -34,12 +34,60 @@ api.interceptors.response.use(
 
 // API methods
 export const automationAPI = {
+  // Status and Control
   getStatus: () => api.get('/automation/status'),
   start: () => api.post('/automation/start'),
   stop: () => api.post('/automation/stop'),
-  runCycle: () => api.post('/automation/cycle'),
+  runCycle: (data) => api.post('/automation/trigger', data),  // Trigger immediate automation cycle
+  trigger: () => api.post('/automation/trigger'),
+
+  // Configuration
   getConfig: () => api.get('/automation/config'),
   updateConfig: (config) => api.put('/automation/config', config),
+
+  // Global Settings
+  getGlobalSettings: () => api.get('/settings/automation/global'),
+  updateGlobalSettings: (settings) => api.put('/settings/automation/global', settings),
+
+  // Profiles
+  getProfiles: () => api.get('/automation/profiles'),
+  createProfile: (profile) => api.post('/automation/profiles', profile),
+  getProfile: (profileId) => api.get(`/automation/profiles/${profileId}`),
+  updateProfile: (profileId, profile) => api.put(`/automation/profiles/${profileId}`, profile),
+  deleteProfile: (profileId) => api.delete(`/automation/profiles/${profileId}`),
+  bulkDeleteProfiles: (profileIds) => api.post('/automation/profiles/bulk-delete', { profile_ids: profileIds }),
+
+  // Assignments
+  assignChannel: (channelId, profileId) => api.post('/automation/assign/channel', { channel_id: channelId, profile_id: profileId }),
+  assignChannels: (channelIds, profileId) => api.post('/automation/assign/channels', { channel_ids: channelIds, profile_id: profileId }),
+  assignGroup: (groupId, profileId) => api.post('/automation/assign/group', { group_id: groupId, profile_id: profileId }),
+
+  // Automation Periods
+  getPeriods: () => api.get('/automation/periods'),
+  createPeriod: (period) => api.post('/automation/periods', period),
+  getPeriod: (periodId) => api.get(`/automation/periods/${periodId}`),
+  updatePeriod: (periodId, period) => api.put(`/automation/periods/${periodId}`, period),
+  deletePeriod: (periodId) => api.delete(`/automation/periods/${periodId}`),
+  assignPeriodToChannels: (periodId, channelIds, profileId, replace = false) =>
+    api.post(`/automation/periods/${periodId}/assign-channels`, { channel_ids: channelIds, profile_id: profileId, replace }),
+  removePeriodFromChannels: (periodId, channelIds) =>
+    api.post(`/automation/periods/${periodId}/remove-channels`, { channel_ids: channelIds }),
+  getPeriodChannels: (periodId) => api.get(`/automation/periods/${periodId}/channels`),
+  getChannelPeriods: (channelId) => api.get(`/channels/${channelId}/automation-periods`),
+  batchAssignPeriods: (channelIds, periodAssignments, replace = false) =>
+    api.post('/channels/batch/assign-periods', { channel_ids: channelIds, period_assignments: periodAssignments, replace }),
+
+  getBatchPeriodUsage: (channelIds) =>
+    api.post('/channels/batch/period-usage', { channel_ids: channelIds }),
+
+  // Automation Events
+  getUpcomingEvents: (hours = 24, maxEvents = 100, periodId = null, forceRefresh = false) => {
+    const params = new URLSearchParams({ hours: hours.toString(), max_events: maxEvents.toString() })
+    if (periodId) params.append('period_id', periodId)
+    if (forceRefresh) params.append('force_refresh', 'true')
+    return api.get(`/automation/events/upcoming?${params.toString()}`)
+  },
+  invalidateEventsCache: () => api.post('/automation/events/invalidate-cache'),
 };
 
 export const channelsAPI = {
@@ -48,20 +96,6 @@ export const channelsAPI = {
   getChannelStats: (channelId) => api.get(`/channels/${channelId}/stats`),
   getLogo: (logoId) => api.get(`/channels/logos/${logoId}`),
   getLogoCached: (logoId) => `/api/channels/logos/${logoId}/cache`,
-};
-
-export const channelSettingsAPI = {
-  getAllSettings: () => api.get('/channel-settings'),
-  getSettings: (channelId) => api.get(`/channel-settings/${channelId}`),
-  updateSettings: (channelId, settings) => api.put(`/channel-settings/${channelId}`, settings),
-};
-
-export const groupSettingsAPI = {
-  getAllSettings: () => api.get('/group-settings'),
-  getSettings: (groupId) => api.get(`/group-settings/${groupId}`),
-  updateSettings: (groupId, settings) => api.put(`/group-settings/${groupId}`, settings),
-  bulkDisableMatching: () => api.post('/group-settings/bulk-disable-matching'),
-  bulkDisableChecking: () => api.post('/group-settings/bulk-disable-checking'),
 };
 
 export const channelOrderAPI = {
@@ -83,6 +117,9 @@ export const regexAPI = {
   bulkEditPattern: (data) => api.post('/regex-patterns/bulk-edit', data),
   massEditPreview: (data) => api.post('/regex-patterns/mass-edit-preview', data),
   massEdit: (data) => api.post('/regex-patterns/mass-edit', data),
+  updateMatchSettings: (channelId, settings) => api.post(`/channels/${channelId}/match-settings`, settings),
+  testMatchLive: (data) => api.post('/test-match-live', data),
+  updateBulkMatchSettings: (data) => api.post('/regex-patterns/bulk-settings', data),
 };
 
 export const streamAPI = {
@@ -115,7 +152,7 @@ export const streamCheckerAPI = {
 };
 
 export const changelogAPI = {
-  getChangelog: (days = 7) => api.get(`/changelog?days=${days}`),
+  getChangelog: (days = 7, page = 1, limit = 10) => api.get(`/changelog`, { params: { days, page, limit } }),
 };
 
 export const deadStreamsAPI = {
@@ -139,6 +176,7 @@ export const dispatcharrAPI = {
   updateConfig: (config) => api.put('/dispatcharr/config', config),
   testConnection: (config) => api.post('/dispatcharr/test-connection', config),
   initializeUDI: () => api.post('/dispatcharr/initialize-udi'),
+  getInitializationStatus: () => api.get('/dispatcharr/initialization-status'),
 };
 
 export const sessionSettingsAPI = {
@@ -165,28 +203,4 @@ export const schedulingAPI = {
 
 export const versionAPI = {
   getVersion: () => api.get('/version'),
-};
-
-export const profileAPI = {
-  // Profile configuration
-  getConfig: () => api.get('/profile-config'),
-  updateConfig: (config) => api.put('/profile-config', config),
-
-  // Profile management
-  getProfiles: () => api.get('/profiles'),
-  getProfileChannels: (profileId, includeSnapshot = false) => {
-    const params = includeSnapshot ? { include_snapshot: 'true' } : {};
-    return api.get(`/profiles/${profileId}/channels`, { params });
-  },
-  refreshProfiles: () => api.post('/profiles/refresh'),
-  diagnoseProfiles: () => api.get('/profiles/diagnose'),
-
-  // Snapshot management
-  createSnapshot: (profileId) => api.post(`/profiles/${profileId}/snapshot`),
-  getSnapshot: (profileId) => api.get(`/profiles/${profileId}/snapshot`),
-  deleteSnapshot: (profileId) => api.delete(`/profiles/${profileId}/snapshot`),
-  getAllSnapshots: () => api.get('/profiles/snapshots'),
-
-  // Actions
-  disableEmptyChannels: (profileId) => api.post(`/profiles/${profileId}/disable-empty-channels`),
 };

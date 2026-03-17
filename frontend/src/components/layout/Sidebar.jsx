@@ -10,11 +10,19 @@ import {
   Menu,
   X,
   Calendar,
-  Activity
+  Activity,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
 import { ThemeToggle } from '@/components/ThemeToggle.jsx'
 import { versionAPI } from '@/services/api.js'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 const menuItems = [
   { text: 'Dashboard', icon: LayoutDashboard, path: '/' },
@@ -22,11 +30,11 @@ const menuItems = [
   { text: 'Stream Monitoring', icon: Activity, path: '/stream-monitoring' },
   { text: 'Channel Configuration', icon: ListChecks, path: '/channels' },
   { text: 'Scheduling', icon: Calendar, path: '/scheduling' },
-  { text: 'Automation Settings', icon: Settings, path: '/settings' },
+  { text: 'Settings', icon: Settings, path: '/settings' },
   { text: 'Changelog', icon: History, path: '/changelog' },
 ]
 
-export function Sidebar() {
+export function Sidebar({ isCollapsed, setIsCollapsed }) {
   const [isOpen, setIsOpen] = useState(false)
   const [version, setVersion] = useState(null)
   const location = useLocation()
@@ -68,46 +76,108 @@ export function Sidebar() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed top-0 left-0 h-full w-64 bg-card border-r border-border z-40 transition-transform duration-300 ease-in-out flex flex-col",
+          "fixed top-0 left-0 h-full bg-card border-r border-border z-40 transition-all duration-300 ease-in-out flex flex-col",
+          isCollapsed ? "w-20" : "w-64",
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
-        <div className="p-6">
-          <h1 className="text-2xl font-bold text-primary">StreamFlow</h1>
-          <p className="text-sm text-muted-foreground">for Dispatcharr</p>
+        <div className={cn(
+          "p-6 relative flex flex-col",
+          isCollapsed && "items-center px-0"
+        )}>
+          <div className="flex items-center justify-between w-full">
+            {!isCollapsed && (
+              <div className="animate-in fade-in slide-in-from-left-2 duration-300">
+                <h1 className="text-2xl font-bold text-primary">StreamFlow</h1>
+                <p className="text-sm text-muted-foreground">for Dispatcharr</p>
+              </div>
+            )}
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "hidden lg:flex h-8 w-8 rounded-full border border-border bg-background shadow-sm hover:bg-accent",
+                isCollapsed ? "mx-auto" : ""
+              )}
+              onClick={() => setIsCollapsed(!isCollapsed)}
+            >
+              {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
 
-        <nav className="px-3 space-y-1 flex-1">
-          {menuItems.map((item) => {
-            const Icon = item.icon
-            const isActive = location.pathname === item.path
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setIsOpen(false)}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors",
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-accent hover:text-accent-foreground"
-                )}
-              >
-                <Icon className="h-5 w-5" />
-                <span className="text-sm font-medium">{item.text}</span>
-              </Link>
-            )
-          })}
+        <nav className={cn(
+          "px-3 space-y-1 flex-1 overflow-y-auto overflow-x-hidden pt-2",
+          isCollapsed && "px-2 items-center"
+        )}>
+          <TooltipProvider delayDuration={0}>
+            {menuItems.map((item) => {
+              const Icon = item.icon
+              const isActive = location.pathname === item.path
+
+              const linkContent = (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setIsOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 group relative",
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "hover:bg-accent hover:text-accent-foreground",
+                    isCollapsed ? "justify-center px-0 w-12 h-12 mx-auto" : "w-full"
+                  )}
+                >
+                  <Icon className={cn("h-5 w-5 shrink-0", !isActive && "text-muted-foreground group-hover:text-foreground")} />
+                  {!isCollapsed && (
+                    <span className="text-sm font-medium whitespace-nowrap overflow-hidden transition-all duration-300">
+                      {item.text}
+                    </span>
+                  )}
+                  {isActive && isCollapsed && (
+                    <div className="absolute left-0 w-1 h-6 bg-primary-foreground rounded-r-full" />
+                  )}
+                </Link>
+              )
+
+              if (isCollapsed) {
+                return (
+                  <Tooltip key={item.path}>
+                    <TooltipTrigger asChild>
+                      {linkContent}
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="font-medium">
+                      {item.text}
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              }
+
+              return linkContent
+            })}
+          </TooltipProvider>
         </nav>
 
-        <div className="p-3 border-t border-border space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Theme</span>
-            <ThemeToggle />
+        <div className={cn(
+          "p-3 border-t border-border space-y-2 mt-auto bg-card/50",
+          isCollapsed && "flex flex-col items-center px-0"
+        )}>
+          <div className={cn(
+            "flex items-center justify-between w-full px-2",
+            isCollapsed && "flex-col gap-4 justify-center"
+          )}>
+            {!isCollapsed && <span className="text-sm text-muted-foreground font-medium">Theme</span>}
+            <div className={cn(isCollapsed ? "scale-90" : "")}>
+              <ThemeToggle />
+            </div>
           </div>
           {version && (
-            <div className="pt-2 text-xs text-muted-foreground text-center">
-              v{version}
+            <div className={cn(
+              "pt-2 text-[10px] text-muted-foreground text-center font-mono opacity-60",
+              isCollapsed ? "w-full overflow-hidden truncate px-1" : ""
+            )}>
+              {isCollapsed ? version.split('-')[0] : `v${version}`}
             </div>
           )}
         </div>

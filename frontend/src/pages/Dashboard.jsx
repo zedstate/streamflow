@@ -7,8 +7,17 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
-import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import { automationAPI, streamCheckerAPI, m3uAPI, dispatcharrAPI } from '@/services/api.js'
+import { PlayCircle, RefreshCw, Activity, CheckCircle2, AlertCircle, Loader2, ChevronDown } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu.jsx'
+import UpcomingAutomationEvents from '@/components/Dashboard/UpcomingAutomationEvents.jsx'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
@@ -17,11 +26,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState('')
   const [togglingPlaylist, setTogglingPlaylist] = useState(null)
+  const [periods, setPeriods] = useState([])
   const { toast } = useToast()
 
   useEffect(() => {
     loadStatus()
     loadPlaylists()
+    loadPeriods()
     const interval = setInterval(() => {
       loadStatus()
       loadPlaylists()
@@ -59,19 +70,28 @@ export default function Dashboard() {
     }
   }
 
-  const handleRefreshPlaylist = async () => {
+  const loadPeriods = async () => {
     try {
-      setActionLoading('playlist')
-      await streamAPI.refreshPlaylist()
+      const response = await automationAPI.getPeriods()
+      setPeriods(response.data || [])
+    } catch (err) {
+      console.error('Failed to load periods:', err)
+    }
+  }
+
+  const handleReloadUDI = async () => {
+    try {
+      setActionLoading('udi')
+      await dispatcharrAPI.initializeUDI()
       toast({
         title: "Success",
-        description: "Playlist refresh initiated successfully"
+        description: "UDI reloaded successfully"
       })
       await loadStatus()
     } catch (err) {
       toast({
         title: "Error",
-        description: "Failed to refresh playlist",
+        description: err.response?.data?.error || "Failed to reload UDI",
         variant: "destructive"
       })
     } finally {
@@ -79,19 +99,21 @@ export default function Dashboard() {
     }
   }
 
-  const handleDiscoverStreams = async () => {
+  const handleRunAutomation = async (periodId = null) => {
     try {
-      setActionLoading('discover')
-      const response = await streamAPI.discoverStreams()
+      setActionLoading('automation')
+      await automationAPI.runCycle({ period_id: periodId })
       toast({
         title: "Success",
-        description: `Stream discovery completed. ${response.data.total_assigned} streams assigned.`
+        description: periodId
+          ? `Automation cycle for "${periods.find(p => p.id === periodId)?.name}" triggered successfully`
+          : "Full automation cycle triggered successfully"
       })
       await loadStatus()
     } catch (err) {
       toast({
         title: "Error",
-        description: "Failed to discover streams",
+        description: err.response?.data?.error || "Failed to run automation cycle",
         variant: "destructive"
       })
     } finally {
@@ -99,35 +121,16 @@ export default function Dashboard() {
     }
   }
 
-  const handleTriggerGlobalAction = async () => {
-    try {
-      setActionLoading('global')
-      await streamCheckerAPI.triggerGlobalAction()
-      toast({
-        title: "Success",
-        description: "Global action triggered successfully"
-      })
-      await loadStatus()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: "Failed to trigger global action",
-        variant: "destructive"
-      })
-    } finally {
-      setActionLoading('')
-    }
-  }
 
   const handleTogglePlaylist = async (playlistId, currentlyEnabled) => {
     try {
       setTogglingPlaylist(playlistId)
-      
+
       // Get current enabled accounts from status
       // Note: empty array means all accounts are enabled
       const currentEnabledAccounts = status?.config?.enabled_m3u_accounts || []
       let newEnabledAccounts
-      
+
       if (currentEnabledAccounts.length === 0) {
         // Currently all are enabled (empty array)
         if (currentlyEnabled) {
@@ -153,14 +156,14 @@ export default function Dashboard() {
           }
         }
       }
-      
+
       await automationAPI.updateConfig({ enabled_m3u_accounts: newEnabledAccounts })
-      
+
       toast({
         title: "Success",
         description: `Playlist ${currentlyEnabled ? 'disabled' : 'enabled'} successfully`
       })
-      
+
       await loadStatus()
     } catch (err) {
       toast({
@@ -187,10 +190,10 @@ export default function Dashboard() {
   const completed = streamCheckerStatus?.queue?.completed || 0
   const inProgress = streamCheckerStatus?.queue?.in_progress || 0
   const totalProcessed = completed; // Define totalProcessed based on completed streams
-  
+
   // Calculate progress for the current batch
   const batchTotal = completed + inProgress + queueSize
-  const queueProgress = batchTotal > 0 
+  const queueProgress = batchTotal > 0
     ? (completed / batchTotal) * 100
     : 0
 
@@ -263,12 +266,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="flex items-center gap-2">
               <div className="text-2xl font-bold">
-                {streamCheckerStatus?.global_action_in_progress ? (
-                  <Badge variant="default" className="bg-blue-500">
-                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                    Global Check
-                  </Badge>
-                ) : streamCheckerStatus?.checking || (streamCheckerStatus?.queue?.in_progress > 0) ? (
+                {streamCheckerStatus?.checking || (streamCheckerStatus?.queue?.in_progress > 0) ? (
                   <Badge variant="default" className="bg-green-500">
                     <CheckCircle2 className="h-3 w-3 mr-1" />
                     Normal Check
@@ -318,30 +316,44 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent className="flex flex-wrap gap-4">
           <Button
-            onClick={handleRefreshPlaylist}
+            onClick={handleReloadUDI}
             disabled={shouldDisableActions}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
-            {actionLoading === 'playlist' ? 'Refreshing...' : 'Refresh Playlist'}
+            {actionLoading === 'udi' ? 'Reloading...' : 'Reload UDI'}
           </Button>
 
-          <Button
-            onClick={handleDiscoverStreams}
-            disabled={shouldDisableActions}
-            variant="outline"
-          >
-            <Search className="mr-2 h-4 w-4" />
-            {actionLoading === 'discover' ? 'Discovering...' : 'Discover Streams'}
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                disabled={shouldDisableActions}
+                variant="outline"
+              >
+                <PlayCircle className="mr-2 h-4 w-4" />
+                {actionLoading === 'automation' ? 'Running...' : 'Run Automation'}
+                <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-[200px]">
+              <DropdownMenuLabel>Choose Run Mode</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleRunAutomation(null)}>
+                Run All Periods
+              </DropdownMenuItem>
+              {periods.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-[10px] uppercase text-muted-foreground">Specific Periods</DropdownMenuLabel>
+                  {periods.map(period => (
+                    <DropdownMenuItem key={period.id} onClick={() => handleRunAutomation(period.id)}>
+                      {period.name}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-          <Button
-            onClick={handleTriggerGlobalAction}
-            disabled={shouldDisableActions}
-            variant="outline"
-          >
-            <PlayCircle className="mr-2 h-4 w-4" />
-            {actionLoading === 'global' ? 'Triggering...' : 'Trigger Global Action'}
-          </Button>
         </CardContent>
       </Card>
 
@@ -354,18 +366,34 @@ export default function Dashboard() {
           <CardContent>
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between items-center">
-                <dt className="text-muted-foreground">Update Interval:</dt>
+                <dt className="text-muted-foreground">Active Profiles:</dt>
                 <dd>
                   <Badge variant="secondary">
-                    {status?.config?.playlist_update_interval_minutes ? `${status.config.playlist_update_interval_minutes}m` : 'N/A'}
+                    {status?.profiles_count || 0}
                   </Badge>
                 </dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-muted-foreground">M3U Accounts:</dt>
+                <dt className="text-muted-foreground">Scheduled Periods:</dt>
                 <dd>
                   <Badge variant="outline">
-                    {playlists.length}
+                    {periods.length || 0}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-muted-foreground">Stream Checking:</dt>
+                <dd>
+                  <Badge variant={status?.stream_checking_enabled ? "default" : "secondary"}>
+                    {status?.stream_checking_enabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="flex justify-between items-center">
+                <dt className="text-muted-foreground">Checker Concurrency:</dt>
+                <dd>
+                  <Badge variant={(streamCheckerStatus?.parallel?.max_workers || 0) > 0 ? "outline" : "secondary"}>
+                    {streamCheckerStatus?.parallel?.max_workers || 0} Workers
                   </Badge>
                 </dd>
               </div>
@@ -388,14 +416,6 @@ export default function Dashboard() {
                 </dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-muted-foreground">Active Workers:</dt>
-                <dd>
-                  <Badge variant={(streamCheckerStatus?.parallel?.max_workers || 0) > 0 ? "default" : "secondary"}>
-                    {streamCheckerStatus?.parallel?.max_workers || 0}
-                  </Badge>
-                </dd>
-              </div>
-              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Total Processed:</dt>
                 <dd>
                   <Badge variant="outline">
@@ -405,7 +425,20 @@ export default function Dashboard() {
               </div>
               {queueSize > 0 && (
                 <div className="pt-2">
-                  <Label className="text-xs text-muted-foreground mb-2 block">Processing Progress</Label>
+                  <div className="flex justify-between items-center mb-2">
+                    <Label className="text-xs text-muted-foreground block">Processing Progress</Label>
+                    {streamCheckerStatus?.queue?.eta_seconds > 0 ? (
+                      <span className="text-xs text-muted-foreground">
+                        ~{streamCheckerStatus.queue.eta_seconds > 60
+                          ? `${Math.floor(streamCheckerStatus.queue.eta_seconds / 60)}m ${streamCheckerStatus.queue.eta_seconds % 60}s`
+                          : `${streamCheckerStatus.queue.eta_seconds}s`} remaining
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground animate-pulse text-primary/70">
+                        Calculating ETA...
+                      </span>
+                    )}
+                  </div>
                   <Progress value={queueProgress} className="h-2" />
                 </div>
               )}
@@ -414,12 +447,15 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      {/* Upcoming Automation Events */}
+      <UpcomingAutomationEvents />
+
       {/* Available Playlists */}
       <Card>
         <CardHeader>
-          <CardTitle>Available Playlists</CardTitle>
+          <CardTitle>Global Playlist Visibility</CardTitle>
           <CardDescription>
-            Enable or disable M3U playlists for stream management
+            Toggle global extraction pooling for upstream API connections.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -430,7 +466,7 @@ export default function Dashboard() {
               {playlists.map((playlist) => {
                 const enabledAccounts = status?.config?.enabled_m3u_accounts || []
                 const isEnabled = enabledAccounts.length === 0 || enabledAccounts.includes(playlist.id)
-                
+
                 return (
                   <div key={playlist.id} className="flex items-center justify-between p-3 border rounded-lg">
                     <div className="flex-1">

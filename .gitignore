@@ -237,3 +237,5 @@ backend/data/udi/
 node_modules
 package-lock.json
 package.json
+dev.sh
+docker-compose.dev.yml

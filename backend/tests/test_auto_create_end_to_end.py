@@ -87,11 +87,8 @@ class TestAutoCreateEndToEnd(unittest.TestCase):
                 ]
                 
                 # Mock requests
-                with patch('scheduling_service.requests.get') as mock_get:
-                    mock_response = Mock()
-                    mock_response.json.return_value = mock_programs
-                    mock_response.raise_for_status = Mock()
-                    mock_get.return_value = mock_response
+                with patch('scheduling_service.fetch_data_from_url') as mock_fetch:
+                    mock_fetch.return_value = mock_programs
                     
                     # Step 1: Initialize service
                     service = get_scheduling_service()
@@ -185,11 +182,8 @@ class TestAutoCreateEndToEnd(unittest.TestCase):
                     }
                 ]
                 
-                with patch('scheduling_service.requests.get') as mock_get:
-                    mock_response = Mock()
-                    mock_response.json.return_value = mock_programs
-                    mock_response.raise_for_status = Mock()
-                    mock_get.return_value = mock_response
+                with patch('scheduling_service.fetch_data_from_url') as mock_fetch:
+                    mock_fetch.return_value = mock_programs
                     
                     service = get_scheduling_service()
                     

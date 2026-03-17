@@ -15,7 +15,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
 
 # Install development dependencies
-RUN pip install --no-cache-dir watchdog flask-cors
+# Install development dependencies
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Create necessary directories
 RUN mkdir -p csv logs data

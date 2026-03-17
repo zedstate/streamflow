@@ -102,7 +102,7 @@ export const streamSessionsAPI = {
    * @returns {string} Screenshot URL
    */
   getScreenshotUrl: (streamId) => {
-    return `/data/screenshots/${streamId}.jpg?t=${Date.now()}`;
+    return `/api/data/screenshots/${streamId}.jpg?t=${Date.now()}`;
   },
 
   /**

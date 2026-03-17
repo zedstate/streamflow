@@ -4,13 +4,16 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import './index.css'
 import { ThemeProvider } from '@/context/ThemeContext.jsx'
+import { TooltipProvider } from '@/components/ui/tooltip.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ThemeProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <TooltipProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </TooltipProvider>
     </ThemeProvider>
   </React.StrictMode>
 )

@@ -78,18 +78,20 @@ class StreamScreenshotService:
             process = subprocess.Popen(
                 [
                     'ffmpeg',
-                    '-y',  # Overwrite output files
-                    '-analyzeduration', '10000000', # 10s of analysis for better probe
-                    '-probesize', '10000000',      # 10MB probe size
-                    '-i', url,
-                    '-ss', '00:00:01',  # Seek 1 second in (avoid black frames)
-                    '-vframes', '1',  # Capture 1 frame
+                    '-hide_banner',
+                    '-nostdin',   # Disable interactive stdin
+                    '-y',         # Overwrite output files
+                    '-analyzeduration', '3000000', # 3s analysis is enough for snapshots
+                    '-probesize', '3000000',       # 3MB probe size
+                    '-i', f"{url}{'?' if '?' not in url else '&'}timeout=5000000",
+                    '-vframes', '1',  # Capture 1 frame immediately
                     '-q:v', str(SCREENSHOT_QUALITY),  # JPEG quality
                     '-f', 'image2',
                     str(output_path)
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL, # Explicitly redirect stdin
                 universal_newlines=True
             )
             
@@ -106,7 +108,8 @@ class StreamScreenshotService:
             if process.returncode == 0 and output_path.exists():
                 # Return relative path
                 relative_path = f"screenshots/{filename}"
-                logger.debug(f"Captured screenshot for stream {stream_id}: {relative_path}")
+                size = output_path.stat().st_size
+                logger.debug(f"Successfully captured screenshot for stream {stream_id} ({size} bytes): {relative_path}")
                 
                 # Parse stats if requested
                 if extract_stats and stderr:
@@ -132,24 +135,42 @@ class StreamScreenshotService:
                             pass
                             
                     # 3. FPS
-                    fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', stderr)
+                    fps_match = re.search(r'(\d+(?:\.\d+)?)\s+fps', stderr)
                     if fps_match:
                         try:
                             stats['fps'] = float(fps_match.group(1))
                         except ValueError:
                             pass
                             
+                    # 4. HDR Detection
+                    # Extract pixel format and color info (e.g., yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67))
+                    color_match = re.search(r'(yuv\w+?p?\d{1,2}le)[^,]*,\s*([^,)]+)', stderr, re.IGNORECASE)
+                    if color_match:
+                        pix_fmt = color_match.group(1).lower()
+                        color_info = color_match.group(2).lower()
+                        
+                        # Check for 10-bit or higher
+                        is_10bit_or_higher = '10' in pix_fmt or '12' in pix_fmt or '16' in pix_fmt
+                        
+                        if is_10bit_or_higher and 'bt2020' in color_info:
+                            if 'smpte2084' in color_info:
+                                stats['hdr_format'] = 'HDR10'
+                            elif 'arib-std-b67' in color_info:
+                                stats['hdr_format'] = 'HLG'
+                            elif 'dolby' in stderr.lower() or 'dvhe' in stderr.lower():
+                                stats['hdr_format'] = 'Dolby Vision'
+                            
                     if stats:
-                        logger.info(f"Extracted stats from screenshot probe for stream {stream_id}: {stats}")
+                        logger.debug(f"Extracted stats from screenshot probe for stream {stream_id}: {stats}")
                 
                 return relative_path, stats
             else:
-                logger.warning(f"Screenshot failed for stream {stream_id}, exit code: {process.returncode}")
+                logger.debug(f"Screenshot failed or stream offline ({stream_id}), exit code: {process.returncode}")
                 # Try to parse stats even on failure if we got stderr (might be useful for debugging)
                 return None, {}
                 
         except Exception as e:
-            logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
+            logger.debug(f"Error capturing screenshot for stream {stream_id}: {e}")
             return None, {}
     
     def get_screenshot_path(self, stream_id: int) -> Optional[str]:

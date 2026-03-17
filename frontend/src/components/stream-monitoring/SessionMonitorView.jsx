@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import * as React from 'react';
-import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX, Radio } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { ArrowLeft, Square, Activity, AlertCircle, Image as ImageIcon, Calendar, Clock, Ban, Play, Volume2, VolumeX, Radio, ExternalLink, Maximize2, Minimize2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { streamSessionsAPI } from '@/services/streamSessions';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { TimelineControl } from './TimelineControl';
 
 // Constants
@@ -26,14 +27,23 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [cursorTime, setCursorTime] = useState(null); // Current timestamp of the timeline
   const [isLive, setIsLive] = useState(true); // Whether we are following the latest updates
   const [zoomLevel, setZoomLevel] = useState(60); // Window size in seconds (default 1 minute)
+  const [activePreviewTab, setActivePreviewTab] = useState("screenshots");
+  const [showTimeline, setShowTimeline] = useState(true);
+  const [expandedStreamId, setExpandedStreamId] = useState(null);
   const { toast } = useToast();
 
   // Helper to find the metric closest to the cursor time
   const getSnapshotAtTime = (stream, time) => {
-    if (!stream.metrics_history || stream.metrics_history.length === 0) return stream;
+    // Normalize speed field: use speed if available, fallback to current_speed
+    const normalizedStream = {
+      ...stream,
+      speed: stream.speed !== undefined ? stream.speed : stream.current_speed
+    };
 
-    // If live, return current state
-    if (isLive) return stream;
+    if (!stream.metrics_history || stream.metrics_history.length === 0) return normalizedStream;
+
+    // If live, return normalized current state
+    if (isLive) return normalizedStream;
 
     // Find closest metric
     // Assuming metrics are sorted by timestamp (they should be appended in order)
@@ -62,9 +72,11 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         fps: closest.fps,
         reliability_score: closest.reliability_score !== undefined ? closest.reliability_score : stream.reliability_score,
         status: closest.status || stream.status, // Fallback if status wasn't recorded in old history
+        status_reason: closest.status_reason || stream.status_reason,
         is_quarantined: (closest.status || stream.status) === 'quarantined',
         is_alive: closest.is_alive,
-        rank: closest.rank
+        rank: closest.rank,
+        display_logo_status: closest.display_logo_status || stream.display_logo_status
       };
     }
 
@@ -100,11 +112,21 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     loadAliveScreenshots();
     loadPlayingStreams();
 
-    // Poll for updates every 2 seconds
+    // Poll for updates every 2 seconds if active
     const interval = setInterval(() => {
-      loadSession();
-      loadAliveScreenshots();
-      loadPlayingStreams();
+      // Use setSession functional update to check if session is active before polling
+      setSession(currentSession => {
+        if (currentSession && !currentSession.is_active) {
+          clearInterval(interval);
+          return currentSession;
+        }
+        // These calls are async, we can't easily wait for them here, 
+        // but loadSession itself will skip if it sees inactive (actually it should be stopped by interval clear)
+        loadAliveScreenshots();
+        loadPlayingStreams();
+        loadSession();
+        return currentSession;
+      });
     }, 2000);
 
     return () => clearInterval(interval);
@@ -153,11 +175,14 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
       setLoading(false);
     } catch (err) {
       console.error('Failed to load session:', err);
-      toast({
-        title: 'Error',
-        description: 'Failed to load session details',
-        variant: 'destructive'
-      });
+      // Suppress toast if we already have session data (session exists and we are just refreshing)
+      if (!session) {
+        toast({
+          title: 'Error',
+          description: 'Failed to load session details',
+          variant: 'destructive'
+        });
+      }
       setLoading(false);
     }
   };
@@ -262,8 +287,8 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     return b.reliability_score - a.reliability_score;
   };
 
-  const stableStreams = currentStreams.filter(s => s.status === 'stable').sort(sortStreams);
-  const reviewStreams = currentStreams.filter(s => s.status === 'review').sort(sortStreams);
+  const stableStreams = currentStreams.filter(s => s.status === 'stable' && !s.is_quarantined).sort(sortStreams);
+  const reviewStreams = currentStreams.filter(s => s.status === 'review' && !s.is_quarantined).sort(sortStreams);
   const quarantinedStreams = currentStreams.filter(s => s.status === 'quarantined' || s.is_quarantined);
   const activeStreams = [...stableStreams, ...reviewStreams];
 
@@ -396,10 +421,10 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       {/* Header with Channel Logo and EPG Info */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between min-w-0 gap-4">
+        <div className="flex items-center gap-4 min-w-0">
           <Button variant="ghost" size="icon" onClick={onBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
@@ -413,9 +438,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
               />
             </div>
           )}
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">{session.channel_name}</h1>
-            <p className="text-muted-foreground mt-1">
+          <div className="min-w-0">
+            <h1 className="text-3xl font-bold tracking-tight truncate">{session.channel_name}</h1>
+            <p className="text-muted-foreground mt-1 truncate">
               Session Monitor - {session.is_active ? 'Active' : 'Inactive'}
             </p>
           </div>
@@ -470,48 +495,50 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
       {/* Live Stream Preview */}
       {activeStreams.length > 0 && (
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle>Live Stream Preview</CardTitle>
             <CardDescription>View screenshots and live streams from active streams</CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="screenshots" className="w-full">
+            <Tabs value={activePreviewTab} onValueChange={setActivePreviewTab} className="w-full">
               <TabsList className="mb-4">
                 <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                 <TabsTrigger value="live">Live Streams</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="screenshots">
+              <TabsContent value="screenshots" className="mt-0 outline-none">
                 {aliveScreenshots.length > 0 ? (
-                  <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800">
-                    <div className="flex gap-4 pb-4">
-                      {aliveScreenshots.map((screenshot) => (
-                        <div key={screenshot.stream_id} className="flex-none w-80">
-                          <Card>
-                            <CardContent className="p-4">
-                              <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
-                                <img
-                                  src={screenshot.screenshot_url}
-                                  alt={screenshot.stream_name}
-                                  className="w-full h-full object-contain"
-                                  onError={(e) => {
-                                    e.target.src = FALLBACK_IMAGE_SVG;
-                                  }}
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
-                                  {screenshot.stream_name}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  Stream ID: {screenshot.stream_id}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </div>
-                      ))}
+                  <div className="w-full relative overflow-hidden">
+                    <div className="overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800" style={{ maxWidth: 'calc(100vw - 400px)' }}>
+                      <div className="flex gap-4 pb-4">
+                        {aliveScreenshots.map((screenshot) => (
+                          <div key={screenshot.stream_id} className="flex-none w-80">
+                            <Card>
+                              <CardContent className="p-4">
+                                <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
+                                  <img
+                                    src={screenshot.screenshot_url}
+                                    alt={screenshot.stream_name}
+                                    className="w-full h-full object-contain"
+                                    onError={(e) => {
+                                      e.target.src = FALLBACK_IMAGE_SVG;
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
+                                    {screenshot.stream_name}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Stream ID: {screenshot.stream_id}
+                                  </p>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -523,7 +550,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
               </TabsContent>
 
               <TabsContent value="live">
-                <LiveStreamsGrid streams={activeStreams} sessionId={sessionId} />
+                {activePreviewTab === "live" && (
+                  <LiveStreamsGrid streams={activeStreams.filter(s => (s.speed || s.current_speed || 0) >= 0.9)} sessionId={sessionId} isActive={activePreviewTab === "live"} />
+                )}
               </TabsContent>
             </Tabs>
           </CardContent>
@@ -595,6 +624,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
                   isLive={isLive}
                   zoomLevel={zoomLevel}
+                  adPeriods={session?.ad_periods || []}
                 />
               )}
             </CardContent>
@@ -625,6 +655,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   isLive={isLive}
                   zoomLevel={zoomLevel}
                   isReview
+                  adPeriods={session?.ad_periods || []}
                 />
               )}
             </CardContent>
@@ -651,6 +682,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                   sessionId={sessionId}
                   showQuarantined
                   onRevive={handleReviveStream}
+                  adPeriods={session?.ad_periods || []}
                 />
               )}
             </CardContent>
@@ -658,22 +690,50 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         </TabsContent>
       </Tabs>
 
+      {/* Floating Timeline Button (Shows when timeline is hidden) */}
+      {!showTimeline && (
+        <div className="fixed bottom-6 right-6 z-[60] animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <Button
+            onClick={() => setShowTimeline(true)}
+            className="group relative overflow-hidden bg-zinc-950 hover:bg-zinc-900 text-white border border-white/10 rounded-full h-12 px-6 shadow-[0_8px_30px_rgb(0,0,0,0.4)] flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="relative flex items-center gap-2">
+              <span className="text-sm font-semibold tracking-wide">Show Timeline</span>
+              <ChevronUp className="h-4 w-4 text-primary animate-bounce-subtle" />
+            </div>
+          </Button>
+          <style jsx>{`
+            @keyframes bounce-subtle {
+              0%, 100% { transform: translateY(0); }
+              50% { transform: translateY(-3px); }
+            }
+            .animate-bounce-subtle {
+              animation: bounce-subtle 2s ease-in-out infinite;
+            }
+          `}</style>
+        </div>
+      )}
+
       {/* Timeline Control */}
-      {
-        session && (
-          <TimelineControl
-            minTime={minTime}
-            maxTime={maxTime}
-            currentTime={cursorTime || maxTime}
-            onTimeChange={handleTimeChange}
-            isLive={isLive}
-            onLiveClick={handleLiveClick}
-            events={timelineEvents}
-            zoomLevel={zoomLevel}
-            onZoomChange={setZoomLevel}
-          />
-        )
-      }
+      {session && (
+        <TimelineControl
+          className={!showTimeline ? 'hidden' : ''}
+          minTime={minTime}
+          maxTime={maxTime}
+          currentTime={cursorTime || maxTime}
+          onTimeChange={handleTimeChange}
+          isLive={isLive}
+          onLiveClick={handleLiveClick}
+          events={timelineEvents}
+          streams={session.streams || []}
+          zoomLevel={zoomLevel}
+          onZoomChange={setZoomLevel}
+          adPeriods={session?.ad_periods || []}
+          showTimeline={showTimeline}
+          onToggleTimeline={() => setShowTimeline(!showTimeline)}
+        />
+      )}
     </div >
   );
 }
@@ -701,8 +761,37 @@ function StatsCard({ title, value, suffix = '', icon: Icon, variant = 'default' 
   );
 }
 
+// Transport Health Badge Helper
+const TransportHealthBadge = ({ status, summary, errorDensity }) => {
+  const getStyles = () => {
+    switch (status) {
+      case 'Healthy': return 'bg-green-500/10 text-green-600 border-green-500/20';
+      case 'Degraded': return 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20';
+      case 'Severe': return 'bg-orange-500/10 text-orange-600 border-orange-500/20';
+      case 'Critical': return 'bg-red-500/10 text-red-600 border-red-500/20';
+      default: return 'bg-gray-500/10 text-gray-600 border-gray-500/20';
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1" title={summary || ''}>
+      <Badge
+        variant="outline"
+        className={`text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center ${getStyles()}`}
+      >
+        <span>{status || 'Healthy'}</span>
+      </Badge>
+      {errorDensity > 0 && (
+        <span className="text-[10px] text-muted-foreground font-medium">
+          Worst: {errorDensity}/m
+        </span>
+      )}
+    </div>
+  );
+};
+
 // Streams Table Component
-function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false, cursorTime, isLive, zoomLevel }) {
+function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStreamIds = new Set(), showQuarantined = false, isReview = false, cursorTime, isLive, zoomLevel, adPeriods = [] }) {
   const formatQuality = (stream) => {
     if (!stream.width || !stream.height) return 'Unknown';
     return `${stream.width}x${stream.height}`;
@@ -733,11 +822,19 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
             <TableHead>Name</TableHead>
             <TableHead>Quality</TableHead>
             <TableHead>FPS</TableHead>
+            <TableHead>Speed</TableHead>
             <TableHead>Bitrate</TableHead>
-            {!showQuarantined && (
+            <TableHead>Logo Verify</TableHead>
+            <TableHead>Transport Health</TableHead>
+            {!showQuarantined ? (
               <>
                 <TableHead>Reliability</TableHead>
                 {isReview && <TableHead>Time into Stable</TableHead>}
+                <TableHead>Actions</TableHead>
+              </>
+            ) : (
+              <>
+                <TableHead>Score</TableHead>
                 <TableHead>Actions</TableHead>
               </>
             )}
@@ -758,11 +855,78 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                         <Radio className="h-3 w-3 text-green-600 dark:text-green-400" />
                       </div>
                     )}
+                    {stream.status === 'quarantined' && (
+                      <Badge variant="destructive" className="text-[10px] px-1 py-0 h-4 uppercase font-bold">
+                        Dead
+                      </Badge>
+                    )}
+                    {(stream.status === 'review' || stream.status === 'quarantined') && stream.status_reason === 'looping' && (
+                      <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20 text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center leading-none">
+                        <span className="mt-[0.5px]">Looping {stream.loop_duration ? `(${stream.loop_duration.toFixed(1)}s)` : ''}</span>
+                      </Badge>
+                    )}
+                    {stream.status === 'quarantined' && stream.status_reason === 'logo-mismatch' && (
+                      <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20 text-[10px] px-2 h-5 uppercase font-bold">
+                        Logo Mismatch
+                      </Badge>
+                    )}
+                  </div>
+                  {stream.status === 'quarantined' && stream.status_reason === 'logo-mismatch' && stream.screenshot_url && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      <p className="mb-1">Last seen:</p>
+                      <div className="w-24 aspect-video bg-black rounded overflow-hidden">
+                        <img
+                          src={stream.screenshot_url}
+                          alt="Logo mismatch screenshot"
+                          className="w-full h-full object-contain cursor-pointer transition-transform hover:scale-105"
+                          onClick={() => window.open(stream.screenshot_url, '_blank')}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <span>{formatQuality(stream)}</span>
+                    {stream.hdr_format && (
+                      <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs px-2 py-0 h-5">
+                        {stream.hdr_format}
+                      </Badge>
+                    )}
                   </div>
                 </TableCell>
-                <TableCell>{formatQuality(stream)}</TableCell>
-                <TableCell>{stream.fps ? `${stream.fps.toFixed(1)} fps` : 'N/A'}</TableCell>
+                <TableCell>{stream.fps ? `${stream.fps.toFixed(0)} fps` : 'N/A'}</TableCell>
+                <TableCell>
+                  <span className={`font-mono ${(stream.speed || stream.current_speed || 0) < 0.9 ? 'text-orange-500' : 'text-green-500'}`}>
+                    {(stream.speed || stream.current_speed || 0).toFixed(2)}x
+                  </span>
+                </TableCell>
                 <TableCell>{formatBitrate(stream.bitrate)}</TableCell>
+                <TableCell>
+                  <div className="flex flex-col gap-1">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] px-2 h-5 uppercase font-bold flex items-center justify-center leading-none ${stream.display_logo_status === 'SUCCESS' ? 'bg-green-500/10 text-green-600 border-green-500/20' :
+                        stream.display_logo_status === 'FAILED' ? 'bg-red-500/10 text-red-600 border-red-500/20' :
+                          'bg-gray-500/10 text-gray-600 border-gray-500/20'
+                        }`}
+                    >
+                      <span className="mt-[0.5px]">{stream.display_logo_status || 'PENDING'}</span>
+                    </Badge>
+                    {stream.consecutive_logo_misses > 0 && (
+                      <span className="text-[10px] text-red-500 font-medium">
+                        Misses: {stream.consecutive_logo_misses}
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <TransportHealthBadge 
+                    status={stream.transport_health} 
+                    summary={stream.transport_health_summary}
+                    errorDensity={stream.transport_error_density}
+                  />
+                </TableCell>
                 {!showQuarantined && (
                   <>
                     <TableCell>
@@ -787,13 +951,13 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
                     <TableCell>
                       <div className="flex gap-2">
                         <Button
-                          size="sm"
+                          size="icon"
                           variant="outline"
                           onClick={() => onQuarantine(stream.stream_id)}
-                          className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950"
+                          className="h-8 w-8 text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950"
+                          title="Quarantine"
                         >
-                          <Ban className="h-3 w-3 mr-1" />
-                          Quarantine
+                          <Ban className="h-4 w-4" />
                         </Button>
                       </div>
                     </TableCell>
@@ -821,8 +985,8 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
               </TableRow>
               {!showQuarantined && (
                 <TableRow>
-                  <TableCell colSpan={8} className="bg-muted/30 p-2">
-                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
+                  <TableCell colSpan={10} className="bg-muted/30 p-2">
+                    <SpeedMetricsChart sessionId={sessionId} streamId={stream.stream_id} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} adPeriods={adPeriods} />
                   </TableCell>
                 </TableRow>
               )}
@@ -835,7 +999,7 @@ function StreamsTable({ streams, sessionId, onQuarantine, onRevive, playingStrea
 }
 
 // Speed Metrics Chart Component
-function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel }) {
+function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel, adPeriods }) {
   const [allMetrics, setAllMetrics] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -886,9 +1050,15 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
       const hours = date.getHours().toString().padStart(2, '0');
       const minutes = date.getMinutes().toString().padStart(2, '0');
       const seconds = date.getSeconds().toString().padStart(2, '0');
+      // Map quarantined streams to 0 speed in chart
+      let displaySpeed = metric.speed || 0;
+      if (metric.status === 'quarantined') {
+        displaySpeed = 0;
+      }
+
       return {
         time: `${hours}:${minutes}:${seconds}`,
-        speed: metric.speed || 0,
+        speed: displaySpeed,
         timestamp: metric.timestamp, // Keep original for reference
       };
     });
@@ -935,13 +1105,17 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
         <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
           <XAxis
-            dataKey="time"
+            dataKey="timestamp"
+            tickFormatter={formatTime}
             tick={{ fontSize: 10 }}
+            domain={[startTime, endTimestamp]}
+            type="number"
             interval="preserveStartEnd"
           />
           <YAxis
+            tickFormatter={(value) => value}
             tick={{ fontSize: 10 }}
-            width={30}
+            width={35}
             domain={[0, 'auto']}
           />
           <RechartsTooltip
@@ -951,6 +1125,7 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
               borderRadius: '6px',
               fontSize: '12px'
             }}
+            labelFormatter={(value) => formatTime(value)}
             formatter={(value) => [`${value.toFixed(2)}x`, 'Speed']}
           />
           <Line
@@ -969,28 +1144,51 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel 
 
 // Screenshot Dialog Component  
 // LiveStreamsGrid Component with mpegts.js support
-function LiveStreamsGrid({ streams, sessionId }) {
+function LiveStreamsGrid({ streams, sessionId, isActive }) {
   const [mpegtsLib, setMpegtsLib] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
 
   useEffect(() => {
     // Import mpegts.js once for all stream players
     const loadMpegts = async () => {
       try {
-        const mpegts = await import('mpegts.js');
-        if (!mpegts.default.isSupported()) {
-          console.error('Browser does not support MPEG-TS playback');
+        const MpegtsModule = await import('mpegts.js');
+        let mpegts = MpegtsModule.default || MpegtsModule;
+        
+        if (typeof mpegts.createPlayer !== 'function') {
+           mpegts = MpegtsModule.mpegts || mpegts;
         }
-        setMpegtsLib(mpegts.default);
+
+        setMpegtsLib(() => mpegts);
         setLoading(false);
       } catch (err) {
-        console.error('Failed to load mpegts.js:', err);
+        console.error('Failed to dynamic import mpegts.js:', err);
+        setError(`Failed to load player library: ${err.message}`);
         setLoading(false);
       }
     };
 
     loadMpegts();
   }, []);
+
+  const [expandedStreamId, setExpandedStreamId] = useState(null);
+
+  // Consistent sorting: Expanded stream always at index 0
+  const displayStreams = React.useMemo(() => {
+    if (!expandedStreamId) return streams;
+    const expanded = streams.find(s => s.stream_id === expandedStreamId);
+    if (!expanded) return streams;
+    const others = streams.filter(s => s.stream_id !== expandedStreamId);
+    return [expanded, ...others];
+  }, [streams, expandedStreamId]);
+
+  // Track original grid positions for animation origin context
+  const originalIndices = React.useMemo(() => {
+    const map = {};
+    streams.forEach((s, i) => map[s.stream_id] = i);
+    return map;
+  }, [streams]);
 
   if (loading) {
     return (
@@ -1001,17 +1199,62 @@ function LiveStreamsGrid({ streams, sessionId }) {
     );
   }
 
+  // Unified layout with CSS transitions
+  if (!expandedStreamId) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 transition-all duration-500">
+        {displayStreams.map((stream) => (
+          <div key={stream.stream_id} className="w-full min-w-0">
+            <LiveStreamPlayer
+              stream={stream}
+              mpegtsLib={mpegtsLib}
+              isExpanded={false}
+              isActive={isActive}
+              onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
+            />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Expanded layout: Flexbox with sidebar
+  const expandedStream = displayStreams[0];
+  const sidebarStreams = displayStreams.slice(1);
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {streams.map((stream) => (
-        <LiveStreamPlayer key={stream.stream_id} stream={stream} mpegtsLib={mpegtsLib} />
-      ))}
+    <div className="flex flex-col lg:flex-row gap-6 min-h-[650px] transition-all duration-700 ease-in-out">
+      {/* Main Expanded Stream */}
+      <div className="flex-1 w-full animate-in fade-in zoom-in-95 duration-700">
+        <LiveStreamPlayer
+          stream={expandedStream}
+          mpegtsLib={mpegtsLib}
+          isExpanded={true}
+          isActive={isActive}
+          onToggleExpand={() => setExpandedStreamId(null)}
+        />
+      </div>
+
+      {/* Sidebar Streams */}
+      <div className="w-full lg:w-[320px] flex flex-col gap-4 overflow-y-auto max-h-[750px] pr-2 scrollbar-thin scrollbar-thumb-zinc-800">
+        {sidebarStreams.map((stream) => (
+          <div key={stream.stream_id} className="w-full animate-in fade-in slide-in-from-right-12 duration-500">
+            <LiveStreamPlayer
+              stream={stream}
+              mpegtsLib={mpegtsLib}
+              isExpanded={false}
+              isActive={isActive}
+              onToggleExpand={() => setExpandedStreamId(stream.stream_id)}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 // Live Stream Player Component using mpegts.js
-function LiveStreamPlayer({ stream, mpegtsLib }) {
+function LiveStreamPlayer({ stream, mpegtsLib, isExpanded, isActive, onToggleExpand }) {
   const videoRef = React.useRef(null);
   const playerRef = React.useRef(null);
   const [streamUrl, setStreamUrl] = React.useState(null);
@@ -1030,6 +1273,17 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
         console.error('Error destroying player:', err);
       }
       playerRef.current = null;
+    }
+
+    // Also clean up the video element directly for native HLS (Safari/iOS)
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+        videoRef.current.src = "";
+        videoRef.current.load();
+      } catch (err) {
+        console.warn('Error clearing video element:', err);
+      }
     }
   }, []);
 
@@ -1056,59 +1310,69 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
   }, [stream.stream_id]);
 
   useEffect(() => {
-    // Initialize mpegts.js player when stream URL is available
-    if (!streamUrl || !videoRef.current || !mpegtsLib) return;
+    // Initialize mpegts.js player when stream URL is available AND active
+    if (!streamUrl || !videoRef.current || !mpegtsLib || !isActive) {
+      cleanupPlayer();
+      return;
+    }
+
+    let isMounted = true;
 
     const initPlayer = async () => {
       try {
-        // Clean up any existing player before creating a new one
         cleanupPlayer();
+        if (!isMounted) return;
 
-        if (!mpegtsLib.isSupported()) {
-          setError('Your browser does not support MPEG-TS playback');
-          return;
+        if (mpegtsLib.getFeatureList().mseLivePlayback) {
+          const player = mpegtsLib.createPlayer({
+            type: 'mpegts',
+            isLive: true,
+            url: streamUrl,
+            enableStashBuffer: false, // Reduced latency
+            liveBufferLatencyChasing: true, // Reduced latency
+            fixAudioTimestampGap: true, // Tolerate minor TS timestamp issues
+          }, {
+            enableWorker: true,
+            lazyLoad: false,
+          });
+
+          playerRef.current = player;
+          player.attachMediaElement(videoRef.current);
+          player.load();
+          
+          player.on(mpegtsLib.Events.ERROR, (type, detail, info) => {
+            console.warn('mpegts error:', type, detail, info);
+            // Only show error UI for fatal network or media errors.
+            // Non-fatal demux warnings (e.g. sync_byte mismatches during initial
+            // buffering) are logged to console but don't break playback.
+            const isFatal =
+              type === mpegtsLib.ErrorTypes.NETWORK_ERROR ||
+              (type === mpegtsLib.ErrorTypes.MEDIA_ERROR &&
+                detail === mpegtsLib.ErrorDetails.MEDIA_MSE_ERROR);
+            if (isMounted && isFatal) {
+              setError(`Playback error: ${detail}`);
+            }
+          });
+
+          player.play().catch(err => {
+            console.warn('Autoplay blocked:', err);
+          });
+        } else {
+          setError('Browser does not support MPEG-TS playback');
         }
-
-        // Create player
-        const player = mpegtsLib.createPlayer({
-          type: 'mpegts',
-          url: streamUrl,
-          isLive: true,
-        }, {
-          enableWorker: true,
-          lazyLoadMaxDuration: 3 * 60,
-          seekType: 'range',
-        });
-
-        player.attachMediaElement(videoRef.current);
-        player.load();
-
-        // Auto-play the stream
-        player.play().catch(err => {
-          console.warn('Autoplay blocked by browser - user interaction required. Click the video or unmute button to start playback:', err);
-        });
-
-        // Handle errors with retry capability
-        player.on(mpegtsLib.Events.ERROR, (errorType, errorDetail, errorInfo) => {
-          console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
-          setError('Stream playback error');
-
-          // Clean up the failed player
-          cleanupPlayer();
-        });
-
-        playerRef.current = player;
       } catch (err) {
-        console.error('Failed to initialize mpegts.js:', err);
-        setError('Failed to initialize player');
+        console.error('Error initializing mpegts player:', err);
+        if (isMounted) setError(`Player error: ${err.message}`);
       }
     };
 
     initPlayer();
 
-    // Cleanup on unmount or when dependencies change
-    return cleanupPlayer;
-  }, [streamUrl, mpegtsLib, retryKey]);
+    return () => {
+      isMounted = false;
+      cleanupPlayer();
+    };
+  }, [streamUrl, mpegtsLib, retryKey, isActive, cleanupPlayer]);
 
   const handleRetry = () => {
     setError(null);
@@ -1136,9 +1400,18 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
   };
 
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="aspect-video bg-black rounded-md overflow-hidden mb-3 relative">
+    <Card className={cn(
+      "transition-all duration-500 ease-in-out border border-white/5",
+      isExpanded ? "h-full shadow-2xl ring-1 ring-primary/20" : "hover:scale-[1.02] shadow-md"
+    )}>
+      <CardContent className={cn(
+        "p-4 transition-all duration-500",
+        isExpanded ? "flex flex-col h-full bg-zinc-950/40" : ""
+      )}>
+        <div className={cn(
+          "bg-black rounded-md overflow-hidden mb-3 relative group transition-all duration-500 shadow-inner border border-white/5",
+          isExpanded ? "flex-1 min-h-[450px]" : "aspect-video"
+        )}>
           {loading ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -1166,18 +1439,29 @@ function LiveStreamPlayer({ stream, mpegtsLib }) {
                 playsInline
                 className="w-full h-full object-contain [&::-webkit-media-controls]:hidden [&::-webkit-media-controls-enclosure]:hidden"
               />
-              <Button
-                size="sm"
-                variant="secondary"
-                className="absolute top-2 right-2 opacity-80 hover:opacity-100"
-                onClick={handleToggleMute}
-              >
-                {isMuted ? (
-                  <VolumeX className="h-4 w-4" />
-                ) : (
-                  <Volume2 className="h-4 w-4" />
+              <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-8 w-8 p-0"
+                  onClick={handleToggleMute}
+                  title={isMuted ? "Unmute" : "Mute"}
+                >
+                  {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </Button>
+
+                {onToggleExpand && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 w-8 p-0"
+                    onClick={onToggleExpand}
+                    title={isExpanded ? "Minimize" : "Expand"}
+                  >
+                    {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                  </Button>
                 )}
-              </Button>
+              </div>
             </>
           )}
         </div>

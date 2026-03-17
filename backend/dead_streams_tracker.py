@@ -11,7 +11,7 @@ import os
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, Any, List, Tuple
 
 from logging_config import setup_logging, log_function_call, log_function_return, log_exception
 
@@ -46,10 +46,18 @@ class DeadStreamsTracker:
         """
         if self.tracker_file.exists():
             try:
+                if self.tracker_file.stat().st_size == 0:
+                    return {}
                 with open(self.tracker_file, 'r') as f:
                     return json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError) as e:
-                logger.warning(f"Could not load dead streams from {self.tracker_file}: {e}")
+            except (json.JSONDecodeError, FileNotFoundError, UnicodeDecodeError) as e:
+                logger.warning(f"Could not load dead streams from {self.tracker_file}: {e}. Resetting file.")
+                # If corrupted, return empty and try to reset the file to valid JSON
+                try:
+                    with open(self.tracker_file, 'w') as f:
+                        json.dump({}, f)
+                except Exception as reset_err:
+                    logger.error(f"Failed to reset corrupted dead streams file: {reset_err}")
         return {}
     
     def _save_dead_streams(self):
@@ -64,7 +72,7 @@ class DeadStreamsTracker:
         except Exception as e:
             logger.error(f"Failed to save dead streams: {e}")
     
-    def mark_as_dead(self, stream_url: str, stream_id: int, stream_name: str, channel_id: int = None) -> bool:
+    def mark_as_dead(self, stream_url: str, stream_id: int, stream_name: str, channel_id: int = None, reason: str = 'unknown') -> bool:
         """Mark a stream as dead.
         
         Args:
@@ -72,6 +80,7 @@ class DeadStreamsTracker:
             stream_id: The stream ID in Dispatcharr
             stream_name: The name of the stream
             channel_id: The channel ID where this stream was found (optional)
+            reason: The reason why the stream is dead (e.g., 'offline', 'low_quality')
             
         Returns:
             bool: True if successful
@@ -83,10 +92,11 @@ class DeadStreamsTracker:
                     'stream_name': stream_name,
                     'marked_dead_at': datetime.now().isoformat(),
                     'url': stream_url,
-                    'channel_id': channel_id
+                    'channel_id': channel_id,
+                    'reason': reason
                 }
                 self._save_dead_streams()
-            logger.warning(f"🔴 MARKED STREAM AS DEAD: {stream_name} (URL: {stream_url})")
+            logger.info(f"🔴 MARKED STREAM AS DEAD: {stream_name} (Reason: {reason}, URL: {stream_url})")
             return True
         except Exception as e:
             logger.error(f"❌ Error marking stream as dead: {e}")
@@ -126,6 +136,30 @@ class DeadStreamsTracker:
         """
         with self.lock:
             return stream_url in self.dead_streams
+    
+    def get_dead_reason(self, stream_url: str) -> Optional[str]:
+        """Get the reason why a stream was marked as dead.
+        
+        Args:
+            stream_url: The URL of the stream
+            
+        Returns:
+            Optional[str]: The reason ('offline', 'low_quality', etc.) or None if not dead
+        """
+        with self.lock:
+            info = self.dead_streams.get(stream_url)
+            return info.get('reason') if info else None
+
+    def is_offline(self, stream_url: str) -> bool:
+        """Check if a stream is specifically 'offline' (truly dead).
+        
+        Args:
+            stream_url: The URL of the stream
+            
+        Returns:
+            bool: True if stream is marked as 'offline'
+        """
+        return self.get_dead_reason(stream_url) == 'offline'
     
     def get_dead_streams(self) -> Dict[str, Dict]:
         """Get all dead streams.

@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Any
 from logging_config import setup_logging
 from udi import get_udi_manager
 from dispatcharr_config import get_dispatcharr_config
+from api_utils import fetch_data_from_url
 
 logger = setup_logging(__name__)
 
@@ -42,8 +43,7 @@ class SchedulingService:
     def __init__(self):
         """Initialize the scheduling service."""
         self._lock = threading.Lock()
-        self._epg_cache: List[Dict[str, Any]] = []
-        self._epg_cache_time: Optional[datetime] = None
+        self._epg_cache: Dict[str, Dict[str, Any]] = {}
         self._config = self._load_config()
         self._scheduled_events = self._load_scheduled_events()
         self._auto_create_rules = self._load_auto_create_rules()
@@ -169,98 +169,98 @@ class SchedulingService:
         """
         return os.getenv("DISPATCHARR_TOKEN")
     
-    def fetch_epg_grid(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Fetch EPG grid data from Dispatcharr API with caching.
+    def fetch_channel_programs_from_api(self, tvg_id: str, hours_ahead: int = 24, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Fetch EPG programs for a specific channel from Dispatcharr API.
         
         Args:
+            tvg_id: TVG ID of the channel
+            hours_ahead: Number of hours ahead to fetch
             force_refresh: If True, bypass cache and fetch fresh data
             
         Returns:
             List of program dictionaries
         """
-        programs_copy = []  # Initialize to ensure it's always defined
-        
+        if not tvg_id:
+            return []
+            
+        # Check cache
         with self._lock:
-            # Check cache
-            if not force_refresh and self._epg_cache and self._epg_cache_time:
-                cache_age = datetime.now() - self._epg_cache_time
+            cached_data = self._epg_cache.get(tvg_id)
+            if not force_refresh and cached_data:
+                cache_age = datetime.now() - cached_data['time']
                 refresh_interval = timedelta(minutes=self._config.get('epg_refresh_interval_minutes', 60))
                 
                 if cache_age < refresh_interval:
-                    logger.debug(f"Returning cached EPG data (age: {cache_age})")
-                    return self._epg_cache.copy()
+                    return cached_data['programs'].copy()
+                    
+        # Fetch fresh data
+        base_url = self._get_base_url()
+        if not base_url:
+            logger.error("Missing Dispatcharr configuration (base_url)")
+            return []
             
-            # Fetch fresh data
-            base_url = self._get_base_url()
-            token = self._get_auth_token()
+        try:
+            # Prepare time filters
+            now = datetime.now(timezone.utc)
+            start_time = (now - timedelta(hours=1)).isoformat()
+            end_time = (now + timedelta(hours=hours_ahead)).isoformat()
             
-            if not base_url or not token:
-                logger.error("Missing Dispatcharr configuration")
+            # Using /api/epg/programs/ with filters
+            url = f"{base_url}/api/epg/programs/?tvg_id={tvg_id}&start_time__gte={start_time}&start_time__lte={end_time}&limit=100"
+            logger.debug(f"Fetching EPG programs for TVG ID {tvg_id}")
+            
+            data = fetch_data_from_url(url)
+            if data is None:
+                logger.error(f"Failed to fetch EPG programs for TVG ID {tvg_id}")
                 return []
+                
+            programs = []
+            if isinstance(data, list):
+                programs = data
+            elif isinstance(data, dict):
+                programs = data.get('results', data.get('data', data.get('programs', [])))
+                if not isinstance(programs, list):
+                    programs = []
             
-            try:
-                url = f"{base_url}/api/epg/grid/"
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json"
+            # Strictly filter by the requested tvg_id to avoid cross-channel leakage
+            # even if the API returns extraneous results
+            valid_programs = [p for p in programs if isinstance(p, dict) and p.get('tvg_id') == tvg_id]
+            
+            # Update cache
+            with self._lock:
+                self._epg_cache[tvg_id] = {
+                    'time': datetime.now(),
+                    'programs': valid_programs
                 }
                 
-                logger.info(f"Fetching EPG grid data from {url}")
-                response = requests.get(url, headers=headers, timeout=30)
-                response.raise_for_status()
-                
-                data = response.json()
-                
-                # Handle different response formats from Dispatcharr API
-                # According to swagger, it should be an array, but handle edge cases
-                if isinstance(data, list):
-                    programs = data
-                elif isinstance(data, dict):
-                    # If wrapped in an object, try to extract the array
-                    # Common keys: results, data, programs
-                    programs = data.get('results', data.get('data', data.get('programs', [])))
-                    if not isinstance(programs, list):
-                        logger.error(f"Unexpected EPG grid response format: {type(data)}, keys: {data.keys() if isinstance(data, dict) else 'N/A'}")
-                        programs = []
-                else:
-                    logger.error(f"Unexpected EPG grid response type: {type(data)}")
-                    programs = []
-                
-                # Validate that programs is a list of dictionaries
-                if programs:
-                    # Filter out any non-dict items
-                    valid_programs = [p for p in programs if isinstance(p, dict)]
-                    if len(valid_programs) != len(programs):
-                        logger.warning(f"Filtered out {len(programs) - len(valid_programs)} invalid program entries")
-                    programs = valid_programs
-                
-                logger.info(f"Fetched {len(programs)} programs from EPG grid")
-                
-                # Update cache
-                self._epg_cache = programs
-                self._epg_cache_time = datetime.now()
-                
-                # Copy programs before releasing lock
-                programs_copy = programs.copy()
-                
-            except Exception as e:
-                logger.error(f"Error fetching EPG grid: {e}")
-                # Return cached data if available, even if stale
-                if self._epg_cache:
-                    logger.warning("Returning stale cached EPG data due to fetch error")
-                    programs_copy = self._epg_cache.copy()
-                # programs_copy is already initialized to [] at the start
-        
-        # Match outside the lock to avoid deadlock
-        try:
-            self.match_programs_to_rules()
+            return valid_programs.copy()
+            
         except Exception as e:
-            logger.error(f"Error matching programs to rules: {e}", exc_info=True)
+            logger.error(f"Error fetching EPG programs for {tvg_id}: {e}")
+            with self._lock:
+                cached_data = self._epg_cache.get(tvg_id)
+                if cached_data:
+                    return cached_data['programs'].copy()
+            return []
+
+    def fetch_epg_grid(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Fetch EPG grid data from Dispatcharr API and trigger matching.
         
-        return programs_copy
+        Note: This is now a wrapper around match_programs_to_rules to maintain
+        compatibility with legacy code and tests.
+        
+        Args:
+            force_refresh: If True, bypass channel EPG cache and fetch fresh programs
+            
+        Returns:
+            Empty list (as programs are now fetched per-channel on demand)
+        """
+        logger.info("Triggering EPG refresh and rule matching")
+        self.match_programs_to_rules(force_refresh=force_refresh)
+        return []
     
     def get_programs_by_channel(self, channel_id: int, tvg_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get programs for a specific channel from cached EPG data.
+        """Get programs for a specific channel from Dispatcharr API.
         
         Args:
             channel_id: Channel ID
@@ -269,12 +269,6 @@ class SchedulingService:
         Returns:
             List of program dictionaries
         """
-        # Get EPG data (from cache or fetch if needed)
-        programs = self.fetch_epg_grid()
-        
-        if not programs:
-            return []
-        
         # Get channel from UDI to get its tvg_id if not provided
         if not tvg_id:
             udi = get_udi_manager()
@@ -285,11 +279,11 @@ class SchedulingService:
         if not tvg_id:
             logger.warning(f"No TVG ID found for channel {channel_id}")
             return []
+            
+        # Get EPG data 
+        channel_programs = self.fetch_channel_programs_from_api(tvg_id)
         
-        # Filter programs by tvg_id - ensure we only process dictionaries
-        channel_programs = [p for p in programs if isinstance(p, dict) and p.get('tvg_id') == tvg_id]
-        
-        # Sort by start time
+        # Sort by start time just in case
         channel_programs.sort(key=lambda p: p.get('start_time', ''))
         
         logger.debug(f"Found {len(channel_programs)} programs for channel {channel_id} (tvg_id: {tvg_id})")
@@ -357,9 +351,7 @@ class SchedulingService:
             logo_id = channel.get('logo_id')
             logo_url = None
             if logo_id:
-                logo = udi.get_logo_by_id(logo_id)
-                if logo:
-                    logo_url = logo.get('cache_url') or logo.get('url')
+                logo_url = f"/api/logos/{logo_id}"
             
             # Get schedule type (default to 'check' for backward compatibility)
             schedule_type = event_data.get('schedule_type', 'check')
@@ -379,6 +371,8 @@ class SchedulingService:
                 'check_time': check_time.isoformat(),
                 'tvg_id': channel.get('tvg_id'),
                 'schedule_type': schedule_type,
+                'enable_looping_detection': event_data.get('enable_looping_detection', True),
+                'enable_logo_detection': event_data.get('enable_logo_detection', True),
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
@@ -561,12 +555,22 @@ class SchedulingService:
             # Get channel's configured regex from regex matcher
             channel_id = event.get('channel_id')
             regex_filter = ".*"  # Default
+            match_by_tvg_id = False
             
-            # Try to get channel-specific regex from regex matcher
+            # Try to get channel-specific regex and match settings from regex matcher
             try:
                 regex_matcher = self._get_regex_matcher()
-                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id))
-                logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}")
+                
+                # Get match config
+                match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+                
+                # Get regex filter with appropriate default
+                # Default to None so we don't match everything by default if no rules exist
+                default_regex = None
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                
+                logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}, match_by_tvg_id={match_by_tvg_id}")
             except Exception as e:
                 logger.debug(f"Could not get channel regex from matcher: {e}")
             
@@ -577,7 +581,10 @@ class SchedulingService:
                 pre_event_minutes=event.get('minutes_before', 30),
                 epg_event=epg_event,
                 auto_created=event.get('auto_created', False),
-                auto_create_rule_id=event.get('auto_create_rule_id')
+                auto_create_rule_id=event.get('auto_create_rule_id'),
+                match_by_tvg_id=match_by_tvg_id,
+                enable_looping_detection=event.get('enable_looping_detection', True),
+                enable_logo_detection=event.get('enable_logo_detection', True)
             )
             
             logger.info(f"Created monitoring session {session_id} from event {event_id}")
@@ -605,15 +612,21 @@ class SchedulingService:
         return []
     
     def _save_auto_create_rules(self) -> bool:
-        """Save auto-create rules to file.
+        """Save auto-create rules to file using atomic write.
         
         Returns:
             True if successful
         """
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(AUTO_CREATE_RULES_FILE, 'w') as f:
+            
+            # Atomic write: write to temp file then rename
+            temp_file = AUTO_CREATE_RULES_FILE.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
                 json.dump(self._auto_create_rules, f, indent=2)
+                f.flush()
+                
+            os.replace(temp_file, AUTO_CREATE_RULES_FILE)
             logger.info(f"Saved {len(self._auto_create_rules)} auto-create rules")
             return True
         except Exception as e:
@@ -745,6 +758,8 @@ class SchedulingService:
                 - regex_pattern: Regex pattern to match program names
                 - minutes_before: Minutes before program start to check
                 - schedule_type: Type of schedule - 'check' or 'monitoring' (default: 'check')
+                - enable_looping_detection: Enable looping detection (default: True)
+                - enable_logo_detection: Enable logo detection (default: True)
                 
         Returns:
             Created rule dictionary
@@ -816,9 +831,7 @@ class SchedulingService:
                 logo_id = channel.get('logo_id')
                 logo_url = None
                 if logo_id:
-                    logo = udi.get_logo_by_id(logo_id)
-                    if logo:
-                        logo_url = logo.get('cache_url') or logo.get('url')
+                    logo_url = f"/api/logos/{logo_id}"
                 
                 channels_info.append({
                     'id': channel_id,
@@ -854,11 +867,16 @@ class SchedulingService:
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
                 'schedule_type': schedule_type,
+                'enable_looping_detection': rule_data.get('enable_looping_detection', True),
+                'enable_logo_detection': rule_data.get('enable_logo_detection', True),
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self._auto_create_rules.append(rule)
-            self._save_auto_create_rules()
+            if not self._save_auto_create_rules():
+                # Rollback in memory change if save fails
+                self._auto_create_rules.pop()
+                raise IOError("Failed to save auto-create rule to disk")
             
             # Log rule creation
             desc_parts = []
@@ -871,9 +889,8 @@ class SchedulingService:
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
                 try:
-                    # Ensure EPG data is fetched before matching
-                    self.fetch_epg_grid()
-                    # Note: fetch_epg_grid already calls match_programs_to_rules at the end
+                    # Run matching for the newly created rule
+                    self.match_programs_to_rules()
                 except Exception as e:
                     logger.error(f"Error matching programs to rules in background: {e}", exc_info=True)
             
@@ -896,7 +913,11 @@ class SchedulingService:
             self._auto_create_rules = [r for r in self._auto_create_rules if r.get('id') != rule_id]
             
             if len(self._auto_create_rules) < initial_count:
-                self._save_auto_create_rules()
+                if not self._save_auto_create_rules():
+                    logger.error(f"Failed to save auto-create rules after deleting {rule_id}")
+                    # Note: We don't rollback deletion in memory here as it's less critical than creation,
+                    # but arguably we should. For now, just logging error.
+                    return False
                 
                 # Delete all events that were auto-created by this rule
                 initial_events_count = len(self._scheduled_events)
@@ -1002,9 +1023,7 @@ class SchedulingService:
                     logo_id = channel.get('logo_id')
                     logo_url = None
                     if logo_id:
-                        logo = udi.get_logo_by_id(logo_id)
-                        if logo:
-                            logo_url = logo.get('cache_url') or logo.get('url')
+                        logo_url = f"/api/logos/{logo_id}"
                     
                     channels_info.append({
                         'id': channel_id,
@@ -1047,10 +1066,15 @@ class SchedulingService:
                 rule['name'] = rule_data['name']
             if 'minutes_before' in rule_data:
                 rule['minutes_before'] = rule_data['minutes_before']
+            if 'enable_looping_detection' in rule_data:
+                rule['enable_looping_detection'] = rule_data['enable_looping_detection']
+            if 'enable_logo_detection' in rule_data:
+                rule['enable_logo_detection'] = rule_data['enable_logo_detection']
             
             # Save changes
             self._auto_create_rules[rule_index] = rule
-            self._save_auto_create_rules()
+            if not self._save_auto_create_rules():
+                 raise IOError("Failed to save updated auto-create rule to disk")
             
             logger.info(f"Updated auto-create rule {rule_id}")
             
@@ -1113,12 +1137,15 @@ class SchedulingService:
         logger.debug(f"Regex '{regex_pattern}' matched {len(matching_programs)} programs for channel {channel_id}")
         return matching_programs
     
-    def match_programs_to_rules(self) -> Dict[str, Any]:
+    def match_programs_to_rules(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Match EPG programs to auto-create rules and create/update scheduled events.
         
+        Args:
+            force_refresh: If True, bypass channel EPG cache and fetch fresh programs
+        
         This method:
-        1. Scans all programs in EPG cache
-        2. For each rule, finds matching programs
+        1. Scans all rules for their targeted channels
+        2. Fetches matching programs per channel on demand
         3. Creates new events for programs not yet scheduled
         4. Updates existing events if program name or time changed
         
@@ -1133,7 +1160,6 @@ class SchedulingService:
             
             # Make copies of the data we need to avoid holding lock during processing
             rules_snapshot = self._auto_create_rules.copy()
-            epg_cache_snapshot = self._epg_cache.copy()
         
         # Now process outside the lock
         created_count = 0
@@ -1144,17 +1170,8 @@ class SchedulingService:
         events_to_add = []
         events_to_update = []
         
-        # Pre-group programs by tvg_id for efficient lookup (performance optimization)
-        programs_by_tvg_id = defaultdict(list)
-        for program in epg_cache_snapshot:
-            if isinstance(program, dict):
-                tvg_id = program.get('tvg_id')
-                if tvg_id:
-                    programs_by_tvg_id[tvg_id].append(program)
-        
-        # Sort programs by start time for each channel
-        for tvg_id in programs_by_tvg_id:
-            programs_by_tvg_id[tvg_id].sort(key=lambda p: p.get('start_time', ''))
+        # Fetch EPG programs dynamically for needed tvg_ids
+        programs_by_tvg_id = {}
         
         for rule in rules_snapshot:
             # Support both old format (channel_id) and new format (channel_ids + channel_group_ids)
@@ -1212,7 +1229,12 @@ class SchedulingService:
                     logger.warning(f"Rule {rule.get('id')} channel {channel_id} has no TVG ID, skipping")
                     continue
                 
-                # Get programs for this channel from the pre-grouped dictionary
+                # Get programs for this channel dynamically (with local caching across rules)
+                if tvg_id not in programs_by_tvg_id:
+                    fetched_programs = self.fetch_channel_programs_from_api(tvg_id, force_refresh=force_refresh)
+                    fetched_programs.sort(key=lambda p: p.get('start_time', ''))
+                    programs_by_tvg_id[tvg_id] = fetched_programs
+                    
                 programs = programs_by_tvg_id.get(tvg_id, [])
                 
                 for program in programs:
@@ -1264,9 +1286,7 @@ class SchedulingService:
                     logo_id = channel.get('logo_id') if channel else None
                     logo_url = None
                     if logo_id:
-                        logo = udi.get_logo_by_id(logo_id)
-                        if logo:
-                            logo_url = logo.get('cache_url') or logo.get('url')
+                        logo_url = f"/api/logos/{logo_id}"
                     
                     # Get schedule type from rule (default to 'check' for backward compatibility)
                     schedule_type = rule.get('schedule_type', 'check')
@@ -1283,6 +1303,8 @@ class SchedulingService:
                         'check_time': check_time.isoformat(),
                         'tvg_id': tvg_id,
                         'schedule_type': schedule_type,
+                        'enable_looping_detection': rule.get('enable_looping_detection', True),
+                        'enable_logo_detection': rule.get('enable_logo_detection', True),
                         'created_at': datetime.now(timezone.utc).isoformat(),
                         'auto_created': True,
                         'auto_create_rule_id': rule.get('id'),
@@ -1500,9 +1522,7 @@ class SchedulingService:
                                     logo_id = channel.get('logo_id')
                                     logo_url = None
                                     if logo_id:
-                                        logo = udi.get_logo_by_id(logo_id)
-                                        if logo:
-                                            logo_url = logo.get('cache_url') or logo.get('url')
+                                        logo_url = f"/api/logos/{logo_id}"
                                     
                                     channels_info.append({
                                         'id': channel_id,
@@ -1512,7 +1532,9 @@ class SchedulingService:
                                     })
                             
                             matching_rule['channels_info'] = channels_info
-                            self._save_auto_create_rules()
+                            matching_rule['channels_info'] = channels_info
+                            if not self._save_auto_create_rules():
+                                raise IOError("Failed to save imported rule to disk")
                             
                             replaced_count += 1
                             logger.info(f"Replaced existing rule '{matching_rule['name']}' with imported rule '{import_name}'")
@@ -1532,9 +1554,7 @@ class SchedulingService:
                                     logo_id = channel.get('logo_id')
                                     logo_url = None
                                     if logo_id:
-                                        logo = udi.get_logo_by_id(logo_id)
-                                        if logo:
-                                            logo_url = logo.get('cache_url') or logo.get('url')
+                                        logo_url = f"/api/logos/{logo_id}"
                                     
                                     channels_info.append({
                                         'id': channel_id,
@@ -1544,7 +1564,9 @@ class SchedulingService:
                                     })
                             
                             matching_rule['channels_info'] = channels_info
-                            self._save_auto_create_rules()
+                            matching_rule['channels_info'] = channels_info
+                            if not self._save_auto_create_rules():
+                                raise IOError("Failed to save merged rule to disk")
                             
                             merged_count += 1
                             channel_names = ', '.join([ch['name'] for ch in channels_info])

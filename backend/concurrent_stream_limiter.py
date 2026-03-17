@@ -280,6 +280,7 @@ class SmartStreamScheduler:
         streams: List[Dict[str, Any]],
         check_function: Callable,
         progress_callback: Optional[Callable] = None,
+        start_callback: Optional[Callable] = None,
         stagger_delay: float = 0.0,
         **check_params
     ) -> List[Dict[str, Any]]:
@@ -294,6 +295,7 @@ class SmartStreamScheduler:
             streams: List of stream dictionaries to check (must include 'm3u_account')
             check_function: Function to call for each stream
             progress_callback: Optional callback after each stream completes
+            start_callback: Optional callback right before a stream starts checking
             stagger_delay: Delay between starting tasks (default: 0.0)
             **check_params: Additional parameters for check_function
             
@@ -399,6 +401,13 @@ class SmartStreamScheduler:
                         stream_url = stream.get('url', '')
                         if self.account_limiter.udi_manager:
                             stream_url = self.account_limiter.udi_manager.apply_profile_url_transformation(stream)
+                            
+                        # Notify that this stream has acquired a slot and is starting
+                        if start_callback:
+                            try:
+                                start_callback(stream)
+                            except Exception as e:
+                                logger.error(f"Error in start_callback for stream {stream['id']}: {e}")
                         
                         result = check_function(
                             stream_url=stream_url,

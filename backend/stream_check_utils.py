@@ -12,6 +12,31 @@ to analyze IPTV streams. It extracts essential quality metrics:
 
 The module is designed to work with the UDI (Universal Data Index) storage
 system and provides a clean, maintainable API for stream quality analysis.
+
+Bitrate detection
+-----------------
+Bitrate is read exclusively from ffmpeg's built-in progress/stats line:
+
+    frame= 1234 fps= 30 q=28.0 size=2048kB time=00:00:41.33 bitrate= 406.1kbits/s speed=1.02x
+
+This mirrors Dispatcharr's stream_manager._parse_ffmpeg_stats() exactly.
+The stats line is the most accurate source available — ffmpeg derives it from
+decoded frame timing, not raw byte counts.
+
+ffmpeg flags used
+-----------------
+    -v info     Keep Input#/Stream# lines (codec, resolution, fps) while
+                suppressing the debug flood that -v debug produces.
+                -v warning and below suppress Stream# lines entirely.
+    -stats      Force the progress/stats line to be written to stderr even
+                when stderr is a pipe (not a TTY).  Without this flag the
+                stats line is suppressed when running as a subprocess.
+    -re         Read input at its native frame rate (real-time pacing).
+
+With a sufficiently long analysis window (>=30 s, recommended 120 s) the
+running bitrate average stabilises into a reliable reading.  If no valid
+stats line is produced the stream is considered unanalyzable — a missing
+bitrate is a meaningful signal that the stream is dead or unresponsive.
 """
 
 import json
@@ -33,6 +58,12 @@ EARLY_EXIT_THRESHOLD = 0.8  # Consider ffmpeg exited early if elapsed < 80% of e
 MAX_ERROR_LINES_TO_LOG = 5  # Maximum number of error lines to log from ffmpeg output
 MAX_DEBUG_LINES_TO_LOG = 10  # Maximum number of debug lines to log from ffmpeg output
 
+# Minimum plausible bitrate in kbps.
+# ffmpeg reports 0.0 kbits/s on the very first stats line before any data
+# has flowed.  Values at or below this threshold are startup artifacts and
+# are ignored so they cannot be mistaken for a real (very low) bitrate.
+MIN_VALID_PROGRESS_BITRATE = 10.0  # kbps
+
 # FourCC to common codec name mapping
 FOURCC_TO_CODEC = {
     'avc1': 'h264',
@@ -45,6 +76,7 @@ FOURCC_TO_CODEC = {
     'vp08': 'vp8',
     'mp4a': 'aac',  # AAC audio in MP4 container
 }
+
 
 def _get_ffmpeg_extra_args() -> list:
     """
@@ -63,10 +95,10 @@ def _get_ffmpeg_extra_args() -> list:
 def _log_ffmpeg_errors(output: str, logger: logging.Logger, error_patterns: list) -> None:
     """
     Helper function to log ffmpeg errors with DEBUG_MODE awareness.
-    
+
     In DEBUG_MODE, logs verbose error details.
     In production, only logs that errors occurred with a count.
-    
+
     Args:
         output: FFmpeg stderr output to parse
         logger: Logger instance to use
@@ -77,20 +109,16 @@ def _log_ffmpeg_errors(output: str, logger: logging.Logger, error_patterns: list
         line_lower = line.lower()
         if any(pattern.lower() in line_lower for pattern in error_patterns):
             error_lines.append(line.strip())
-    
+
     if error_lines:
-        # Only show verbose ffmpeg error details in debug mode
-        # In production, just log that errors occurred without the full verbose output
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"  ⚠ ffmpeg error details (DEBUG_MODE):")
+            logger.debug(f"  ffmpeg error details (DEBUG_MODE):")
             for error_line in error_lines[:MAX_DEBUG_LINES_TO_LOG]:
                 logger.debug(f"     {error_line}")
         else:
-            # In production mode, just note that errors were found without verbose details
-            logger.warning(f"  ⚠ ffmpeg encountered {len(error_lines)} error(s) (set DEBUG_MODE=true for details)")
+            logger.warning(f"  ffmpeg encountered {len(error_lines)} error(s) (set DEBUG_MODE=true for details)")
     elif logger.isEnabledFor(logging.DEBUG):
-        # Log last few lines of output for debugging - only in debug mode
-        logger.debug(f"  → Last lines of ffmpeg output (DEBUG_MODE):")
+        logger.debug(f"  Last lines of ffmpeg output (DEBUG_MODE):")
         for line in output.splitlines()[-MAX_DEBUG_LINES_TO_LOG:]:
             if line.strip():
                 logger.debug(f"     {line.strip()}")
@@ -99,119 +127,202 @@ def _log_ffmpeg_errors(output: str, logger: logging.Logger, error_patterns: list
 def _extract_codec_from_line(line: str, codec_type: str) -> Optional[str]:
     """
     Extract codec from FFmpeg output line with robust handling of wrapped codecs.
-    
-    This implements Dispatcharr's robust codec extraction logic:
-    1. Takes the first non-empty token after 'Video:' or 'Audio:'
-    2. If the token is a generic wrapper (wrapped_avframe, unknown, etc.):
-       - Looks inside the parentheses immediately following the codec
-       - Extracts the first codec string inside parentheses
-       - Ignores hexadecimal/fourcc codes like '0x31637661'
-    3. Returns the extracted codec or None if not found
-    
+
     Examples:
         "Video: wrapped_avframe (avc1 / 0x31637661), yuv420p" -> "avc1"
         "Video: h264, yuv420p, 1920x1080" -> "h264"
         "Audio: wrapped_avframe (aac)" -> "aac"
         "Audio: aac, 48000 Hz, stereo" -> "aac"
-    
+
     Args:
         line: FFmpeg output line containing stream information
         codec_type: Either 'Video' or 'Audio'
-        
+
     Returns:
         Extracted codec name, or None if parsing fails
     """
-    # Step 1: Extract the first token after 'Video:' or 'Audio:'
-    # This regex captures the first word (alphanumeric + underscore + hyphen) after the codec type
-    # Supports codec names like 'h264', 'x264-high', 'wrapped_avframe', etc.
     pattern = rf'{codec_type}:\s*([a-zA-Z0-9_-]+)'
     codec_match = re.search(pattern, line)
-    
+
     if not codec_match:
         return None
-    
+
     codec = codec_match.group(1).strip()
-    logger.debug(f"  → Initial codec extraction: '{codec}'")
-    
-    # Step 2: Check if the codec is a generic wrapper
-    # These wrappers indicate we should look for the actual codec in parentheses
+    logger.debug(f"  Initial codec extraction: '{codec}'")
+
     wrapper_codecs = {'wrapped_avframe', 'unknown', 'none', 'null'}
-    
+
     if codec.lower() in wrapper_codecs:
-        logger.debug(f"  → Detected wrapper codec '{codec}', looking for actual codec in parentheses")
-        
-        # Step 3: Look for codec in parentheses immediately after the wrapper
-        # Pattern: finds content within parentheses after the wrapper codec
-        # Example: "wrapped_avframe (avc1 / 0x31637661)" -> captures "avc1 / 0x31637661"
+        logger.debug(f"  Detected wrapper codec '{codec}', looking for actual codec in parentheses")
+
         paren_pattern = rf'{re.escape(codec)}\s*\(([^)]+)\)'
         paren_match = re.search(paren_pattern, line, re.IGNORECASE)
-        
+
         if paren_match:
             paren_content = paren_match.group(1).strip()
-            logger.debug(f"  → Found parentheses content: '{paren_content}'")
-            
-            # Step 4: Extract the first codec token from parentheses, ignoring hex codes
-            # Split by common delimiters (/, comma, space) and take first valid token
+            logger.debug(f"  Found parentheses content: '{paren_content}'")
+
             tokens = re.split(r'[/,\s]+', paren_content)
-            
             for token in tokens:
                 token = token.strip()
-                # Skip empty tokens and hexadecimal codes (0x...)
-                # Support codec names with hyphens (e.g., x264-high)
                 if token and not token.startswith('0x') and re.match(r'^[a-zA-Z0-9_-]+$', token):
-                    logger.debug(f"  → Extracted actual codec from parentheses: '{token}'")
+                    logger.debug(f"  Extracted actual codec from parentheses: '{token}'")
                     return token
-            
-            # If no valid codec found in parentheses, the wrapper is invalid
-            logger.debug(f"  → No valid codec found in parentheses")
+
+            logger.debug(f"  No valid codec found in parentheses")
             return None
         else:
-            # Wrapper codec without parentheses is invalid
-            logger.debug(f"  → No parentheses found after wrapper codec")
+            logger.debug(f"  No parentheses found after wrapper codec")
             return None
-    
-    # Step 5: Return the codec as-is if it's not a wrapper
+
+    if codec.isdigit():
+        logger.debug(f"  Codec '{codec}' is purely numeric, likely a channel count. Returning None.")
+        return None
+
     return codec
 
 
 def _sanitize_codec_name(codec: str) -> str:
     """
     Sanitize codec name to filter out invalid or placeholder codec names.
-    
-    ffmpeg sometimes outputs codec names like 'wrapped_avframe' when it cannot
-    properly identify the codec (e.g., for hardware-accelerated streams). This
-    function filters out such values and returns 'N/A' for invalid codecs.
-    
     Also normalizes FourCC codes to common codec names (e.g., avc1 -> h264).
-    
+
     Args:
         codec: The raw codec name extracted from ffmpeg output
-        
+
     Returns:
         Sanitized codec name, or 'N/A' if invalid
     """
     if not codec:
         return 'N/A'
-    
-    # List of invalid/placeholder codec names to filter out
+
     invalid_codecs = {
-        'wrapped_avframe',  # Hardware acceleration placeholder
-        'none',             # No codec
-        'unknown',          # Unknown codec
-        'null',             # Null codec
+        'wrapped_avframe',
+        'none',
+        'unknown',
+        'null',
     }
-    
+
     codec_lower = codec.lower()
     if codec_lower in invalid_codecs:
-        logger.debug(f"  → Filtered out invalid codec: {codec}")
+        logger.debug(f"  Filtered out invalid codec: {codec}")
         return 'N/A'
-    
-    # Normalize FourCC codes to common codec names
+
     normalized = FOURCC_TO_CODEC.get(codec_lower, codec)
     if normalized != codec:
-        logger.debug(f"  → Normalized codec {codec} -> {normalized}")
-    
+        logger.debug(f"  Normalized codec {codec} -> {normalized}")
+
     return normalized
+
+
+def _get_hdr_metadata(url: str, timeout: int = 10, user_agent: str = 'VLC/3.0.14') -> Optional[Dict[str, str]]:
+    """
+    Get HDR metadata from a stream using ffprobe with JSON output.
+
+    Args:
+        url: Stream URL to analyze
+        timeout: Timeout in seconds for the ffprobe operation
+        user_agent: User agent string to use for HTTP requests
+
+    Returns:
+        Dictionary with HDR metadata fields, or None if extraction fails
+    """
+    logger.debug(f"Extracting HDR metadata with ffprobe for: {url[:50]}...")
+    command = [
+        'ffprobe',
+        '-user_agent', user_agent,
+        '-v', 'quiet',
+        '-show_entries', 'stream=color_space,color_primaries,color_transfer,pix_fmt,profile',
+        '-of', 'json',
+        url
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            text=True
+        )
+
+        if result.stdout:
+            data = json.loads(result.stdout)
+            streams = data.get('streams', [])
+
+            for stream in streams:
+                if stream.get('pix_fmt') or stream.get('profile'):
+                    logger.debug(f"  Found video stream with metadata: {stream}")
+                    return {
+                        'color_transfer': stream.get('color_transfer'),
+                        'color_primaries': stream.get('color_primaries'),
+                        'color_space': stream.get('color_space'),
+                        'pix_fmt': stream.get('pix_fmt'),
+                        'profile': stream.get('profile')
+                    }
+
+            logger.debug("  No video stream with HDR metadata found")
+            return None
+
+        logger.debug("ffprobe returned empty output")
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.debug(f"Timeout ({timeout}s) while fetching HDR metadata")
+        return None
+    except json.JSONDecodeError as e:
+        logger.debug(f"Failed to decode JSON from ffprobe: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"HDR metadata extraction failed: {e}")
+        return None
+
+
+def _detect_hdr_format(metadata: Optional[Dict[str, str]]) -> Optional[str]:
+    """
+    Detect HDR format from color metadata.
+
+    Args:
+        metadata: Dictionary with color metadata from ffprobe
+
+    Returns:
+        HDR format string ('HDR10', 'HLG', 'Dolby Vision') or None for SDR
+    """
+    if not metadata:
+        return None
+
+    color_transfer = (metadata.get('color_transfer') or '').lower()
+    color_primaries = (metadata.get('color_primaries') or '').lower()
+    pix_fmt = (metadata.get('pix_fmt') or '').lower()
+    profile = (metadata.get('profile') or '').lower()
+
+    is_10bit_or_higher = '10' in pix_fmt or '12' in pix_fmt or '16' in pix_fmt
+    is_bt2020 = 'bt2020' in color_primaries
+
+    if 'dv' in profile or 'dolby' in profile:
+        logger.debug(f"  Detected Dolby Vision (profile: {metadata.get('profile')})")
+        return 'Dolby Vision'
+
+    if is_bt2020 and is_10bit_or_higher and 'smpte2084' in color_transfer:
+        logger.debug(f"  Detected HDR10 (transfer: {metadata.get('color_transfer')})")
+        return 'HDR10'
+
+    if is_bt2020 and is_10bit_or_higher and 'arib-std-b67' in color_transfer:
+        logger.debug(f"  Detected HLG (transfer: {metadata.get('color_transfer')})")
+        return 'HLG'
+
+    logger.debug(f"  No HDR format detected (transfer: {color_transfer}, primaries: {color_primaries}, pix_fmt: {pix_fmt})")
+    return None
+
+
+def _snap_to_common_fps(fps: float) -> float:
+    """
+    Snap a given FPS reading to the closest common TV/broadcast framerate.
+    """
+    if not fps or fps <= 0:
+        return 0
+    common_values = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
+    return min(common_values, key=lambda x: abs(x - fps))
 
 
 def check_ffmpeg_installed() -> bool:
@@ -236,18 +347,8 @@ def check_ffmpeg_installed() -> bool:
 def get_stream_info(url: str, timeout: int = 30, user_agent: str = 'VLC/3.0.14') -> Tuple[Optional[Dict], Optional[Dict]]:
     """
     DEPRECATED: Use get_stream_info_and_bitrate() instead for better performance.
-    
+
     Get stream information using ffprobe to extract codec, resolution, and FPS.
-
-    Args:
-        url: Stream URL to analyze
-        timeout: Timeout in seconds for the ffprobe operation
-        user_agent: User agent string to use for HTTP requests
-
-    Returns:
-        Tuple of (video_info, audio_info) dictionaries, or (None, None) on error
-        video_info contains: codec_name, width, height, avg_frame_rate
-        audio_info contains: codec_name
     """
     logger.debug(f"Running ffprobe for URL: {url[:50]}...")
     command = [
@@ -273,7 +374,6 @@ def get_stream_info(url: str, timeout: int = 30, user_agent: str = 'VLC/3.0.14')
             streams = data.get('streams', [])
             logger.debug(f"ffprobe returned {len(streams)} streams")
 
-            # Extract video and audio stream info
             video_info = next((s for s in streams if 'width' in s), None)
             audio_info = next((s for s in streams if 'codec_name' in s and 'width' not in s), None)
 
@@ -296,10 +396,14 @@ def get_stream_info(url: str, timeout: int = 30, user_agent: str = 'VLC/3.0.14')
 def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14', stream_startup_buffer: int = 10) -> Dict[str, Any]:
     """
     Get complete stream information using ffmpeg in a single call.
-    
-    This function replaces the previous two-step process (ffprobe + ffmpeg) with a 
-    single ffmpeg call that extracts all needed information: codec, resolution, FPS, 
-    and bitrate. This reduces network overhead and processing time.
+
+    Uses ffmpeg flags:
+        -v info   : preserves Input#/Stream# lines for codec+resolution parsing
+        -stats    : forces the progress/stats line to stderr through a pipe
+        -re       : reads at native frame rate (real-time pacing)
+
+    Bitrate is taken exclusively from ffmpeg's progress/stats line, exactly
+    mirroring Dispatcharr's stream_manager._parse_ffmpeg_stats().
 
     Args:
         url: Stream URL to analyze (will be validated and sanitized)
@@ -310,209 +414,282 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
 
     Returns:
         Dictionary containing:
-        - video_codec: Video codec name (e.g., 'h264', 'hevc')
-        - audio_codec: Audio codec name (e.g., 'aac', 'mp3')
-        - resolution: Resolution string (e.g., '1920x1080')
-        - fps: Frames per second (float)
-        - bitrate_kbps: Bitrate in kbps (float or None)
-        - status: "OK", "Timeout", or "Error"
-        - elapsed_time: Time taken for the operation
+        - video_codec, audio_codec, resolution, fps, bitrate_kbps
+        - hdr_format, pixel_format, audio_sample_rate, audio_channels
+        - channel_layout, audio_bitrate, status, elapsed_time
     """
     # Validate and sanitize URL to prevent command injection
     if not url or not isinstance(url, str):
         logger.error("Invalid URL: must be a non-empty string")
         return {
-            'video_codec': 'N/A',
-            'audio_codec': 'N/A',
-            'resolution': '0x0',
-            'fps': 0,
-            'bitrate_kbps': None,
-            'status': 'Error',
-            'elapsed_time': 0
+            'video_codec': 'N/A', 'audio_codec': 'N/A', 'resolution': '0x0',
+            'fps': 0, 'bitrate_kbps': None, 'hdr_format': None,
+            'pixel_format': None, 'audio_sample_rate': None,
+            'audio_channels': None, 'channel_layout': None,
+            'audio_bitrate': None, 'status': 'Error', 'elapsed_time': 0
         }
-    
-    # Basic URL validation - must start with http://, https://, or rtmp://
+
     url_lower = url.lower()
-    if not (url_lower.startswith('http://') or url_lower.startswith('https://') or 
+    if not (url_lower.startswith('http://') or url_lower.startswith('https://') or
             url_lower.startswith('rtmp://') or url_lower.startswith('rtmps://')):
         logger.error(f"Invalid URL protocol: {url[:50]}... (must be http://, https://, rtmp://, or rtmps://)")
         return {
-            'video_codec': 'N/A',
-            'audio_codec': 'N/A',
-            'resolution': '0x0',
-            'fps': 0,
-            'bitrate_kbps': None,
-            'status': 'Error',
-            'elapsed_time': 0
+            'video_codec': 'N/A', 'audio_codec': 'N/A', 'resolution': '0x0',
+            'fps': 0, 'bitrate_kbps': None, 'hdr_format': None,
+            'pixel_format': None, 'audio_sample_rate': None,
+            'audio_channels': None, 'channel_layout': None,
+            'audio_bitrate': None, 'status': 'Error', 'elapsed_time': 0
         }
-    
+
     logger.debug(f"Analyzing stream with ffmpeg for {duration}s: {url[:50]}...")
-    # Use list arguments to pass URL safely to subprocess without shell interpretation
+
     extra_args = _get_ffmpeg_extra_args()
+
+    # Flag rationale:
+    #   -re      : read at native frame rate so bitrate reflects real playback
+    #   -v info  : minimum verbosity that still emits Input#/Stream# lines
+    #              (-v warning and below suppress them entirely)
+    #   -stats   : force the "frame= fps= bitrate= speed=" progress line to
+    #              stderr even when stderr is a pipe, not a TTY
+    # Remux to MPEG-TS on stdout rather than discarding with -f null.
+    # This gives ffmpeg a real continuous output pipeline — identical to
+    # how Dispatcharr's proxy operates — so the frame=/fps=/bitrate=/speed=
+    # stats line fires reliably for all stream types including HLS.
+    #
+    # With -f null, ffmpeg discards output internally and loses the timing
+    # baseline needed to calculate bitrate across HLS segment boundaries.
+    # Writing real MPEG-TS to stdout (pipe:1) and draining it via
+    # subprocess.DEVNULL means ffmpeg measures a genuine real-time output
+    # pipeline — the same condition Dispatcharr's proxy creates naturally.
+    #
+    # -c copy: remux only, no decode/encode — negligible CPU overhead.
     command = [
-        'ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent,
+        'ffmpeg', '-re', '-v', 'info', '-stats',
+        '-user_agent', user_agent,
     ] + extra_args + [
-        '-i', url, '-t', str(duration), '-f', 'null', '-'
+        '-i', url, '-t', str(duration),
+        '-c', 'copy', '-f', 'mpegts', 'pipe:1'
     ]
 
     result_data = {
-        'video_codec': 'N/A',
-        'audio_codec': 'N/A',
-        'resolution': '0x0',
-        'fps': 0,
-        'bitrate_kbps': None,
-        'status': 'OK',
-        'elapsed_time': 0
+        'video_codec': 'N/A', 'audio_codec': 'N/A', 'resolution': '0x0',
+        'fps': 0, 'bitrate_kbps': None, 'hdr_format': None,
+        'pixel_format': None, 'audio_sample_rate': None,
+        'audio_channels': None, 'channel_layout': None,
+        'audio_bitrate': None, 'status': 'OK', 'elapsed_time': 0
     }
 
-    # Add buffer to timeout to account for ffmpeg startup, network latency, and shutdown overhead
-    # Uses configurable stream_startup_buffer for high quality streams that take longer to start
+    # Total subprocess timeout: analysis window + startup headroom
     actual_timeout = timeout + duration + stream_startup_buffer
 
     try:
         start = time.time()
         result = subprocess.run(
             command,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,  # OS drains stdout so ffmpeg never blocks
             stderr=subprocess.PIPE,
             timeout=actual_timeout,
             text=True
         )
         elapsed = time.time() - start
         result_data['elapsed_time'] = elapsed
-        
+
         output = result.stderr
-        total_bytes = 0
         progress_bitrate = None
-        
-        # Track whether we're in the Input or Output section of FFmpeg output
-        # This ensures we only parse input stream codecs, not decoded output formats
+        last_stats_line = None  # keeps updating; final line is the most stable average
+
+        # Track Input vs Output sections so we only parse input stream codecs,
+        # not decoded output formats (e.g. pcm_s16le instead of aac)
         in_input_section = False
-        
-        # Parse ffmpeg output to extract all information
-        # Only process Stream lines from the Input section to get actual input codecs
-        # (e.g., "aac", "ac3") instead of decoded output formats (e.g., "pcm_s16le")
+
         for line in output.splitlines():
-            # Track when we enter the Input section
+
+            # ── Section tracking ─────────────────────────────────────────────
             if 'Input #' in line:
                 in_input_section = True
-                logger.debug(f"  → Entered Input section: {line.strip()}")
+                logger.debug(f"  Entered Input section: {line.strip()}")
                 continue
-            
-            # Track when we enter the Output section - stop parsing stream info
+
             if 'Output #' in line:
                 in_input_section = False
-                logger.debug(f"  → Entered Output section (will skip stream parsing): {line.strip()}")
+                logger.debug(f"  Entered Output section (skipping stream parsing): {line.strip()}")
                 continue
-            
-            # Extract video codec, resolution, and FPS from Input stream lines only
-            # Example: "Stream #0:0: Video: h264, yuv420p, 1920x1080, 25 fps"
-            # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
-            # Only process Stream lines when in_input_section to avoid parsing output codecs
+
+            # ── Video stream info (codec, resolution, header FPS, HDR) ───────
             if in_input_section and 'Stream #' in line and 'Video:' in line:
                 try:
-                    # Use robust codec extraction that handles wrapped codecs
-                    # This will look inside parentheses if codec is a wrapper like 'wrapped_avframe'
                     video_codec = _extract_codec_from_line(line, 'Video')
                     if video_codec:
-                        # Sanitize and normalize the extracted codec
                         video_codec = _sanitize_codec_name(video_codec)
-                        # Only update if we got a valid codec (not N/A)
-                        # This prevents overwriting a detected codec with N/A
                         if video_codec != 'N/A':
                             result_data['video_codec'] = video_codec
-                            logger.debug(f"  → Final video codec: {result_data['video_codec']}")
-                    
-                    # Extract resolution
+                            logger.debug(f"  Video codec: {result_data['video_codec']}")
+
                     res_match = re.search(r'(\d{2,5})x(\d{2,5})', line)
                     if res_match:
                         width, height = res_match.groups()
                         result_data['resolution'] = f"{width}x{height}"
-                        logger.debug(f"  → Detected resolution: {result_data['resolution']}")
-                    
-                    # Extract FPS
+                        logger.debug(f"  Resolution: {result_data['resolution']}")
+
                     fps_match = re.search(r'(\d+\.?\d*)\s*fps', line)
                     if fps_match:
-                        result_data['fps'] = round(float(fps_match.group(1)), 2)
-                        logger.debug(f"  → Detected FPS: {result_data['fps']}")
+                        result_data['fps'] = round(float(fps_match.group(1)), 0)
+                        logger.debug(f"  Header FPS: {result_data['fps']}")
+
+                    if not result_data['hdr_format']:
+                        color_match = re.search(
+                            r'(yuv\w+?p?\d{1,2}le)[^,]*,\s*([^,)]+)',
+                            line, re.IGNORECASE
+                        )
+                        if color_match:
+                            pix_fmt = color_match.group(1).lower()
+                            color_info = color_match.group(2).lower()
+
+                            pix_fmt_match = re.search(
+                                r'Video:\s*[a-zA-Z0-9_-]+\s*(?:\([^)]+\))?\s*,\s*([a-zA-Z0-9_-]+)', line
+                            )
+                            if pix_fmt_match:
+                                result_data['pixel_format'] = pix_fmt_match.group(1).lower()
+                                logger.debug(f"  Pixel format: {result_data['pixel_format']}")
+
+                            color_parts = color_info.replace('tv,', '').strip().split('/')
+                            color_primaries = None
+                            color_transfer = None
+                            for part in color_parts:
+                                part = part.strip()
+                                if 'bt2020' in part and not color_primaries:
+                                    color_primaries = 'bt2020'
+                                elif 'smpte2084' in part or 'arib-std-b67' in part:
+                                    color_transfer = part
+
+                            is_10bit = '10' in pix_fmt or '12' in pix_fmt or '16' in pix_fmt
+                            if color_primaries == 'bt2020' and is_10bit:
+                                if color_transfer and 'smpte2084' in color_transfer:
+                                    result_data['hdr_format'] = 'HDR10'
+                                    logger.debug(f"  HDR format: HDR10")
+                                elif color_transfer and 'arib-std-b67' in color_transfer:
+                                    result_data['hdr_format'] = 'HLG'
+                                    logger.debug(f"  HDR format: HLG")
                 except (ValueError, AttributeError) as e:
-                    logger.debug(f"  → Error parsing video stream line: {e}")
-            
-            # Extract audio codec from Input stream lines only
-            # Example: "Stream #0:1: Audio: aac, 48000 Hz, stereo"
-            # Example with wrapped codec: "Stream #0:1(und): Audio: wrapped_avframe (aac)"
-            # Only process Stream lines when in_input_section to avoid parsing decoded output (e.g., pcm_s16le)
+                    logger.debug(f"  Error parsing video stream line: {e}")
+
+            # ── Audio stream info ─────────────────────────────────────────────
             if in_input_section and 'Stream #' in line and 'Audio:' in line:
                 try:
-                    # Use robust codec extraction that handles wrapped codecs
                     audio_codec = _extract_codec_from_line(line, 'Audio')
                     if audio_codec:
-                        # Sanitize and normalize the extracted codec
                         audio_codec = _sanitize_codec_name(audio_codec)
-                        # Only update if we got a valid codec (not N/A)
-                        # This prevents overwriting a detected codec with N/A
                         if audio_codec != 'N/A':
                             result_data['audio_codec'] = audio_codec
-                            logger.debug(f"  → Final audio codec: {result_data['audio_codec']}")
+                            logger.debug(f"  Audio codec: {result_data['audio_codec']}")
+
+                    sample_rate_match = re.search(r'(\d+)\s*Hz', line)
+                    if sample_rate_match:
+                        result_data['audio_sample_rate'] = int(sample_rate_match.group(1))
+                        logger.debug(f"  Audio sample rate: {result_data['audio_sample_rate']} Hz")
+
+                    channel_match = re.search(r'Hz,\s*([a-zA-Z0-9_.()]+)', line)
+                    if channel_match:
+                        layout = channel_match.group(1).lower()
+                        result_data['channel_layout'] = layout
+                        logger.debug(f"  Audio channel layout: {layout}")
+
+                        layout_to_channels = {
+                            'mono': 1, 'stereo': 2, '2.0': 2, '1.0': 1,
+                            '5.1': 6, '5.1(side)': 6, '7.1': 8,
+                            '7.1(wide)': 8, 'quad': 4, '2.1': 3, '4.0': 4
+                        }
+                        result_data['audio_channels'] = layout_to_channels.get(layout)
+                        if result_data['audio_channels']:
+                            logger.debug(f"  Audio channels: {result_data['audio_channels']}")
+
+                    audio_bitrate_match = re.search(r'(\d+)\s*kb/s', line)
+                    if audio_bitrate_match:
+                        result_data['audio_bitrate'] = int(audio_bitrate_match.group(1))
+                        logger.debug(f"  Audio bitrate: {result_data['audio_bitrate']} kbps")
                 except (ValueError, AttributeError) as e:
-                    logger.debug(f"  → Error parsing audio stream line: {e}")
-            
-            # Extract bitrate using multiple methods (same as get_stream_bitrate)
-            # Method 1: Statistics line with bytes read
-            if "Statistics:" in line and "bytes read" in line:
-                try:
-                    parts = line.split("bytes read")
-                    size_str = parts[0].strip().split()[-1]
-                    total_bytes = int(size_str)
-                    if total_bytes > 0 and duration > 0:
-                        result_data['bitrate_kbps'] = (total_bytes * 8) / 1000 / duration
-                        logger.debug(f"  → Calculated bitrate (method 1): {result_data['bitrate_kbps']:.2f} kbps from {total_bytes} bytes")
-                except ValueError:
-                    pass
+                    logger.debug(f"  Error parsing audio stream line: {e}")
 
-            # Method 2: Parse progress output
-            if "bitrate=" in line and "kbits/s" in line:
+            # ── Bitrate + actual FPS from ffmpeg progress/stats line ──────────
+            #
+            # Sole bitrate source — mirrors Dispatcharr stream_manager exactly.
+            # ffmpeg emits this line roughly every 0.5 s during analysis:
+            #
+            #   frame= 1234 fps= 30 q=28.0 size=2048kB time=00:00:41.33 bitrate= 406.1kbits/s speed=1.02x
+            #
+            # Unit conversion (Dispatcharr parity):
+            #   kbits/s  -> already kbps         (most streams)
+            #   Mbits/s  -> x 1000               (4K / high-bitrate streams)
+            #   Gbits/s  -> x 1 000 000          (theoretical)
+            #   bits/s   -> / 1000               (very low-bitrate streams)
+            #
+            # Actual source FPS = ffmpeg_fps / speed.
+            # The stats line fps= is the encode FPS; dividing by playback speed
+            # recovers the true source framerate (Dispatcharr parity).
+            if 'bitrate=' in line and 'bits/s' in line:
+
+                # Log every stats line at DEBUG — visible only when debugging
+                logger.debug(f"  [ffmpeg stats] {line.strip()}")
+                last_stats_line = line.strip()
+
                 try:
-                    bitrate_match = re.search(r'bitrate=\s*(\d+\.?\d*)\s*kbits/s', line)
+                    bitrate_match = re.search(
+                        r'bitrate=\s*([0-9]+(?:\.[0-9]+)?)\s*([kmg]?)bits/s',
+                        line, re.IGNORECASE
+                    )
                     if bitrate_match:
-                        progress_bitrate = float(bitrate_match.group(1))
-                        logger.debug(f"  → Found progress bitrate (method 2): {progress_bitrate:.2f} kbps")
+                        bitrate_value = float(bitrate_match.group(1))
+                        unit = bitrate_match.group(2).lower()
+                        if unit == 'm':
+                            bitrate_value *= 1000        # Mbits/s -> kbps
+                        elif unit == 'g':
+                            bitrate_value *= 1_000_000   # Gbits/s -> kbps
+                        elif unit == '':
+                            bitrate_value /= 1000        # bits/s  -> kbps
+                        # 'k' or no prefix: already kbps
+                        if bitrate_value > MIN_VALID_PROGRESS_BITRATE:
+                            progress_bitrate = bitrate_value
+                            logger.debug(f"  Parsed bitrate: {progress_bitrate:.2f} kbps")
+
+                    # Actual source FPS from same line (Dispatcharr parity)
+                    fps_stats_match = re.search(r'fps=\s*([0-9.]+)', line)
+                    speed_match = re.search(r'speed=\s*([0-9.]+)x?', line)
+                    if fps_stats_match and speed_match:
+                        ffmpeg_fps = float(fps_stats_match.group(1))
+                        ffmpeg_speed = float(speed_match.group(1))
+                        if ffmpeg_speed > 0:
+                            actual_fps = _snap_to_common_fps(ffmpeg_fps / ffmpeg_speed)
+                            if actual_fps > 0:
+                                result_data['fps'] = actual_fps
+
                 except (ValueError, AttributeError):
                     pass
 
-            # Method 3: Alternative bytes read pattern
-            if result_data['bitrate_kbps'] is None and "bytes read" in line and "Statistics:" not in line:
-                try:
-                    bytes_match = re.search(r'(\d+)\s+bytes read', line)
-                    if bytes_match:
-                        total_bytes = int(bytes_match.group(1))
-                        if total_bytes > 0 and duration > 0:
-                            calculated_bitrate = (total_bytes * 8) / 1000 / duration
-                            logger.debug(f"  → Calculated bitrate (method 3): {calculated_bitrate:.2f} kbps from {total_bytes} bytes")
-                            result_data['bitrate_kbps'] = calculated_bitrate
-                except (ValueError, AttributeError):
-                    pass
-
-        # Use progress bitrate as final fallback
-        if result_data['bitrate_kbps'] is None and progress_bitrate is not None:
+        # ── Post-loop: commit final (most stable) bitrate reading ─────────────
+        if progress_bitrate is not None:
             result_data['bitrate_kbps'] = progress_bitrate
-            logger.debug(f"  → Using last progress bitrate as fallback: {result_data['bitrate_kbps']:.2f} kbps")
+            if last_stats_line:
+                logger.debug(
+                    f"  [ffmpeg final] {last_stats_line} "
+                    f"-> bitrate={progress_bitrate:.2f} kbps  fps={result_data['fps']}"
+                )
 
-        # Check if ffmpeg exited early with errors
+        # ── Warn clearly when no stats line was produced ──────────────────────
         expected_min_time = duration * EARLY_EXIT_THRESHOLD
         exited_early = elapsed < expected_min_time
-        
-        # Log warnings if detection failed
+
         if result_data['bitrate_kbps'] is None:
-            logger.warning(f"  ⚠ Failed to detect bitrate from ffmpeg output (analyzed for {elapsed:.2f}s, expected ~{duration}s)")
-            
+            logger.warning(
+                f"  [!] No bitrate detected — ffmpeg produced no valid stats lines "
+                f"(elapsed={elapsed:.2f}s, expected ~{duration}s). "
+                f"Stream is likely dead or unresponsive."
+            )
             if exited_early or result.returncode != 0:
                 if result.returncode != 0:
-                    logger.warning(f"  ⚠ ffmpeg exited with code {result.returncode}")
+                    logger.warning(f"  [!] ffmpeg exited with code {result.returncode}")
                 else:
-                    logger.warning(f"  ⚠ ffmpeg completed in {elapsed:.2f}s (expected ~{duration}s)")
-                
-                # Look for and log error messages using helper function
+                    logger.warning(f"  [!] ffmpeg completed in {elapsed:.2f}s (expected ~{duration}s)")
+
                 error_patterns = [
                     "Connection refused", "Connection timed out", "Invalid data found",
                     "Server returned", "404 Not Found", "403 Forbidden", "401 Unauthorized",
@@ -520,11 +697,10 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     "Error opening input", "Operation timed out", "I/O error",
                     "HTTP error", "SSL", "TLS", "Certificate"
                 ]
-                
                 _log_ffmpeg_errors(output, logger, error_patterns)
 
-        logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
-        
+        logger.debug(f"  Analysis completed in {elapsed:.2f}s")
+
     except subprocess.TimeoutExpired:
         logger.warning(f"Timeout ({actual_timeout}s) while analyzing stream")
         result_data['status'] = "Timeout"
@@ -539,12 +715,10 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
 
 def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14', stream_startup_buffer: int = 10) -> Tuple[Optional[float], str, float]:
     """
-    Get stream bitrate using ffmpeg to analyze actual stream data.
+    Get stream bitrate using ffmpeg.
 
-    Uses multiple methods to detect bitrate:
-    1. Primary: Parse "Statistics:" line with "bytes read"
-    2. Fallback 1: Parse progress output lines (e.g., "bitrate=3333.3kbits/s")
-    3. Fallback 2: Calculate from total bytes transferred
+    Bitrate is read exclusively from ffmpeg's progress/stats line, mirroring
+    Dispatcharr's stream_manager._parse_ffmpeg_stats() approach.
 
     Args:
         url: Stream URL to analyze
@@ -555,102 +729,85 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
 
     Returns:
         Tuple of (bitrate_kbps, status, elapsed_time)
-        bitrate_kbps: Bitrate in kilobits per second, or None if detection failed
+        bitrate_kbps: Bitrate in kilobits per second, or None if stream is dead
         status: "OK", "Timeout", or "Error"
         elapsed_time: Time taken for the operation
     """
     logger.debug(f"Analyzing bitrate for {duration}s...")
     extra_args = _get_ffmpeg_extra_args()
     command = [
-        'ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent,
+        'ffmpeg', '-re', '-v', 'info', '-stats',
+        '-user_agent', user_agent,
     ] + extra_args + [
-        '-i', url, '-t', str(duration), '-f', 'null', '-'
+        '-i', url, '-t', str(duration),
+        '-c', 'copy', '-f', 'mpegts', 'pipe:1'
     ]
 
     bitrate = None
     status = "OK"
-
-    # Add buffer to timeout to account for ffmpeg startup, network latency, and shutdown overhead
-    # Since -re flag reads at real-time, ffmpeg takes at least duration seconds
-    # Uses configurable stream_startup_buffer for high quality streams that take longer to start
     actual_timeout = timeout + duration + stream_startup_buffer
 
     try:
         start = time.time()
         result = subprocess.run(
             command,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,  # OS drains stdout so ffmpeg never blocks
             stderr=subprocess.PIPE,
             timeout=actual_timeout,
             text=True
         )
         elapsed = time.time() - start
         output = result.stderr
-        total_bytes = 0
-        progress_bitrate = None  # Track last progress bitrate separately
+        progress_bitrate = None
+        last_stats_line = None
 
         for line in output.splitlines():
-            # Method 1: Primary method - Statistics line with bytes read
-            if "Statistics:" in line and "bytes read" in line:
+            if 'bitrate=' in line and 'bits/s' in line:
+                logger.debug(f"  [ffmpeg stats] {line.strip()}")
+                last_stats_line = line.strip()
                 try:
-                    parts = line.split("bytes read")
-                    size_str = parts[0].strip().split()[-1]
-                    total_bytes = int(size_str)
-                    if total_bytes > 0 and duration > 0:
-                        bitrate = (total_bytes * 8) / 1000 / duration
-                        logger.debug(f"  → Calculated bitrate (method 1): {bitrate:.2f} kbps from {total_bytes} bytes")
-                except ValueError:
-                    pass
-
-            # Method 2: Parse progress output (e.g., "size=12345kB time=00:00:30.00 bitrate=3333.3kbits/s")
-            # Track latest progress bitrate as fallback, will use last one found
-            if "bitrate=" in line and "kbits/s" in line:
-                try:
-                    bitrate_match = re.search(r'bitrate=\s*(\d+\.?\d*)\s*kbits/s', line)
+                    bitrate_match = re.search(
+                        r'bitrate=\s*([0-9]+(?:\.[0-9]+)?)\s*([kmg]?)bits/s',
+                        line, re.IGNORECASE
+                    )
                     if bitrate_match:
-                        # Store progress bitrate, will keep updating with later values
-                        progress_bitrate = float(bitrate_match.group(1))
-                        logger.debug(f"  → Found progress bitrate (method 2): {progress_bitrate:.2f} kbps")
+                        bitrate_value = float(bitrate_match.group(1))
+                        unit = bitrate_match.group(2).lower()
+                        if unit == 'm':
+                            bitrate_value *= 1000
+                        elif unit == 'g':
+                            bitrate_value *= 1_000_000
+                        elif unit == '':
+                            bitrate_value /= 1000
+                        if bitrate_value > MIN_VALID_PROGRESS_BITRATE:
+                            progress_bitrate = bitrate_value
                 except (ValueError, AttributeError):
                     pass
 
-            # Method 3: Alternative bytes read pattern (not requiring Statistics:)
-            if bitrate is None and "bytes read" in line and "Statistics:" not in line:
-                try:
-                    # Look for pattern like "12345 bytes read"
-                    bytes_match = re.search(r'(\d+)\s+bytes read', line)
-                    if bytes_match:
-                        total_bytes = int(bytes_match.group(1))
-                        if total_bytes > 0 and duration > 0:
-                            calculated_bitrate = (total_bytes * 8) / 1000 / duration
-                            logger.debug(f"  → Calculated bitrate (method 3): {calculated_bitrate:.2f} kbps from {total_bytes} bytes")
-                            bitrate = calculated_bitrate
-                except (ValueError, AttributeError):
-                    pass
-
-        # Use progress bitrate as final fallback if primary methods didn't find anything
-        if bitrate is None and progress_bitrate is not None:
+        if progress_bitrate is not None:
             bitrate = progress_bitrate
-            logger.debug(f"  → Using last progress bitrate as fallback: {bitrate:.2f} kbps")
+            if last_stats_line:
+                logger.debug(
+                    f"  [ffmpeg final] {last_stats_line} "
+                    f"-> bitrate={bitrate:.2f} kbps"
+                )
 
-        # Check if ffmpeg exited early with errors
-        # If elapsed time is much less than duration, ffmpeg likely encountered an error
         expected_min_time = duration * EARLY_EXIT_THRESHOLD
         exited_early = elapsed < expected_min_time
-        
-        # Log if bitrate detection failed
+
         if bitrate is None:
-            logger.warning(f"  ⚠ Failed to detect bitrate from ffmpeg output (analyzed for {elapsed:.2f}s, expected ~{duration}s)")
-            logger.debug(f"  → Searched {len(output.splitlines())} lines of output")
-            
-            # If ffmpeg exited early or returned non-zero, provide more details
+            logger.warning(
+                f"  [!] No bitrate detected — ffmpeg produced no valid stats lines "
+                f"(elapsed={elapsed:.2f}s, expected ~{duration}s). "
+                f"Stream is likely dead or unresponsive."
+            )
+            logger.debug(f"  Searched {len(output.splitlines())} lines of output")
             if exited_early or result.returncode != 0:
                 if result.returncode != 0:
-                    logger.warning(f"  ⚠ ffmpeg exited with code {result.returncode}")
+                    logger.warning(f"  [!] ffmpeg exited with code {result.returncode}")
                 else:
-                    logger.warning(f"  ⚠ ffmpeg completed in {elapsed:.2f}s (expected ~{duration}s) - stream may have ended early or encountered an error")
-                
-                # Look for and log specific error messages from ffmpeg output using helper function
+                    logger.warning(f"  [!] ffmpeg completed in {elapsed:.2f}s (expected ~{duration}s)")
+
                 error_patterns = [
                     "Connection refused", "Connection timed out", "Invalid data found",
                     "Server returned", "404 Not Found", "403 Forbidden", "401 Unauthorized",
@@ -658,10 +815,9 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
                     "Error opening input", "Operation timed out", "I/O error",
                     "HTTP error", "SSL", "TLS", "Certificate"
                 ]
-                
                 _log_ffmpeg_errors(output, logger, error_patterns)
 
-        logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
+        logger.debug(f"  Analysis completed in {elapsed:.2f}s")
 
     except subprocess.TimeoutExpired:
         logger.warning(f"Timeout ({actual_timeout}s) while fetching bitrate")
@@ -707,24 +863,16 @@ def analyze_stream(
 
     Returns:
         Dictionary containing analysis results with keys:
-        - stream_id: Stream identifier
-        - stream_name: Stream name
-        - stream_url: Stream URL
-        - timestamp: ISO format timestamp of analysis
-        - video_codec: Video codec name (e.g., 'h264', 'hevc')
-        - audio_codec: Audio codec name (e.g., 'aac', 'mp3')
-        - resolution: Resolution string (e.g., '1920x1080')
-        - fps: Frames per second (float)
-        - bitrate_kbps: Bitrate in kbps (float or None)
-        - status: "OK", "Timeout", or "Error"
+        - stream_id, stream_name, stream_url, timestamp
+        - video_codec, audio_codec, resolution, fps, bitrate_kbps
+        - hdr_format, pixel_format, audio_sample_rate, audio_channels
+        - channel_layout, audio_bitrate, status
     """
-    # In debug mode, show detailed entry log; in non-debug mode, be more concise
     if logger.isEnabledFor(logging.DEBUG):
-        logger.info(f"▶ Analyzing stream: {stream_name} (ID: {stream_id})")
+        logger.info(f"Analyzing stream: {stream_name} (ID: {stream_id})")
     else:
-        logger.info(f"▶ Checking {stream_name}")
+        logger.debug(f"Checking {stream_name}")
 
-    # Default result in case of failure - includes all required fields
     result = {
         'stream_id': stream_id,
         'stream_name': stream_name,
@@ -735,25 +883,29 @@ def analyze_stream(
         'resolution': '0x0',
         'fps': 0,
         'bitrate_kbps': None,
+        'hdr_format': None,
+        'pixel_format': None,
+        'audio_sample_rate': None,
+        'audio_channels': None,
+        'channel_layout': None,
+        'audio_bitrate': None,
         'status': 'Error'
     }
-    
+
     try:
-        # Convert retries to total attempts: retries=0 means 1 attempt, retries=1 means 2 attempts, etc.
         total_attempts = retries + 1
         for attempt in range(total_attempts):
             if attempt > 0:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.info(f"  Retry attempt {attempt} of {retries} (attempt {attempt + 1} of {total_attempts}) for {stream_name}")
                 else:
-                    # Show current attempt out of total attempts
-                    logger.info(f"  ↻ Retry {attempt + 1}/{total_attempts} for {stream_name}")
+                    logger.info(f"  Retry {attempt + 1}/{total_attempts} for {stream_name}")
                 time.sleep(retry_delay)
 
             try:
-                # Use single ffmpeg call to get all stream information
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.info("  Analyzing stream (single ffmpeg call)...")
+
                 result_data = get_stream_info_and_bitrate(
                     url=stream_url,
                     duration=ffmpeg_duration,
@@ -762,7 +914,6 @@ def analyze_stream(
                     stream_startup_buffer=stream_startup_buffer
                 )
 
-                # Build result dictionary with metadata
                 result = {
                     'stream_id': stream_id,
                     'stream_name': stream_name,
@@ -773,60 +924,57 @@ def analyze_stream(
                     'resolution': result_data['resolution'],
                     'fps': result_data['fps'],
                     'bitrate_kbps': result_data['bitrate_kbps'],
+                    'hdr_format': result_data['hdr_format'],
+                    'pixel_format': result_data['pixel_format'],
+                    'audio_sample_rate': result_data['audio_sample_rate'],
+                    'audio_channels': result_data['audio_channels'],
+                    'channel_layout': result_data['channel_layout'],
+                    'audio_bitrate': result_data['audio_bitrate'],
                     'status': result_data['status']
                 }
 
-                # Log results
-                # In debug mode, show detailed multi-line logs
-                # In non-debug mode, use one-liner for failures
                 if logger.isEnabledFor(logging.DEBUG):
-                    # Debug mode: verbose multi-line logging
                     if result['video_codec'] != 'N/A' or result['resolution'] != '0x0':
-                        logger.info(f"    ✓ Video: {result['video_codec']}, {result['resolution']}, {result['fps']} FPS")
+                        logger.info(f"    Video: {result['video_codec']}, {result['resolution']}, {result['fps']} FPS")
                     else:
-                        logger.warning("    ✗ No video info found")
+                        logger.warning("    No video info found")
 
                     if result['audio_codec'] != 'N/A':
-                        logger.info(f"    ✓ Audio: {result['audio_codec']}")
+                        logger.info(f"    Audio: {result['audio_codec']}")
                     else:
-                        logger.warning("    ✗ No audio info found")
+                        logger.warning("    No audio info found")
 
                     if result['status'] == "OK":
                         if result['bitrate_kbps'] is not None:
-                            logger.info(f"    ✓ Bitrate: {result['bitrate_kbps']:.2f} kbps (elapsed: {result_data['elapsed_time']:.2f}s)")
+                            logger.info(f"    Bitrate: {result['bitrate_kbps']:.2f} kbps (elapsed: {result_data['elapsed_time']:.2f}s)")
                         else:
-                            logger.warning(f"    ⚠ Bitrate detection failed (elapsed: {result_data['elapsed_time']:.2f}s)")
-                        logger.info(f"  ✓ Stream analysis complete for {stream_name}")
+                            logger.warning(f"    Bitrate detection failed (elapsed: {result_data['elapsed_time']:.2f}s)")
+                        logger.info(f"  Stream analysis complete for {stream_name}")
                     else:
-                        logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
+                        logger.warning(f"    Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
                 else:
-                    # Non-debug mode: one-liner for results
                     if result['status'] == "OK":
-                        # Success: one line with key metrics
                         bitrate_str = f"{result['bitrate_kbps']:.2f} kbps" if result['bitrate_kbps'] is not None else "N/A"
-                        logger.info(f"  ✓ {stream_name}: {result['resolution']}, {result['fps']} FPS, {bitrate_str}, {result['video_codec']}/{result['audio_codec']} ({result_data['elapsed_time']:.2f}s)")
+                        hdr_str = f", {result['hdr_format']}" if result.get('hdr_format') else ""
+                        logger.info(f"  {stream_name}: {result['resolution']}, {result['fps']} FPS, {bitrate_str}, {result['video_codec']}/{result['audio_codec']}{hdr_str} ({result_data['elapsed_time']:.2f}s)")
                     else:
-                        # Failure: one-liner with status and elapsed time
-                        logger.warning(f"  ✗ {stream_name}: Check failed - {result['status']} ({result_data['elapsed_time']:.2f}s)")
-                
-                # Break on success
+                        logger.warning(f"  {stream_name}: Check failed - {result['status']} ({result_data['elapsed_time']:.2f}s)")
+
                 if result['status'] == "OK":
                     break
                 else:
-                    # If not the last attempt, continue to retry
                     if attempt < total_attempts - 1:
                         if logger.isEnabledFor(logging.DEBUG):
-                            logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... (attempt {attempt + 1} of {total_attempts})")
+                            logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds...")
                         else:
-                            # Show next attempt number correctly
-                            logger.warning(f"  ↻ Retrying {stream_name} in {retry_delay}s (attempt {attempt + 2}/{total_attempts})")
+                            logger.warning(f"  Retrying {stream_name} in {retry_delay}s (attempt {attempt + 2}/{total_attempts})")
+
             except Exception as inner_e:
                 logger.error(f"  Exception during stream analysis (attempt {attempt + 1} of {total_attempts}): {inner_e}")
-                # Continue to next retry if available, otherwise use the default error result
                 if attempt < total_attempts - 1:
-                    logger.warning(f"  Retrying in {retry_delay} seconds... (attempt {attempt + 1} of {total_attempts})")
+                    logger.warning(f"  Retrying in {retry_delay} seconds...")
+
     except Exception as outer_e:
         logger.error(f"Unexpected error in analyze_stream for {stream_name}: {outer_e}")
-        # Result already has default error values, so just return it
 
     return result

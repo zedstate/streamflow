@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
+import queue
 
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

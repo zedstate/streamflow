@@ -108,12 +108,9 @@ class TestEPGAutoRefresh(unittest.TestCase):
                     mock_udi.get_logo_by_id.return_value = None
                     mock_udi_factory.return_value = mock_udi
                     
-                    # Mock requests.get to return EPG data
-                    with patch('scheduling_service.requests.get') as mock_get:
-                        mock_response = Mock()
-                        mock_response.json.return_value = mock_programs
-                        mock_response.raise_for_status = Mock()
-                        mock_get.return_value = mock_response
+                    # Mock fetch_data_from_url to return EPG data
+                    with patch('scheduling_service.fetch_data_from_url') as mock_fetch:
+                        mock_fetch.return_value = mock_programs
                         
                         # Initialize service (this loads the rule)
                         service = get_scheduling_service()
@@ -127,12 +124,9 @@ class TestEPGAutoRefresh(unittest.TestCase):
                         self.assertEqual(len(events), 0, "No events should exist initially")
                         
                         # Call fetch_epg_grid (this is what the EPG refresh processor does)
-                        programs = service.fetch_epg_grid(force_refresh=True)
+                        service.fetch_epg_grid(force_refresh=True)
                         
-                        # Verify EPG data was fetched
-                        self.assertEqual(len(programs), 3, "Should have fetched 3 programs")
-                        
-                        # Verify events were created
+                        # Verify events were created (this confirms EPG data was fetched and processed)
                         events = service.get_scheduled_events()
                         self.assertEqual(len(events), 2, "Should have created 2 events for matching programs")
                         
@@ -255,11 +249,8 @@ class TestEPGAutoRefresh(unittest.TestCase):
                     mock_udi_factory.return_value = mock_udi
                     
                     # Mock requests
-                    with patch('scheduling_service.requests.get') as mock_get:
-                        mock_response = Mock()
-                        mock_response.json.return_value = mock_programs
-                        mock_response.raise_for_status = Mock()
-                        mock_get.return_value = mock_response
+                    with patch('scheduling_service.fetch_data_from_url') as mock_fetch:
+                        mock_fetch.return_value = mock_programs
                         
                         # Initialize service and fetch EPG
                         service = get_scheduling_service()

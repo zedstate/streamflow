@@ -131,7 +131,7 @@ class TestSchedulingService(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             self.service.create_auto_create_rule(rule_data)
         
-        self.assertIn('Channel 999 not found', str(context.exception))
+        self.assertIn('No valid channels found', str(context.exception))
     
     def test_get_auto_create_rules(self):
         """Test getting all auto-create rules."""

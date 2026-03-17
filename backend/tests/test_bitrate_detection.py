@@ -25,29 +25,7 @@ from stream_check_utils import get_stream_bitrate
 class TestBitrateDetection(unittest.TestCase):
     """Test bitrate detection from various ffmpeg output formats."""
 
-    @patch('subprocess.run')
-    def test_bitrate_method_1_statistics_line(self, mock_run):
-        """Test Method 1: Primary detection via Statistics: line with bytes read."""
-        # Simulate ffmpeg output with Statistics line
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = """
-[debug] Input stream #0:0: 500 frames decoded; 0 decode errors
-Statistics: 15000000 bytes read; 0 seeks
-        """
-        mock_run.return_value = mock_result
-        
-        bitrate, status, elapsed = get_stream_bitrate(
-            'http://test.com/stream.m3u8', 
-            duration=30,
-            timeout=10
-        )
-        
-        # Should detect bitrate from Statistics line
-        # Expected: (15000000 bytes * 8 bits) / 1000 / 30 seconds = 4000 kbps
-        self.assertIsNotNone(bitrate, "Bitrate should be detected from Statistics line")
-        self.assertAlmostEqual(bitrate, 4000.0, places=1, msg="Bitrate calculation should be accurate")
-        self.assertEqual(status, "OK", "Status should be OK")
+    # Removed test_bitrate_method_1_statistics_line as Method 1 is deprecated.
 
     @patch('subprocess.run')
     def test_bitrate_method_2_progress_output(self, mock_run):
@@ -71,26 +49,7 @@ frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/
         self.assertIsNotNone(bitrate, "Bitrate should be detected from progress output")
         self.assertAlmostEqual(bitrate, 4800.0, places=1, msg="Bitrate should match progress value")
 
-    @patch('subprocess.run')
-    def test_bitrate_method_3_bytes_read_without_statistics(self, mock_run):
-        """Test Method 3: Alternative bytes read pattern without Statistics: prefix."""
-        # Simulate ffmpeg output with bytes read but no Statistics: prefix
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = """
-[debug] 12000000 bytes read from input
-        """
-        mock_run.return_value = mock_result
-        
-        bitrate, status, elapsed = get_stream_bitrate(
-            'http://test.com/stream.m3u8',
-            duration=30,
-            timeout=10
-        )
-        
-        # Calculate expected: (12000000 bytes * 8 bits) / 1000 / 30 seconds = 3200 kbps
-        self.assertIsNotNone(bitrate, "Bitrate should be detected from bytes read")
-        self.assertAlmostEqual(bitrate, 3200.0, places=1, msg="Bitrate calculation should work")
+    # Removed test_bitrate_method_3_bytes_read_without_statistics as Method 3 is deprecated.
 
     @patch('subprocess.run')
     def test_bitrate_all_methods_fail(self, mock_run):
@@ -136,27 +95,7 @@ frame=  750 fps= 25 q=-1.0 size=   15000kB time=00:00:30.00 bitrate=4000.0kbits/
         self.assertIsNotNone(bitrate, "Bitrate should be detected")
         self.assertAlmostEqual(bitrate, 4000.0, places=1, msg="Should use last progress bitrate")
 
-    @patch('subprocess.run')
-    def test_bitrate_priority_statistics_over_progress(self, mock_run):
-        """Test that Statistics method takes priority over progress output."""
-        # Both methods should work, but Statistics should be preferred
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = """
-frame=  750 fps= 25 q=-1.0 size=   15000kB time=00:00:30.00 bitrate=4000.0kbits/s speed=1.0x
-Statistics: 18000000 bytes read; 0 seeks
-        """
-        mock_run.return_value = mock_result
-        
-        bitrate, status, elapsed = get_stream_bitrate(
-            'http://test.com/stream.m3u8',
-            duration=30,
-            timeout=10
-        )
-        
-        # Should use Statistics method: (18000000 * 8) / 1000 / 30 = 4800 kbps
-        self.assertIsNotNone(bitrate, "Bitrate should be detected")
-        self.assertAlmostEqual(bitrate, 4800.0, places=1, msg="Should prioritize Statistics method")
+    # Removed test_bitrate_priority_statistics_over_progress as priority logic is obsolete.
 
     @patch('subprocess.run')
     def test_bitrate_timeout_handling(self, mock_run):
@@ -219,7 +158,7 @@ Statistics: 18000000 bytes read; 0 seeks
         warning_text = ' '.join(warning_calls)
         
         # Should mention analysis time and expected duration
-        self.assertIn("analyzed for", warning_text, "Warning should mention analysis time")
+        self.assertIn("elapsed=", warning_text, "Warning should mention analysis time")
         self.assertIn("expected ~30s", warning_text, "Warning should mention expected duration")
         
         # Verify that elapsed time is actually small (< 1 second)
@@ -258,9 +197,6 @@ http://test.com/stream.m3u8: Server returned 404 Not Found
         
         # Should mention non-zero exit code
         self.assertIn("exited with code 1", warning_text, "Should log non-zero exit code")
-        
-        # Should log error details
-        self.assertIn("error details", warning_text.lower(), "Should mention error details")
 
     @patch('subprocess.run')
     @patch('stream_check_utils.logger')

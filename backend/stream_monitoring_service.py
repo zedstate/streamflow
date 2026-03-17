@@ -3,12 +3,20 @@ Stream Monitoring Service
 
 Orchestrates continuous stream monitoring, reliability scoring, and screenshot capture
 for active monitoring sessions.
+
+Includes a resilient, computer-vision-based Logo Verification system utilizing a 4-Pillar Architecture:
+1. Edge Density Checking: Detects black screens or whip-pans before processing.
+2. Multi-Corner Fallback: Checks Top-Right quadrant, falls back to Top-Left if needed.
+3. Cross-Stream Consensus: Evaluates all streams. If all fail, a 'Global Pardon' is granted for commercial breaks.
+4. Sliding Window Penalty: Outlier streams are penalized (-30 points) after 4 consecutive logo misses.
 """
 
 import logging
 import threading
 import time
+import subprocess
 from typing import Dict, Optional
+import concurrent.futures
 
 from logging_config import setup_logging
 from stream_session_manager import (
@@ -23,6 +31,7 @@ from ffmpeg_stream_monitor import FFmpegStreamMonitor
 from stream_screenshot_service import get_screenshot_service
 from dead_streams_tracker import DeadStreamsTracker
 from udi import get_udi_manager
+from sidecar_loop_detector import SidecarLoopDetector
 
 logger = setup_logging(__name__)
 
@@ -33,8 +42,8 @@ SCREENSHOT_CHECK_INTERVAL = 5.0  # seconds - how often to check for screenshot n
 
 
 # Auto-quarantine thresholds
-SLOW_SPEED_THRESHOLD = 0.3  # Speed below this is considered too slow
-SLOW_SPEED_DURATION = 60.0  # seconds - how long to tolerate slow speed before quarantine
+SLOW_SPEED_THRESHOLD = 0.8  # Speed below this is considered too slow
+SLOW_SPEED_DURATION = 30.0  # seconds - how long to tolerate slow speed before quarantine
 
 # Stream switching thresholds
 SCORE_SWITCH_THRESHOLD = 10.0  # Points diff required to switch primary stream
@@ -82,6 +91,9 @@ class StreamMonitoringService:
         
         # Active monitors: session_id -> stream_id -> FFmpegStreamMonitor
         self.monitors: Dict[str, Dict[int, FFmpegStreamMonitor]] = {}
+        
+        # Sidecar Loop Detectors: session_id -> stream_id -> (subprocess, SidecarLoopDetector)
+        self.sidecars: Dict[str, Dict[int, tuple]] = {}
         
         # Track last switch times for cooldown: session_id -> timestamp
         self.last_switch_times: Dict[str, float] = {}
@@ -154,6 +166,7 @@ class StreamMonitoringService:
         """
         if session_id in self.monitors:
             logger.info(f"Stopping all monitors for session {session_id}")
+            # Stop all monitors and sidecars
             for stream_id, monitor in list(self.monitors[session_id].items()):
                 try:
                     monitor.stop()
@@ -161,9 +174,23 @@ class StreamMonitoringService:
                 except Exception as e:
                     logger.error(f"Error stopping monitor for stream {stream_id}: {e}")
             
+            if session_id in self.sidecars:
+                for stream_id, (proc, detector) in list(self.sidecars[session_id].items()):
+                    try:
+                        detector.is_closed = True
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        logger.debug(f"Stopped sidecar for stream {stream_id}")
+                    except Exception as e:
+                        logger.error(f"Error stopping sidecar for stream {stream_id}: {e}")
+                del self.sidecars[session_id]
+            
             # Remove session from monitors
             del self.monitors[session_id]
-            logger.info(f"All monitors stopped for session {session_id}")
+            logger.info(f"All monitors and sidecars stopped for session {session_id}")
     
     def _remove_stream_from_dispatcharr(self, session_id: str, stream_id: int, reason: str):
         """
@@ -174,48 +201,75 @@ class StreamMonitoringService:
             stream_id: Stream ID to remove
             reason: Reason for removal (for logging)
         """
-        try:
-            session = self.session_manager.get_session(session_id)
-            if not session:
-                logger.warning(f"Session {session_id} not found when removing stream {stream_id}")
-                return
-            
-            stream_info = session.streams.get(stream_id)
-            if not stream_info:
-                logger.warning(f"Stream info {stream_id} not found when removing stream")
-                return
-
-            # Mark as dead in tracker
-            self.dead_streams_tracker.mark_as_dead(
-                stream_url=stream_info.url,
-                stream_id=stream_id,
-                stream_name=stream_info.name,
-                channel_id=session.channel_id
-            )
-            
-            # Remove from channel (but not delete from UDI)
-            udi = get_udi_manager()
-            channel = udi.get_channel_by_id(session.channel_id)
-            
-            if channel:
-                current_streams = channel.get('streams', [])
-                if stream_id in current_streams:
-                    new_streams = [sid for sid in current_streams if sid != stream_id]
-                    from api_utils import update_channel_streams
-                    success = update_channel_streams(session.channel_id, new_streams)
-                    
-                    if success:
-                        logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel {session.channel_id}")
-                        udi.refresh_channel_by_id(session.channel_id)
+        def _execute_removal():
+            try:
+                session = self.session_manager.get_session(session_id)
+                if not session:
+                    logger.warning(f"Session {session_id} not found when removing stream {stream_id}")
+                    return
+                
+                stream_info = session.streams.get(stream_id)
+                if not stream_info:
+                    logger.warning(f"Stream info {stream_id} not found when removing stream")
+                    return
+    
+                # Mark as dead in tracker
+                self.dead_streams_tracker.mark_as_dead(
+                    stream_url=stream_info.url,
+                    stream_id=stream_id,
+                    stream_name=stream_info.name,
+                    channel_id=session.channel_id
+                )
+                
+                # Remove from channel (but not delete from UDI)
+                udi = get_udi_manager()
+                channel = udi.get_channel_by_id(session.channel_id)
+                
+                if channel:
+                    current_streams = channel.get('streams', [])
+                    if stream_id in current_streams:
+                        new_streams = [sid for sid in current_streams if sid != stream_id]
+                        from api_utils import update_channel_streams, change_channel_stream
+                        success = update_channel_streams(session.channel_id, new_streams)
+                        
+                        if success:
+                            logger.info(f"Removed {reason} stream {stream_id} from Dispatcharr channel {session.channel_id}")
+                            udi.refresh_channel_by_id(session.channel_id)
+                            
+                            # If the removed stream was currently playing and reason merits a forced change
+                            if reason in ["logo-mismatch", "looping"]:
+                                playing_streams = udi.get_playing_stream_ids()
+                                if stream_id in playing_streams:
+                                    logger.info(f"Quarantined stream {stream_id} is currently playing. Finding replacement...")
+                                    # Find best remaining stable stream
+                                    best_replacement = None
+                                    for replacement_id in new_streams:
+                                        rep_info = session.streams.get(replacement_id)
+                                        if rep_info and rep_info.status == 'stable' and not rep_info.is_quarantined:
+                                            best_replacement = replacement_id
+                                            break
+                                    
+                                    if best_replacement:
+                                        logger.info(f"Forcing Dispatcharr to switch from {stream_id} to {best_replacement}")
+                                        change_channel_stream(session.channel_id, stream_id=best_replacement)
+                                    else:
+                                        logger.warning(f"No stable replacement stream found for channel {session.channel_id}")
+                        else:
+                            logger.warning(f"Failed to update channel {session.channel_id} to remove {reason} stream {stream_id}")
                     else:
-                        logger.warning(f"Failed to update channel {session.channel_id} to remove {reason} stream {stream_id}")
+                        logger.info(f"{reason} stream {stream_id} was not in channel {session.channel_id} streams list")
                 else:
-                    logger.info(f"{reason} stream {stream_id} was not in channel {session.channel_id} streams list")
-            else:
-                logger.warning(f"Channel {session.channel_id} not found, could not remove {reason} stream {stream_id}")
+                    logger.warning(f"Channel {session.channel_id} not found, could not remove {reason} stream {stream_id}")
+    
+            except Exception as e:
+                logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
 
-        except Exception as e:
-            logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
+        # Offload external REST patching to a daemon thread to prevent evaluate_session_streams from blocking
+        threading.Thread(
+            target=_execute_removal,
+            daemon=True,
+            name=f"RemoveDispatcharr-{stream_id}"
+        ).start()
     
     def _manage_quarantine_lifecycle(self, session) -> bool:
         """
@@ -241,13 +295,26 @@ class StreamMonitoringService:
                     self.session_manager.revive_stream(session.session_id, stream_id)
             
             elif info.status == 'review':
-                # Check if it passed review
-                if time_in_state > self.session_manager.get_review_duration():
+                # Determine required review duration
+                review_limit = self.session_manager.get_review_duration()
+                is_loop_review = getattr(info, 'status_reason', None) == 'looping'
+                if is_loop_review:
+                    review_limit = self.session_manager.get_loop_review_duration()
+                
+                # Check if it passed review (probation period ended)
+                if time_in_state > review_limit:
+                    # Logic for looping state machine:
+                    # If it was in review for looping, and it didn't get penalized again, it goes back to stable
+                    # The penalty logic in _evaluate_session_streams will move it to quarantine if it loops again
                     if info.reliability_score >= PASS_SCORE_THRESHOLD:
                         logger.info(f"Stream {stream_id} passed review (Score: {info.reliability_score:.1f}), moving to Stable")
                         with self.session_manager.session_locks[session.session_id]:
                             info.status = 'stable'
                             info.last_status_change = current_time
+                            # Reset loop duration if it was a loop review
+                            if is_loop_review:
+                                info.loop_duration = None
+                                info.status_reason = None
                             updates_needed = True
                             transitioned_to_stable = True
                     # Else: stay in review until score improves or it dies (monitored by standard logic)
@@ -256,6 +323,38 @@ class StreamMonitoringService:
             self.session_manager._save_sessions()
             
         return transitioned_to_stable
+    
+    def _check_sync_enforcement(self, session) -> bool:
+        """
+        Check if we need to enforce synchronization for this session.
+        
+        This ensures that the Dispatcharr channel state matches the session state,
+        reverting any external changes (manual edits, other apps) and enforcing
+        exclusive ownership.
+        
+        Returns:
+            bool: True if sync enforcement was triggered
+        """
+        current_time = time.time()
+        
+        # Check if ownership is lost (shouldn't happen if locking logic works, but good for safety)
+        owner = self.session_manager.get_session_owner(session.channel_id)
+        if owner and owner != session.session_id:
+            logger.warning(f"Session {session.session_id} lost ownership of channel {session.channel_id} to {owner}")
+            return False
+            
+        # Check if it's time to enforce sync
+        # Default 1000ms (1s) interval
+        interval = getattr(session, 'enforce_sync_interval_ms', 1000) / 1000.0
+        last_sync = getattr(session, 'last_sync_time', 0.0)
+        
+        if current_time - last_sync >= interval:
+            # Trigger evaluation with force_update=True to enforce state
+            self._evaluate_session_streams(session.session_id, force_update=True)
+            session.last_sync_time = current_time
+            return True
+            
+        return False
     
     def _monitor_worker(self):
         """Worker thread for monitoring streams"""
@@ -273,6 +372,10 @@ class StreamMonitoringService:
                     # Check lifecycle updates
                     became_stable = self._manage_quarantine_lifecycle(session)
                     
+                    # Enforce synchronization (exclusive ownership)
+                    # This runs frequently (e.g. 1s) to revert external changes
+                    sync_triggered = self._check_sync_enforcement(session)
+                    
                     # Always monitor (collect stats) - this is fast and non-blocking usually
                     self._monitor_session(session.session_id)
                     
@@ -281,7 +384,8 @@ class StreamMonitoringService:
                     eval_interval_sec = getattr(session, 'evaluation_interval_ms', 1000) / 1000.0
                     
                     # Force update if a stream just became stable, OR if interval passed
-                    if became_stable or (current_time - last_eval >= eval_interval_sec):
+                    # Note: if sync_triggered is True, we already evaluated, so skip to avoid double work
+                    if not sync_triggered and (became_stable or (current_time - last_eval >= eval_interval_sec)):
                         self._evaluate_session_streams(session.session_id, force_update=became_stable)
                         self.last_evaluation_times[session.session_id] = current_time
                 
@@ -356,10 +460,10 @@ class StreamMonitoringService:
                 if stream_info.width and stream_info.height:
                     stats['resolution'] = f"{stream_info.width}x{stream_info.height}"
                 
-                # FPS
                 if stream_info.fps:
                     try:
-                        stats['source_fps'] = float(stream_info.fps)
+                        # Round to nearest integer (standard FPS e.g. 23.97 -> 24, 29.97 -> 30)
+                        stats['source_fps'] = round(float(stream_info.fps), 0)
                     except (ValueError, TypeError):
                         pass
                 
@@ -424,19 +528,84 @@ class StreamMonitoringService:
             if stream_id not in self.monitors[session_id]:
                 monitor = FFmpegStreamMonitor(
                     url=stream_info.url,
+                    stream_id=stream_id,
                     on_stats_update=lambda stats, sid=session_id, stid=stream_id: 
                         self._on_stats_update(sid, stid, stats)
                 )
                 
                 if monitor.start():
                     self.monitors[session_id][stream_id] = monitor
-                    logger.info(f"Started monitor for stream {stream_id} in session {session_id}")
+                    # Initialize last_screenshot_time to current time to stagger first attempts
+                    stream_info.last_screenshot_time = time.time()
+                    logger.debug(f"Started primary monitor for stream {stream_id} in session {session_id}")
+                    
                     time.sleep(session.stagger_ms / 1000.0)
                 else:
                     logger.error(f"Failed to start monitor for stream {stream_id} in session {session_id}")
                     # Monitor failed to start (e.g. invalid URL), quarantine immediately
                     self.session_manager.quarantine_stream(session_id, stream_id)
                     self._remove_stream_from_dispatcharr(session_id, stream_id, "monitor-start-failed")
+
+    def _start_sidecar_detector(self, session_id: str, stream_id: int, port: int):
+        """Start secondary FFmpeg process and SidecarLoopDetector"""
+        if session_id not in self.sidecars:
+            self.sidecars[session_id] = {}
+            
+        cmd = [
+            'ffmpeg',
+            '-hide_banner',
+            '-nostdin',                    # Disable interactive stdin
+            '-loglevel', 'warning',        # Reduce log clutter
+            '-skip_frame:v', 'nokey',      # Decode only keyframes (input option)
+            '-analyzeduration', '2000000', # 2s for more robust stream detection
+            '-probesize', '2000000',       # 2MB
+            '-f', 'mpegts',                # Force input format to bypass terminal-probing
+            '-i', f'udp://127.0.0.1:{port}?fifo_size=1000000&overrun_nonfatal=1',
+            '-an', '-sn',                  # Disable audio/subs
+            '-vf', 'scale=32:32:flags=fast_bilinear,format=gray', # Cheap scaling
+            '-c:v', 'ppm',                 # Modern codec selection
+            '-f', 'image2pipe',            # Ensure image2pipe format
+            'pipe:1'
+        ]
+        
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, # Capture stderr for debugging
+            stdin=subprocess.DEVNULL, # Explicitly redirect stdin to prevent ioctl errors
+            bufsize=10**6 # Buffer for frames
+        )
+        
+        # Monitor sidecar stderr in a background thread to log errors
+        def log_stderr(p, sid, stid):
+            for line in p.stderr:
+                try:
+                    line_str = line.decode('utf-8').strip()
+                    if line_str and "Error" in line_str:
+                        logger.warning(f"Sidecar FFmpeg error for stream {stid} in session {sid}: {line_str}")
+                    elif line_str:
+                        logger.debug(f"Sidecar FFmpeg [{stid}]: {line_str}")
+                except: pass
+
+        threading.Thread(
+            target=log_stderr,
+            args=(proc, session_id, stream_id),
+            daemon=True,
+            name=f"SidecarStderr-{stream_id}"
+        ).start()
+        
+        detector = SidecarLoopDetector(proc.stdout, stream_id=stream_id)
+        
+        # Start detector thread
+        thread = threading.Thread(
+            target=detector.run,
+            daemon=True,
+            name=f"SidecarDetector-{stream_id}"
+        )
+        thread.start()
+        
+        self.sidecars[session_id][stream_id] = (proc, detector)
+        logger.info(f"Started sidecar loop detector for stream {stream_id} on port {port}")
 
     
     def _on_stats_update(self, session_id: str, stream_id: int, stats):
@@ -450,21 +619,34 @@ class StreamMonitoringService:
             return
         
         if not stats.is_alive and stats.error_message:
-            logger.warning(f"Stream {stream_id} marked as dead in session {session_id}: {stats.error_message}")
-            self.dead_streams_tracker.mark_as_dead(
-                stream_url=stream_info.url,
-                stream_id=stream_id,
-                stream_name=stream_info.name,
-                channel_id=session.channel_id
-            )
-            if session_id in self.monitors and stream_id in self.monitors[session_id]:
-                monitor = self.monitors[session_id][stream_id]
-                monitor.stop()
-                del self.monitors[session_id][stream_id]
+            # Check if this is a fatal death or just needs a restart
+            is_fatal = getattr(stats, 'is_fatal', True)  # Default to fatal for safety if not specified
             
-            # Quarantine via session manager to update blocklist
-            self.session_manager.quarantine_stream(session_id, stream_id)
-            self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
+            if is_fatal:
+                logger.warning(f"Stream {stream_id} marked as dead (FATAL) in session {session_id}: {stats.error_message}")
+                self.dead_streams_tracker.mark_as_dead(
+                    stream_url=stream_info.url,
+                    stream_id=stream_id,
+                    stream_name=stream_info.name,
+                    channel_id=session.channel_id
+                )
+                
+                # Stop and cleanup monitor
+                if session_id in self.monitors and stream_id in self.monitors[session_id]:
+                    monitor = self.monitors[session_id][stream_id]
+                    monitor.stop()
+                    del self.monitors[session_id][stream_id]
+                
+                # Quarantine via session manager to update blocklist
+                self.session_manager.quarantine_stream(session_id, stream_id, reason=stats.error_message)
+                self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
+            else:
+                logger.info(f"Stream {stream_id} needs RESTART (non-fatal error) in session {session_id}: {stats.error_message}")
+                # Just stop and remove from monitors, the next monitoring loop will restart it
+                if session_id in self.monitors and stream_id in self.monitors[session_id]:
+                    monitor = self.monitors[session_id][stream_id]
+                    monitor.stop()
+                    del self.monitors[session_id][stream_id]
             return
         
         if stats.width > 0:
@@ -476,21 +658,63 @@ class StreamMonitoringService:
             stream_info.bitrate = int(stats.bitrate)
 
     def _evaluate_session_streams(self, session_id: str, force_update: bool = False):
-        """Evaluate and score all streams in a session"""
+        """
+        Evaluate and score all streams in a session.
+        
+        Logo Verification Architecture (Cross-Stream Consensus):
+        - Evaluates logo presence across all active streams.
+        - Grants a 'Global Pardon' if all streams fail logo checks (assuming commercial break).
+        - Penalizes outlier streams (missing logo when others have it).
+        """
         session = self.session_manager.get_session(session_id)
         if not session:
             return
         
         current_time = time.time()
+        session_monitors = self.monitors.get(session_id, {})
         
-        # Create a copy of the monitors dict items to avoid "dictionary changed size during iteration" error
-        monitors_snapshot = list(self.monitors.get(session_id, {}).items())
+        # === Pillar 3: Cross-Stream Consensus ===
+        active_logo_statuses = {}
+        for stream_id in session_monitors:
+            stream_info = session.streams.get(stream_id)
+            # Only consider streams that have a decisive status
+            if stream_info and stream_info.last_logo_status in ("SUCCESS", "FAILED"):
+                active_logo_statuses[stream_id] = stream_info.last_logo_status
+                
+        global_pardon = False
+        if active_logo_statuses:
+            if all(status == "FAILED" for status in active_logo_statuses.values()):
+                global_pardon = True
+                logger.debug(f"Logo Consensus: Global Pardon for session {session_id} (Commercial Break likely)")
+        # Manage Advertisement Periods
+        if global_pardon:
+            # If no ad period is open, start one
+            if not session.ad_periods or "end" in session.ad_periods[-1]:
+                session.ad_periods.append({"start": current_time})
+        else:
+            # If an ad period is open, close it
+            if session.ad_periods and "end" not in session.ad_periods[-1]:
+                session.ad_periods[-1]["end"] = current_time
         
-        # Check each monitor
-        for stream_id, monitor in monitors_snapshot:
+        # Log the batched verification statuses perfectly concisely
+        if active_logo_statuses:
+            batch_log = ", ".join([f"{sid}: {status}" for sid, status in active_logo_statuses.items()])
+            logger.info(f"Logo verify batch results for session {session_id}: [{batch_log}]")
+        
+        # 1. Update stats for streams with active monitors
+        for stream_id, monitor in list(session_monitors.items()):
             stream_info = session.streams.get(stream_id)
             if not stream_info:
                 continue
+            
+            # === Pillar 4: The Sliding Window Penalty ===
+            if stream_id in active_logo_statuses:
+                if not global_pardon:
+                    if active_logo_statuses[stream_id] == "FAILED":
+                        stream_info.consecutive_logo_misses += 1
+                
+                # Reset status back to PENDING so we don't double-count until next screenshot
+                stream_info.last_logo_status = "PENDING"
             
             stats = monitor.get_stats()
             
@@ -503,171 +727,181 @@ class StreamMonitoringService:
             if stats.bitrate > 0:
                 stream_info.bitrate = int(stats.bitrate)
             
-            # Update reliability score first so it's included in metrics
+            # Update transport health
+            health_report = monitor.get_transport_health()
+            stream_info.transport_health = health_report['status']
+            stream_info.transport_health_summary = health_report['summary']
+            stream_info.transport_error_density = health_report['error_density']
+            
+            # Update reliability score
             scoring_window = self.session_manager.scoring_windows.get(session_id, {}).get(stream_id)
             current_score = stream_info.reliability_score
             if scoring_window:
                 is_healthy = stats.is_alive and not monitor.is_buffering()
                 scoring_window.add_measurement(is_healthy, stats.speed)
                 current_score = scoring_window.get_score()
+                
+                # Penalty points for logo misses (will trigger quarantine below if threshold reached)
+                if stream_info.consecutive_logo_misses >= 4:
+                    current_score = 0.0
+                
+                # Check for Sidecar LOOP detection
+                sidecar_data = self.sidecars.get(session_id, {}).get(stream_id)
+                if sidecar_data:
+                    _, detector = sidecar_data
+                    if detector and detector.is_looping():
+                        duration = detector.get_loop_duration()
+                        current_score = max(0.0, current_score - 50.0)
+                        stream_info.status_reason = 'looping'
+                        stream_info.loop_duration = duration
+                        stream_info.last_loop_time = current_time
+                        
+                        # Debounce logging to prevent spam
+                        if current_time - getattr(stream_info, 'last_loop_log_time', 0.0) > 60.0:
+                            logger.warning(f"Stream {stream_id} penalized -50 points for active loop detection ({duration:.2f}s).")
+                            stream_info.last_loop_log_time = current_time
+                        
+                        # Looping State Machine Transitions:
+                        if stream_info.status == 'stable':
+                            logger.info(f"Stream {stream_id} detected looping. Moving from Stable to Review.")
+                            self.session_manager.move_stream_to_review(session_id, stream_id, reason='looping')
+                        elif stream_info.status == 'review' and stream_info.status_reason == 'looping':
+                            # If it was already in review FOR looping, and we detect it again, quarantine it
+                            # Note: check if it has been in review for at least a few seconds to avoid immediate double-trigger
+                            if current_time - stream_info.last_status_change > 10.0:
+                                logger.warning(f"Stream {stream_id} detected looping AGAIN while in Review. Moving to Quarantine.")
+                                monitor.stop()
+                                if stream_id in self.monitors.get(session_id, {}):
+                                    del self.monitors[session_id][stream_id]
+                                self.session_manager.quarantine_stream(session_id, stream_id, reason='looping-repeated')
+                                self._remove_stream_from_dispatcharr(session_id, stream_id, "looping")
+                                continue
+                
                 stream_info.reliability_score = current_score
 
-            # Create metrics entry
-            # Use stream_info.bitrate/fps which are "sticky" (hold last known good value)
-            # This prevents 0/N/A in history if a single probe fails to get metadata but stream is alive
+            # Create metrics entry (will be finalized with rank later)
             metrics_bitrate = stream_info.bitrate if (stream_info.bitrate and stream_info.bitrate > 0) else stats.bitrate
             metrics_fps = stream_info.fps if (stream_info.fps and stream_info.fps > 0) else stats.fps
             
+            # If the stream is dead, forcefully set speed to 0.0 to prevent stale data in graphs
+            metrics_speed = stats.speed if stats.is_alive else 0.0
+            
             metrics = StreamMetrics(
                 timestamp=current_time,
-                speed=stats.speed,
+                speed=metrics_speed,
                 bitrate=metrics_bitrate,
                 fps=metrics_fps,
                 is_alive=stats.is_alive,
                 buffering=monitor.is_buffering(),
                 reliability_score=current_score,
-                status=stream_info.status
+                status=stream_info.status,
+                status_reason=getattr(stream_info, 'status_reason', None),
+                loop_duration=getattr(stream_info, 'loop_duration', None),
+                display_logo_status=getattr(stream_info, 'display_logo_status', 'PENDING')
             )
-            
-            # Add to history (limit size)
             stream_info.metrics_history.append(metrics)
-            # Use configurable window size from session manager
-            window_size = getattr(self.session_manager, 'DEFAULT_WINDOW_SIZE', 3600)
-            if len(stream_info.metrics_history) > window_size:
-                stream_info.metrics_history = stream_info.metrics_history[-window_size:]
             
-            # Check if stream is dead or timed out
-            if not stats.is_alive:
-                # Stream has died - quarantine it and remove from Dispatcharr
-                logger.warning(f"Stream {stream_id} is dead in session {session_id}, quarantining")
+            # Keep history to window size
+            while len(stream_info.metrics_history) > session.window_size:
+                stream_info.metrics_history.pop(0)
+            
+            # Check for death/timeout/slow-speed/logo-mismatch
+            if stream_info.consecutive_logo_misses >= 4:
+                logger.warning(f"Stream {stream_id} auto-quarantined for {stream_info.consecutive_logo_misses} consecutive logo misses (Wrong Channel Expected)")
+                stream_info.status_reason = 'logo-mismatch'
                 monitor.stop()
-                # Safe to delete since we're iterating over a snapshot
-                del self.monitors[session_id][stream_id]
+                if stream_id in self.monitors.get(session_id, {}):
+                    del self.monitors[session_id][stream_id]
                 self.session_manager.quarantine_stream(session_id, stream_id)
-                # Remove dead stream from Dispatcharr channel
-                self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
+                self._remove_stream_from_dispatcharr(session_id, stream_id, "logo-mismatch")
+                continue
+
+            if not stats.is_alive:
+                is_fatal = getattr(stats, 'is_fatal', True)
+                if is_fatal:
+                    logger.warning(f"Stream {stream_id} is dead (FATAL) in session {session_id}, quarantining. Error: {stats.error_message}")
+                    stream_info.status_reason = 'dead'
+                    monitor.stop()
+                    if stream_id in self.monitors.get(session_id, {}):
+                        del self.monitors[session_id][stream_id]
+                    self.session_manager.quarantine_stream(session_id, stream_id, reason='dead')
+                    self._remove_stream_from_dispatcharr(session_id, stream_id, "dead")
+                else:
+                    logger.debug(f"Stream {stream_id} triggered RESTART (non-fatal) in session {session_id}. Error: {stats.error_message}")
+                    monitor.stop()
+                    if stream_id in self.monitors.get(session_id, {}):
+                        del self.monitors[session_id][stream_id]
             else:
-                # Check for timeout/stall on alive streams
                 time_since_update = current_time - stats.last_updated
                 if time_since_update > (session.timeout_ms / 1000.0):
-                    logger.warning(f"Stream {stream_id} timed out in session {session_id} (no updates for {time_since_update:.1f}s)")
+                    # Timeout is now a RESTART first, not immediate quarantine
+                    logger.warning(f"Stream {stream_id} timed out in session {session_id} ({time_since_update:.1f}s), triggering restart")
+                    stream_info.status_reason = 'timeout-restart'
                     monitor.stop()
-                    # Safe to delete since we're iterating over a snapshot
-                    del self.monitors[session_id][stream_id]
-                    self.session_manager.quarantine_stream(session_id, stream_id)
-                    # Remove timed-out stream from Dispatcharr channel
-                    self._remove_stream_from_dispatcharr(session_id, stream_id, "timed-out")
+                    if stream_id in self.monitors.get(session_id, {}):
+                        del self.monitors[session_id][stream_id]
+                    # Note: We don't quarantine yet, let it try to restart once. 
+                    # If it keeps timing out, reliability score will plummet and it might be quarantined via score logic.
                 else:
-                    # Check for persistently slow speed (auto-quarantine)
-                    # Handle None speed values gracefully
                     current_speed = stats.speed if stats.speed is not None else 0.0
                     if current_speed < SLOW_SPEED_THRESHOLD:
-                        # Speed is too slow
                         if stream_info.low_speed_start_time is None:
-                            # First time below threshold, start tracking
                             stream_info.low_speed_start_time = current_time
-                            logger.debug(f"Stream {stream_id} speed dropped below {SLOW_SPEED_THRESHOLD} (current: {current_speed:.2f}x)")
                         else:
-                            # Check how long it's been slow
                             slow_duration = current_time - stream_info.low_speed_start_time
                             if slow_duration >= SLOW_SPEED_DURATION:
-                                # Been slow for too long, quarantine
-                                logger.warning(
-                                    f"Stream {stream_id} has been below {SLOW_SPEED_THRESHOLD}x speed for "
-                                    f"{slow_duration:.1f}s (current: {current_speed:.2f}x), auto-quarantining"
-                                )
+                                logger.info(f"Stream {stream_id} auto-quarantined for slow speed ({current_speed:.2f}x)")
+                                stream_info.status_reason = 'slow-speed'
                                 monitor.stop()
-                                # Safe to delete since we're iterating over a snapshot
-                                del self.monitors[session_id][stream_id]
+                                if stream_id in self.monitors.get(session_id, {}):
+                                    del self.monitors[session_id][stream_id]
                                 self.session_manager.quarantine_stream(session_id, stream_id)
-                                # Remove slow stream from Dispatcharr channel
                                 self._remove_stream_from_dispatcharr(session_id, stream_id, "slow-speed")
                     else:
-                        # Speed is acceptable, reset tracking
-                        if stream_info.low_speed_start_time is not None:
-                            logger.debug(f"Stream {stream_id} speed recovered (current: {current_speed:.2f}x)")
-                            stream_info.low_speed_start_time = None
-        
-        # ---------------------------------------------------------
-        # Logic to reorder streams based on score (with hysteresis)
-        # ---------------------------------------------------------
-        
-        # Check cooldown (bypass if force_update is True)
-        last_switch = self.last_switch_times.get(session_id, 0)
-        if not force_update and (current_time - last_switch < SWITCH_COOLDOWN):
+                        stream_info.low_speed_start_time = None
+                    
+                    # Sidecar loop detection logic
+                    sidecar = self.sidecars.get(session_id, {}).get(stream_id)
+                    if sidecar:
+                        proc, detector = sidecar
+                        if proc.poll() is not None or detector.is_closed:
+                            logger.warning(f"Sidecar for stream {stream_id} died, cleaning up")
+                            try: proc.terminate()
+                            except: pass
+                            if stream_id in self.sidecars.get(session_id, {}):
+                                del self.sidecars[session_id][stream_id]
+                            sidecar = None
+                    
+                    if not sidecar and stats.is_alive and stats.speed > 0:
+                        # Only start sidecar if looping detection is enabled for this session
+                        if getattr(session, 'enable_looping_detection', True):
+                            try:
+                                self._start_sidecar_detector(session_id, stream_id, monitor.port_a)
+                            except Exception as e:
+                                logger.error(f"Failed to start sidecar for stream {stream_id}: {e}")
+
+        # 2. Re-rank all streams (even those without monitors)
+        self._update_monitoring_ranks(session_id, current_time, force_update)
+
+    def _update_monitoring_ranks(self, session_id: str, current_time: float, force_update: bool = False):
+        """Calculate and apply ranks for ALL streams in a session, including heartbeats."""
+        session = self.session_manager.get_session(session_id)
+        if not session:
             return
 
-        # Get current channel order from UDI
         udi = get_udi_manager()
         channel = udi.get_channel_by_id(session.channel_id)
-        if not channel:
-            return
-
-        current_stream_ids = channel.get('streams', [])
-        # Note: We do NOT return if current_stream_ids is empty, because we want to FILL it.
-
-        # Identify current primary (active) stream
+        current_stream_ids = channel.get('streams', []) if channel else []
         primary_stream_id = current_stream_ids[0] if current_stream_ids else None
-        primary_info = session.streams.get(primary_stream_id) if primary_stream_id else None
         
-        # If primary_info is None, it means either:
-        # 1. Channel is empty (we need to populate it)
-        # 2. Primary stream is not in our session (maybe manual override or old stream)
-        # In either case, we proceed to find the best candidate from our session.
-
-        # Find best candidate stream in our session
-        candidates = []
-        for stream_id, info in session.streams.items():
-            if info.is_quarantined:
-                # Still check resolution for quarantined logic? No, skip dead/bad streams
-                continue
-            candidates.append(info)
-            
+        candidates = list(session.streams.values())
         if not candidates:
             return
 
-        # Sort candidates to find the best one
-        # Logic: 
-        # 1. Primary stream gets hysterisis bonus (SCORE_SWITCH_THRESHOLD) - ONLY for deciding the top spot
-        # 2. Prefer Higher Resolution if scores are close (RESOLUTION_SCORE_TOLERANCE)
-        # 3. Prefer Higher Score
+        # Sort using the same logic as before
+        candidates.sort(key=lambda info: self._calculate_monitoring_sort_key(info), reverse=True)
         
-        # Primary stream ID from Dispatcharr (source of truth for "current state")
-        current_primary_id = primary_stream_id
-
-        # -------------------------------------------------------------------------
-        # 1. Sort Candidates Globally
-        # Hierarchy:
-        # A. Status: Stable (2) > Review (1)
-        # B. Score: Higher is better
-        # C. Resolution: Higher is better (width * height)
-        # -------------------------------------------------------------------------
-        
-        def calculate_sort_key(info):
-            # Status Priority: Stable (2) > Review (1) > Quarantined (0)
-            status_priority = 2 if info.status == 'stable' else 1
-            
-            # Score
-            score = info.reliability_score
-            
-            # Resolution Score
-            res_score = (info.width or 0) * (info.height or 0)
-            
-            # FPS
-            fps = info.fps or 0
-            
-            return (status_priority, score, res_score, fps)
-
-        # Initial sort by Status and Score and Resolution and FPS (unique stable sort)
-        candidates.sort(key=calculate_sort_key, reverse=True)
-        
-        # -------------------------------------------------------------------------
-        # 2. Refine Sort with Resolution Tiers (within same Status)
-        # This handles cases where scores are very close but resolution is different.
-        # -------------------------------------------------------------------------
         final_sorted_streams = []
-        
-        # Helper to process a group of candidates (same status)
         def process_group(group):
             if not group: return []
             res_sorted = []
@@ -676,162 +910,135 @@ class StreamMonitoringService:
                 tier = [current]
                 i = 0
                 while i < len(group):
-                    # Check difference between current top of tier and next candidate
                     diff = current.reliability_score - group[i].reliability_score
                     if diff <= RESOLUTION_SCORE_TOLERANCE:
                         tier.append(group.pop(i))
                     else:
                         break
-                # Sort tier by resolution AND FPS
                 tier.sort(key=lambda x: ((x.width or 0) * (x.height or 0), (x.fps or 0)), reverse=True)
                 res_sorted.extend(tier)
             return res_sorted
 
-        # Split into status groups to ensure we don't mix them during tier processing
-        stable_streams = [s for s in candidates if s.status == 'stable']
-        review_streams = [s for s in candidates if s.status == 'review']
-        
-        # Process each group independently and concatenate
-        # Stable streams always come first
-        final_sorted_streams.extend(process_group(stable_streams))
-        final_sorted_streams.extend(process_group(review_streams))
+        final_sorted_streams.extend(process_group([s for s in candidates if s.status == 'stable']))
+        final_sorted_streams.extend(process_group([s for s in candidates if s.status == 'review']))
+        final_sorted_streams.extend(process_group([s for s in candidates if s.status == 'quarantined']))
 
-        # -------------------------------------------------------------------------
-        # 3. Apply Hysteresis for the *Primary* position only
-        # -------------------------------------------------------------------------
+        # Hysteresis for primary position
         if final_sorted_streams:
             proposed_primary = final_sorted_streams[0]
-            
-            if proposed_primary.stream_id != current_primary_id:
-                # Find current primary stream info (if it exists and is valid)
-                curr_prim_info = next((s for s in session.streams.values() if s.stream_id == current_primary_id), None)
-                
-                # Only consider hysteresis if current primary is still valid (not dead/quarantined)
-                if curr_prim_info and not curr_prim_info.is_quarantined:
-                    
-                    # Determine if we should protect the current primary stream
-                    should_protect = False
-                    
-                    # 1. Review streams are NEVER protected (Testing Phase)
-                    # 2. Stable streams are protected ONLY if they are currently playing
-                    if curr_prim_info.status == 'stable':
-                        try:
-                            # Note: udi variable is defined earlier in this function
-                            playing_ids = udi.get_playing_stream_ids()
-                            if curr_prim_info.stream_id in playing_ids:
-                                should_protect = True
-                        except Exception as e:
-                            logger.error(f"Failed to check playing status for protection logic: {e}")
-                            # Fail-safe: Protect if we can't check
-                            should_protect = True
-                    
-                    if should_protect:
-                        # Protected -> Apply Hysteresis
-                        # Only switch if Proposed is SIGNIFICANTLY better
-                        
-                        score_diff = proposed_primary.reliability_score - curr_prim_info.reliability_score
-                        
-                        # Resolution
-                        prop_res = (proposed_primary.width or 0) * (proposed_primary.height or 0)
-                        curr_res = (curr_prim_info.width or 0) * (curr_prim_info.height or 0)
-                        
-                        # FPS
-                        prop_fps = proposed_primary.fps or 0
-                        curr_fps = curr_prim_info.fps or 0
-                        
-                        # Revert swap if improvement is not significant enough
-                        revert_swap = False
-                        
-                        if score_diff < SCORE_SWITCH_THRESHOLD:
-                            # Strict Hysteresis:
-                            # If score improvement is small, only allow switch if resolution is significantly BETTER.
-                            if prop_res < curr_res:
-                                # Proposed has WORSE resolution -> Keep current
-                                revert_swap = True
-                            elif prop_res == curr_res:
-                                # Resolution is SAME, check FPS
-                                if prop_fps <= curr_fps:
-                                    # Proposed has SAME/WORSE FPS -> Keep current
-                                    revert_swap = True
-                        
-                        if revert_swap:
-                             if curr_prim_info in final_sorted_streams:
-                                 final_sorted_streams.remove(curr_prim_info)
-                                 final_sorted_streams.insert(0, curr_prim_info)
-                    
-                    # If NOT protected (should_protect == False):
-                    # We simply allow proposed_primary (which is better sorted) to take over.
-                    # No hysteresis applied.
-                    # Else: Proposed HAS better resolution, so let it stay at top (Swap happens)
+            if proposed_primary.stream_id != primary_stream_id:
+                curr_prim_info = session.streams.get(primary_stream_id)
+                if curr_prim_info and not curr_prim_info.is_quarantined and curr_prim_info.status == 'stable':
+                    try:
+                        playing_ids = udi.get_playing_stream_ids()
+                        if curr_prim_info.stream_id in playing_ids:
+                            score_diff = proposed_primary.reliability_score - curr_prim_info.reliability_score
+                            if score_diff < SCORE_SWITCH_THRESHOLD:
+                                # Apply resolution/FPS check for hysteresis
+                                prop_res = (proposed_primary.width or 0) * (proposed_primary.height or 0)
+                                curr_res = (curr_prim_info.width or 0) * (curr_prim_info.height or 0)
+                                revert = prop_res < curr_res or (prop_res == curr_res and (proposed_primary.fps or 0) <= (curr_prim_info.fps or 0))
+                                if revert:
+                                    if curr_prim_info in final_sorted_streams:
+                                        final_sorted_streams.remove(curr_prim_info)
+                                        final_sorted_streams.insert(0, curr_prim_info)
+                    except Exception as e:
+                        logger.error(f"Hysteresis fail-safe: {e}")
 
-        # -------------------------------------------------------------------------
-        # 3.5 Update StreamMetrics with Rank
-        # -------------------------------------------------------------------------
+        # Final Rank Assignment & Heartbeat Metrics
         for rank, stream_info in enumerate(final_sorted_streams, start=1):
-            if stream_info.metrics_history:
-                # Update the most recent metric
-                stream_info.metrics_history[-1].rank = rank
+            stream_info.rank = rank
+            
+            # Ensure we have a metrics entry at this timestamp for ALL streams (Heartbeat)
+            # This is critical for the frontend timeline and graphs to stay current
+            last_metric = stream_info.metrics_history[-1] if stream_info.metrics_history else None
+            
+            # If the last metric isn't from this exact evaluation cycle, add a heartbeat
+            if not last_metric or abs(last_metric.timestamp - current_time) > 0.1:
+                # Add a "heartbeat" metric entry for streams that didn't get one in step 1
+                # (Monitors only add metrics if they have a decisive tick)
+                # For quarantined streams, speed is 0.0 and is_alive is False
+                metrics = StreamMetrics(
+                    timestamp=current_time,
+                    speed=0.0, # Zero speed for non-monitored/quarantined streams
+                    bitrate=stream_info.bitrate or 0,
+                    fps=stream_info.fps or 0,
+                    is_alive=not stream_info.is_quarantined,
+                    buffering=False,
+                    reliability_score=stream_info.reliability_score,
+                    status=stream_info.status,
+                    rank=rank, # Anchor the rank now
+                    status_reason=getattr(stream_info, 'status_reason', None),
+                    display_logo_status=getattr(stream_info, 'display_logo_status', 'PENDING')
+                )
+                stream_info.metrics_history.append(metrics)
+                while len(stream_info.metrics_history) > session.window_size:
+                    stream_info.metrics_history.pop(0)
+            else:
+                # Update the rank on the metric added in step 1
+                last_metric.rank = rank
 
-
-        # 4. Enforce this order in Dispatcharr
-        # Prefer STABLE streams, but fallback to REVIEW streams if no stable streams exist
-        # This prevents the channel from appearing empty during testing/initial phase
+        # Dispatcharr sync (Exclusive Ownership)
+        # current_stream_ids is already defined above
         public_streams = [s for s in final_sorted_streams if s.status == 'stable']
-        
         if not public_streams and final_sorted_streams:
-             # Fallback: If no stable streams, show ALL available streams (including Review)
-             # but check if we should allow this (user might want strict hiding)
-             # Assuming we should show *something* rather than nothing
              public_streams = final_sorted_streams
-             msg = f"No stable streams found for session {session_id}. Falling back to all streams."
-             logger.warning(msg)
-
         new_order_ids = [s.stream_id for s in public_streams]
         
-        # Append any other streams that might be in current_stream_ids but not in our active list
-        # We only exclude QUARANTINED streams now
         monitored_ids_set = set(new_order_ids)
         for sid in current_stream_ids:
             if sid not in monitored_ids_set:
                 known_stream = session.streams.get(sid)
-                if known_stream and known_stream.status == 'quarantined':
-                     continue # Explicitly exclude quarantined
-                if known_stream and known_stream.status == 'review' and public_streams != final_sorted_streams:
-                     # If we are in "Stable Only" mode, exclude review streams from tail too
-                     continue
+                if known_stream:
+                    if known_stream.status == 'quarantined': continue
+                    if known_stream.status == 'review' and public_streams != final_sorted_streams: continue
+                    new_order_ids.append(sid)
+                else:
+                    logger.debug(f"Dropping alien stream {sid} from channel {session.channel_id}")
 
-                # Append at the end
-                new_order_ids.append(sid)
-
-        # Check if order changed
-        # If force_update is True, we proceed even if order looks same (to handle desync or status updates)
         if new_order_ids != current_stream_ids or force_update:
-            msg = f"Enforcing new stream order for session {session_id}. "
-            if force_update:
-                msg += "[FORCE UPDATE] "
+            msg = f"Enforcing new stream order count={len(new_order_ids)} for session {session_id}"
+            logger.debug(msg)
             
-            if new_order_ids:
-                primary_id = new_order_ids[0]
-                score_str = "N/A"
-                if primary_id in session.streams:
-                        score_str = f"{session.streams[primary_id].reliability_score:.1f}"
-                status_str = "Unknown"
-                if primary_id in session.streams:
-                    status_str = session.streams[primary_id].status
-                msg += f"Primary: {primary_id} (Score: {score_str}, Status: {status_str})"
-            else:
-                msg += "Emptying channel (no valid streams)."
-            
-            logger.info(msg)
-            
-            from api_utils import update_channel_streams
-            if update_channel_streams(session.channel_id, new_order_ids):
-                logger.info(f"Updated Dispatcharr channel {session.channel_id} with new stream order")
-                udi.refresh_channel_by_id(session.channel_id)
-                self.last_switch_times[session_id] = current_time
-            else:
-                logger.error(f"Failed to update stream order for channel {session.channel_id}")
+            def _execute_sync():
+                try:
+                    from api_utils import update_channel_streams
+                    if update_channel_streams(session.channel_id, new_order_ids):
+                        udi.refresh_channel_by_id(session.channel_id)
+                        self.last_switch_times[session_id] = current_time
+                except Exception as e:
+                    logger.error(f"Error syncing rank to Dispatcharr: {e}")
+
+            # Offload synchronous network call to a background thread to prevent
+            # blocking the main evaluation loop and causing time drift
+            threading.Thread(
+                target=_execute_sync,
+                daemon=True,
+                name=f"RankSync-{session_id}"
+            ).start()
     
+    def _calculate_monitoring_sort_key(self, info):
+        """Calculate sort key for stream monitoring ranking."""
+        # Status Priority: Stable (3) > Review (2) > Quarantined (1) > Other (0)
+        status_map = {
+            'stable': 3,
+            'review': 2,
+            'quarantined': 1
+        }
+        status_priority = status_map.get(info.status, 0)
+        
+        # Reliability Score - Higher is better
+        # For quarantined streams, this score is effectively frozen at time of death
+        score = info.reliability_score
+        
+        # Resolution Score
+        res_score = (info.width or 0) * (info.height or 0)
+        
+        # FPS rounded to integer to prevent flapping
+        fps = round(float(info.fps or 0), 0)
+        
+        return (status_priority, score, res_score, fps)
+
     def _refresh_session_streams(self, session_id: str):
         """Refresh the list of streams for a session"""
         # Re-discover streams (will add new ones if they appear)
@@ -839,7 +1046,7 @@ class StreamMonitoringService:
         
         session = self.session_manager.get_session(session_id)
         if session:
-            logger.info(f"Refreshed streams for session {session_id}, now tracking {len(session.streams)} streams")
+            logger.debug(f"Refreshed streams for session {session_id}, now tracking {len(session.streams)} streams")
     
     def _check_screenshots(self, session_id: str):
         """Check if any streams need screenshots"""
@@ -850,39 +1057,111 @@ class StreamMonitoringService:
         current_time = time.time()
         interval = session.screenshot_interval_seconds
         
+        # Step 1: Check if ANY stream is due for a screenshot
+        any_stream_due = False
         for stream_id, stream_info in session.streams.items():
             if stream_info.is_quarantined:
                 continue
             
-            # Check if we need a screenshot
             time_since_screenshot = current_time - stream_info.last_screenshot_time
-            if time_since_screenshot >= interval:
-                # Capture screenshot in background
-                threading.Thread(
-                    target=self._capture_screenshot,
-                    args=(session_id, stream_id),
-                    daemon=True,
-                    name=f"Screenshot-{stream_id}"
-                ).start()
+            monitor = self.monitors.get(session_id, {}).get(stream_id)
+            is_ready = monitor and monitor.get_stats().speed >= 0.9
+            
+            if is_ready and time_since_screenshot >= interval:
+                any_stream_due = True
+                break
                 
-                # Update timestamp to avoid duplicate attempts
-                stream_info.last_screenshot_time = current_time
+        # Step 2: If any are due, grab ALL ready streams to synchronize their monitoring intervals natively
+        streams_to_capture = []
+        if any_stream_due:
+            for stream_id, stream_info in session.streams.items():
+                if stream_info.is_quarantined:
+                    continue
+                    
+                monitor = self.monitors.get(session_id, {}).get(stream_id)
+                is_ready = monitor and monitor.get_stats().speed >= 0.9
+                
+                if is_ready:
+                    streams_to_capture.append(stream_id)
+                    # Reset timestamps so they all evaluate exactly identically next cycle
+                    stream_info.last_screenshot_time = current_time
+        
+        if streams_to_capture:
+            # Capture screenshots in background
+            threading.Thread(
+                target=self._capture_screenshot_batch,
+                args=(session_id, streams_to_capture),
+                daemon=True,
+                name=f"ScreenshotBatch-{session_id}"
+            ).start()
+                
+    def _capture_screenshot_batch(self, session_id: str, stream_ids: list[int]):
+        """Capture multiple screenshots and log a summary in parallel"""
+        success_count = 0
+        logo_results = {}
+        
+        # Helper for threaded execution
+        def capture_and_verify(stream_id):
+            success, status = self._capture_screenshot(session_id, stream_id)
+            return stream_id, success, status
+            
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(stream_ids), 8)) as executor:
+            # Submit all captures
+            future_to_stream = {executor.submit(capture_and_verify, sid): sid for sid in stream_ids}
+            
+            for future in concurrent.futures.as_completed(future_to_stream):
+                stream_id, success, status = future.result()
+                if success:
+                    success_count += 1
+                if status:
+                    logo_results[stream_id] = status
+                
+        # Apply all logo statuses synchronously so cross-stream consensus triggers simultaneously
+        if logo_results:
+            session = self.session_manager.get_session(session_id)
+            if session:
+                for sid, status in logo_results.items():
+                    info = session.streams.get(sid)
+                    if info:
+                        info.last_logo_status = status
+                        info.display_logo_status = status
+                        if status == "FAILED":
+                            # If logo mismatch, record it so it can be shown in UI if quarantined later
+                            info.status_reason = 'logo-mismatch'
+                        elif status == "SUCCESS":
+                            # Reset count immediately on success
+                            info.consecutive_logo_misses = 0
+                            # Reset reason if it was logo-mismatch but now it passed
+                            if info.status_reason == 'logo-mismatch':
+                                info.status_reason = None
+        
+        if success_count > 0:
+            logger.info(f"Captured screenshots and updated stats for {success_count} streams in session {session_id}")
     
-    def _capture_screenshot(self, session_id: str, stream_id: int):
-        """Capture a screenshot for a stream"""
+    def _capture_screenshot(self, session_id: str, stream_id: int) -> tuple[bool, str | None]:
+        """Capture a screenshot for a stream. Returns (success_bool, logo_status_str_or_none)"""
         session = self.session_manager.get_session(session_id)
         if not session:
-            return
+            return False, None
         
         stream_info = session.streams.get(stream_id)
         if not stream_info:
-            return
-        
+            return False, None
+            
+        success = False
+        logo_status = None
         try:
+            # Determine probe URL: use sidecar UDP loopback if available
+            probe_url = stream_info.url
+            monitor = self.monitors.get(session_id, {}).get(stream_id)
+            if monitor and monitor.port_b:
+                probe_url = f"udp://127.0.0.1:{monitor.port_b}"
+                logger.debug(f"Probing stream {stream_id} via loopback: {probe_url}")
+
             # Capture screenshot and probe all stats (resolution, fps, bitrate)
             # This merges screenshot capture and stats probing into one FFmpeg call
             path, stats = self.screenshot_service.capture(
-                stream_info.url, 
+                probe_url, 
                 stream_id, 
                 extract_stats=True
             )
@@ -890,6 +1169,21 @@ class StreamMonitoringService:
             if path:
                 stream_info.screenshot_path = path
                 logger.debug(f"Captured screenshot for stream {stream_id}: {path}")
+                success = True
+                
+                # Synchronous logo verification so we can batch them atomically 
+                # Restrict: Only if logo detection is enabled AND stream is in 'review' status
+                if session.logo_id and getattr(session, 'enable_logo_detection', True):
+                    if stream_info.status in ('review', 'stable'):
+                        try:
+                            from logo_verification_service import verify_logo
+                            status = verify_logo(path, session.logo_id)
+                            if status != "SKIPPED":
+                                logo_status = status
+                        except Exception as e:
+                            logger.error(f"Error in sync logo verify: {e}")
+                    else:
+                        logger.debug(f"Skipping logo verify for stream {stream_id} - not in review (status: {stream_info.status})")
             
             # Update stream info with probed stats
             if stats:
@@ -904,12 +1198,19 @@ class StreamMonitoringService:
                 if 'fps' in stats:
                     stream_info.fps = stats['fps']
                     updated_fields.append('fps')
+                if 'hdr_format' in stats:
+                    stream_info.hdr_format = stats['hdr_format']
+                    updated_fields.append('hdr_format')
                 
                 if updated_fields:
-                    logger.info(f"Updated stream {stream_id} stats from screenshot probe: {', '.join(updated_fields)}")
-                
+                    logger.debug(f"Updated stream {stream_id} stats from screenshot probe: {', '.join(updated_fields)}")
+                    success = True
+            
+            return success, logo_status
         except Exception as e:
-            logger.error(f"Error capturing screenshot for stream {stream_id}: {e}")
+            logger.error(f"Screenshot capture failed for stream {stream_id}: {e}")
+            
+        return success, logo_status
 
 
 # Global instance accessor

@@ -61,7 +61,10 @@ class StreamMetrics:
     buffering: bool = False
     reliability_score: float = 50.0
     status: str = 'review'
+    status_reason: Optional[str] = None
     rank: Optional[int] = None
+    loop_duration: Optional[float] = None
+    display_logo_status: str = 'PENDING'
 
     
 
@@ -77,15 +80,29 @@ class StreamInfo:
     fps: Optional[float] = None
     bitrate: Optional[int] = None
     m3u_account: Optional[str] = None
+    hdr_format: Optional[str] = None
     status: str = 'review'  # 'stable', 'review', 'quarantined'
     last_status_change: float = 0.0
     failure_count: int = 0
     reliability_score: float = 50.0  # Start at middle score
     metrics_history: List[StreamMetrics] = None
+    rank: Optional[int] = None
     last_screenshot_time: float = 0
     screenshot_path: Optional[str] = None
     # Low speed tracking for auto-quarantine
     low_speed_start_time: Optional[float] = None  # When speed first dropped below threshold
+    status_reason: Optional[str] = None  # e.g., 'looping', 'dead', 'timeout'
+    last_loop_time: Optional[float] = None  # When a loop was last detected
+    last_logo_status: str = 'PENDING'
+    display_logo_status: str = 'PENDING'
+    consecutive_logo_misses: int = 0
+    loop_duration: Optional[float] = None
+    last_loop_log_time: float = 0.0
+    last_logo_log_time: float = 0.0
+    # Transport health evaluation (populated from FFmpeg DiagnosticTracker)
+    transport_health: str = 'Healthy'           # Healthy | Degraded | Severe | Critical
+    transport_health_summary: str = ''
+    transport_error_density: float = 0.0        # peak errors/minute in last 60s
     
     @property
     def is_quarantined(self) -> bool:
@@ -137,18 +154,34 @@ class SessionInfo:
     epg_event_description: Optional[str] = None
     # Channel logo
     channel_logo_url: Optional[str] = None
+    logo_id: Optional[int] = None
     channel_tvg_id: Optional[str] = None
     # Auto-creation source (for tracking if created by rules)
     auto_created: bool = False
     auto_create_rule_id: Optional[str] = None
+    # Detection toggles
+    enable_looping_detection: bool = True
+    enable_logo_detection: bool = True
     # Track quarantined stream IDs to prevent re-addition
     quarantined_stream_ids: Set[int] = None
+    
+    # Synchronization enforcement
+    enforce_sync_interval_ms: int = 1000  # Default 1 second
+    last_sync_time: float = 0.0
+    
+    # Matching configuration
+    match_by_tvg_id: bool = False
+    
+    # Store advertisement periods (when global pardon is active)
+    ad_periods: List[Dict[str, float]] = None
     
     def __post_init__(self):
         if self.streams is None:
             self.streams = {}
         if self.quarantined_stream_ids is None:
             self.quarantined_stream_ids = set()
+        if self.ad_periods is None:
+            self.ad_periods = []
 
 
 class CappedSlidingWindow:
@@ -240,6 +273,7 @@ class StreamSessionManager:
         self.sessions: Dict[str, SessionInfo] = {}
         self.session_locks: Dict[str, threading.Lock] = {}
         self.scoring_windows: Dict[str, Dict[int, CappedSlidingWindow]] = {}  # session_id -> stream_id -> window
+        self.channel_ownership: Dict[int, str] = {}  # channel_id -> session_id
         
         # Ensure config directory exists
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -251,6 +285,7 @@ class StreamSessionManager:
         
         # Track last stream list refresh time
         self._last_streams_refresh = 0
+        self.loop_review_duration = 600.0  # Default 10 minutes
         logger.info("StreamSessionManager initialized")
 
         self._load_sessions()
@@ -262,7 +297,8 @@ class StreamSessionManager:
                 with open(self.settings_file, 'r') as f:
                     data = json.load(f)
                     self.review_duration = data.get('review_duration', DEFAULT_REVIEW_DURATION)
-                    logger.info(f"Loaded session settings: review_duration={self.review_duration}s")
+                    self.loop_review_duration = data.get('loop_review_duration', 600.0)
+                    logger.info(f"Loaded session settings: review_duration={self.review_duration}s, loop_review_duration={self.loop_review_duration}s")
         except Exception as e:
             logger.error(f"Failed to load session settings: {e}")
 
@@ -270,7 +306,8 @@ class StreamSessionManager:
         """Save session settings."""
         try:
             data = {
-                'review_duration': self.review_duration
+                'review_duration': self.review_duration,
+                'loop_review_duration': self.loop_review_duration
             }
             with open(self.settings_file, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -284,6 +321,14 @@ class StreamSessionManager:
         self.review_duration = float(duration)
         self.save_settings()
         logger.info(f"Updated review duration to {self.review_duration}s")
+
+    def get_loop_review_duration(self) -> float:
+        return self.loop_review_duration
+
+    def set_loop_review_duration(self, duration: float):
+        self.loop_review_duration = float(duration)
+        self.save_settings()
+        logger.info(f"Updated loop review duration to {self.loop_review_duration}s")
     
     def _load_sessions(self):
         """Load sessions from persistent storage"""
@@ -371,18 +416,24 @@ class StreamSessionManager:
                       allow_duplicate_channel: bool = False,
                       skip_stream_refresh: bool = False,
                       evaluation_interval_ms: int = DEFAULT_EVALUATION_INTERVAL_MS,
+                      match_by_tvg_id: bool = False,
+                      enable_looping_detection: bool = True,
+                      enable_logo_detection: bool = True,
                       **kwargs) -> str:
         """
         Create a new monitoring session.
         
         Args:
             channel_id: Dispatcharr channel ID to monitor
-            regex_filter: Regex pattern to filter streams
+            regex_filter: Regex pattern to filter streams (optional if match_by_tvg_id is True)
             pre_event_minutes: Minutes before event to start monitoring
             epg_event: Optional EPG event to attach to this session
             allow_duplicate_channel: Allow creating a session if one already exists for this channel
             skip_stream_refresh: Skip refreshing global stream list (useful for batch operations)
             evaluation_interval_ms: Interval for stream evaluation in milliseconds
+            match_by_tvg_id: Whether to match streams by TVG-ID
+            enable_looping_detection: Whether to enable looping detection for this session
+            enable_logo_detection: Whether to enable logo detection for this session
             **kwargs: Additional session parameters (auto_created, auto_create_rule_id, etc.)
             
         Returns:
@@ -461,7 +512,11 @@ class StreamSessionManager:
             epg_event_end=epg_event_end,
             epg_event_description=epg_event_description,
             channel_logo_url=channel_logo_url,
+            logo_id=logo_id,
             channel_tvg_id=channel_tvg_id,
+            match_by_tvg_id=match_by_tvg_id,
+            enable_looping_detection=enable_looping_detection,
+            enable_logo_detection=enable_logo_detection,
             **kwargs
         )
         
@@ -500,7 +555,17 @@ class StreamSessionManager:
             return False
         
         with self.session_locks[session_id]:
+            # Check for exclusive channel ownership
+            current_owner = self.get_session_owner(session.channel_id)
+            if current_owner and current_owner != session_id:
+                logger.error(f"Cannot start session {session_id}: Channel {session.channel_id} is already owned by active session {current_owner}")
+                return False
+            
+            # Claim ownership
+            self.channel_ownership[session.channel_id] = session_id
+            
             session.is_active = True
+            session.last_sync_time = 0.0  # Reset sync time
             
             # Discover streams
             self._discover_streams(session_id)
@@ -549,6 +614,11 @@ class StreamSessionManager:
         
         with self.session_locks[session_id]:
             session.is_active = False
+            # Release ownership
+            if self.channel_ownership.get(session.channel_id) == session_id:
+                del self.channel_ownership[session.channel_id]
+                logger.debug(f"Released ownership of channel {session.channel_id} from session {session_id}")
+            
             self._save_sessions()
         
         # Explicitly stop all FFmpeg monitors for this session
@@ -576,49 +646,70 @@ class StreamSessionManager:
         # Get all streams
         all_streams = udi.get_streams()
         
-        # Filter by regex with safety measures
-        try:
-            # Validate regex complexity (basic check)
-            regex_pattern = session.regex_filter or '.*'
-            if len(regex_pattern) > 500:
-                logger.error(f"Regex pattern too long ({len(regex_pattern)} chars), max 500")
-                return
-            
-            # Substitute CHANNEL_NAME variable if present (consistent with channel matcher)
-            channel_name = session.channel_name or f"Channel {session.channel_id}"
-            escaped_channel_name = re.escape(channel_name)
-            regex_pattern = regex_pattern.replace('CHANNEL_NAME', escaped_channel_name)
-            
-            # Convert literal spaces in pattern to flexible whitespace regex (\s+)
-            # This matches behavior in RegexChannelMatcher
-            regex_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', regex_pattern)
-            
-            # Compile with timeout protection
-            regex = re.compile(regex_pattern, re.IGNORECASE)
-            
-            # Test regex with empty string to catch catastrophic backtracking
+        regex = None
+        if session.regex_filter:
+            # Filter by regex with safety measures
             try:
-                regex.search('')
-            except Exception as e:
-                logger.error(f"Regex pattern failed safety test: {e}")
-                return
+                # Validate regex complexity (basic check)
+                regex_pattern = session.regex_filter
+                if len(regex_pattern) > 500:
+                    logger.error(f"Regex pattern too long ({len(regex_pattern)} chars), max 500")
+                    return
                 
-        except re.error as e:
-            logger.error(f"Invalid regex filter: {e}")
-            return
-        except Exception as e:
-            logger.error(f"Unexpected error compiling regex: {e}")
-            return
+                # Substitute CHANNEL_NAME variable if present (consistent with channel matcher)
+                channel_name = session.channel_name or f"Channel {session.channel_id}"
+                escaped_channel_name = re.escape(channel_name)
+                regex_pattern = regex_pattern.replace('CHANNEL_NAME', escaped_channel_name)
+                
+                # Convert literal spaces in pattern to flexible whitespace regex (\s+)
+                # This matches behavior in RegexChannelMatcher
+                regex_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', regex_pattern)
+                
+                # Compile with timeout protection
+                regex = re.compile(regex_pattern, re.IGNORECASE)
+                
+                # Test regex with empty string to catch catastrophic backtracking
+                try:
+                    regex.search('')
+                except Exception as e:
+                    logger.error(f"Regex pattern failed safety test: {e}")
+                    return
+                    
+            except re.error as e:
+                logger.error(f"Invalid regex filter: {e}")
+                return
+            except Exception as e:
+                logger.error(f"Unexpected error compiling regex: {e}")
+                return
         
-        # Find matching streams with timeout protection
+        # Find matching streams
         matching_streams = []
+        
+        # Pre-calculate session TVG-ID if needed
+        session_tvg_id = session.channel_tvg_id
+        
         for s in all_streams:
             try:
-                # Use search with a reasonable timeout approach
-                # Python regex doesn't have direct timeout, but we can limit input size
-                stream_name = s.get('name', '')[:1000]  # Limit input size
-                if regex.search(stream_name):
+                matched = False
+                
+                # Check 1: TVG-ID Match
+                if session.match_by_tvg_id and session_tvg_id:
+                    stream_tvg_id = s.get('tvg_id')
+                    if stream_tvg_id == session_tvg_id:
+                        matched = True
+                
+                # Check 2: Regex Match (if not already matched by TVG-ID or if we want cumulative)
+                # Currently implementing OR logic: if matches TVG-ID OR Regex, include it.
+                if not matched and regex:
+                    # Use search with a reasonable timeout approach
+                    # Python regex doesn't have direct timeout, but we can limit input size
+                    stream_name = s.get('name', '')[:1000]  # Limit input size
+                    if regex.search(stream_name):
+                        matched = True
+                
+                if matched:
                     matching_streams.append(s)
+                    
             except Exception as e:
                 logger.warning(f"Error matching stream {s.get('id')}: {e}")
                 continue
@@ -670,6 +761,7 @@ class StreamSessionManager:
                     fps=stats.get('fps') or stream_data.get('fps'),
                     bitrate=bitrate,
                     m3u_account=stream_data.get('m3u_account'),
+                    hdr_format=stats.get('hdr_format') or stream_data.get('hdr_format'),
                     status='review',
                     last_status_change=time.time()
                 )
@@ -719,6 +811,17 @@ class StreamSessionManager:
             if session.is_active:
                 channels.add(session.channel_id)
         return channels
+    
+    def get_session_owner(self, channel_id: int) -> Optional[str]:
+        """Get the session ID that currently owns the channel.
+        
+        Args:
+            channel_id: Channel ID to check
+            
+        Returns:
+            Session ID if owned, None otherwise
+        """
+        return self.channel_ownership.get(channel_id)
     
     def add_stream_to_session(self, session_id: str, stream_id: int) -> bool:
         """Add a newly discovered stream to an active session.
@@ -791,6 +894,7 @@ class StreamSessionManager:
                 name=stream.get('name', ''),
                 channel_id=session.channel_id,
                 m3u_account=stream.get('m3u_account'),
+                hdr_format=stream.get('stream_stats', {}).get('hdr_format') if isinstance(stream.get('stream_stats'), dict) else None,
                 status='review',
                 last_status_change=time.time()
             )
@@ -825,7 +929,7 @@ class StreamSessionManager:
             
             return True
     
-    def quarantine_stream(self, session_id: str, stream_id: int, remove_from_dispatcharr: bool = True) -> bool:
+    def quarantine_stream(self, session_id: str, stream_id: int, remove_from_dispatcharr: bool = True, reason: str = "manual") -> bool:
         """
         Manually quarantine a stream and optionally remove it from Dispatcharr.
         
@@ -849,12 +953,24 @@ class StreamSessionManager:
             return False
         
         with self.session_locks[session_id]:
-            # Update status to quarantined
-            stream_info.status = 'quarantined'
-            stream_info.last_status_change = time.time()
-            self._save_sessions()
+            if stream_info.status != 'quarantined':
+                # Update status to quarantined
+                stream_info.status = 'quarantined'
+                stream_info.status_reason = reason
+                stream_info.last_status_change = time.time()
+                
+                # Add to persistent blocklist
+                if session.quarantined_stream_ids is None:
+                    session.quarantined_stream_ids = set()
+                session.quarantined_stream_ids.add(stream_id)
+                
+                self._save_sessions()
         
-        logger.info(f"Manually quarantined stream {stream_id} in session {session_id}")
+        log_msg = f"Quarantined stream {stream_id} in session {session_id}"
+        if reason == "manual":
+            logger.info(f"Manually {log_msg.lower()}")
+        else:
+            logger.info(f"Automatically {log_msg.lower()} (Reason: {reason})")
         
         # Remove from Dispatcharr channel if requested
         if remove_from_dispatcharr:
@@ -872,7 +988,7 @@ class StreamSessionManager:
                         stream_name=stream_info.name,
                         channel_id=session.channel_id
                     )
-                    logger.info(f"Marked quarantined stream {stream_id} as dead in tracker")
+                    logger.debug(f"Marked quarantined stream {stream_id} as dead in tracker")
                 except Exception as e:
                     logger.warning(f"Failed to mark stream {stream_id} as dead: {e}")
 
@@ -890,7 +1006,7 @@ class StreamSessionManager:
                         success = update_channel_streams(session.channel_id, new_streams)
                         
                         if success:
-                            logger.info(f"Removed quarantined stream {stream_id} from Dispatcharr channel {session.channel_id}")
+                            logger.debug(f"Removed quarantined stream {stream_id} from Dispatcharr channel {session.channel_id}")
                             # Refresh channel in UDI
                             udi.refresh_channel_by_id(session.channel_id)
                         else:
@@ -905,39 +1021,43 @@ class StreamSessionManager:
          
         return True
 
-    def quarantine_stream(self, session_id: str, stream_id: int) -> bool:
+
+
+    def move_stream_to_review(self, session_id: str, stream_id: int, reason: str = "manual") -> bool:
         """
-        Quarantine a stream by setting its status to 'quarantined' and adding to blocklist.
+        Moves a stream back to 'review' status (e.g., when it is detected looping while stable).
         
         Args:
             session_id: Session ID
-            stream_id: Stream ID
+            stream_id: Stream ID to move to review
+            reason: The reason for moving to review
             
         Returns:
-            True if successful
+            True if moved successfully
         """
         if session_id not in self.sessions:
+            logger.error(f"Session {session_id} not found")
             return False
             
         session = self.sessions[session_id]
         stream_info = session.streams.get(stream_id)
         
         if not stream_info:
+            logger.error(f"Stream {stream_id} not found in session {session_id}")
             return False
             
-        with self.session_locks[session_id]:
-            if stream_info.status != 'quarantined':
-                stream_info.status = 'quarantined'
-                stream_info.last_status_change = time.time()
-                
-                # Add to persistent blocklist
-                if session.quarantined_stream_ids is None:
-                    session.quarantined_stream_ids = set()
-                session.quarantined_stream_ids.add(stream_id)
-                
-                self._save_sessions()
-                logger.info(f"Quarantined stream {stream_id} in session {session_id} (added to blocklist)")
-                return True
+        if stream_info.status == "quarantined":
+            logger.debug(f"Stream {stream_id} is quarantined; not moving to review.")
+            return False
+            
+        if stream_info.status != "review":
+            stream_info.status = "review"
+            stream_info.status_reason = reason
+            stream_info.last_status_change = time.time()
+            logger.debug(f"Stream {stream_id} moved to Review. Reason: {reason}")
+            self._save_sessions()
+            return True
+            
         return False
 
     def revive_stream(self, session_id: str, stream_id: int) -> bool:
@@ -968,6 +1088,9 @@ class StreamSessionManager:
                 # Reset counters for fresh start
                 stream_info.low_speed_start_time = None
                 stream_info.failure_count = 0
+                stream_info.consecutive_logo_misses = 0
+                stream_info.loop_duration = None
+                stream_info.status_reason = None
                 
                 # Remove from persistent blocklist
                 if session.quarantined_stream_ids and stream_id in session.quarantined_stream_ids:
