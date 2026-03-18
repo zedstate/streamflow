@@ -942,7 +942,7 @@ def add_bulk_regex_patterns():
         # Validate patterns before applying
         is_valid, error_msg = matcher.validate_regex_patterns(regex_patterns)
         if not is_valid:
-            return jsonify({"error": error_msg}), 400
+            return jsonify({"error": "Invalid value or request parameters"}), 400
         
         # Apply patterns to each channel
         success_count = 0
@@ -1459,7 +1459,7 @@ def bulk_edit_regex_pattern():
         matcher = get_regex_matcher()
         is_valid, error_msg = matcher.validate_regex_patterns([new_pattern])
         if not is_valid:
-            return jsonify({"error": error_msg}), 400
+            return jsonify({"error": "Invalid value or request parameters"}), 400
         
         # Get UDI manager to fetch channel names
         udi = get_udi_manager()
@@ -5383,14 +5383,11 @@ def handle_session_settings():
 @app.route('/<path:path>')
 def serve_frontend(path):
     """Serve React frontend files or return index.html for client-side routing."""
-    try:
-        # Resolve to absolute path to handle '..'
-        resolved_path = (static_folder / path).resolve()
-        # Verify it is inside the static_folder
-        if not str(resolved_path).startswith(str(static_folder.resolve())):
-            return jsonify({"error": "Invalid path"}), 400
-    except (ValueError, OSError):
+    from werkzeug.utils import safe_join
+    resolved_path_str = safe_join(str(static_folder), path)
+    if resolved_path_str is None:
         return jsonify({"error": "Invalid path"}), 400
+    resolved_path = Path(resolved_path_str)
 
     if resolved_path.exists() and resolved_path.is_file():
         return send_from_directory(static_folder, path)
