@@ -270,7 +270,7 @@ class AutomationConfigManager:
         return self._get_config_dict("channel_assignments", {}).get(str(channel_id))
 
     def get_group_assignment(self, group_id: int) -> Optional[str]:
-        return self._get_get_config_dict("group_assignments", {}).get(str(group_id))
+        return self._get_config_dict("group_assignments", {}).get(str(group_id))
 
     def get_effective_profile_id(self, channel_id: int, group_id: Optional[int] = None) -> Optional[str]:
         cid = str(channel_id)
@@ -386,6 +386,62 @@ class AutomationConfigManager:
             session.commit(); return True
         except: session.rollback(); return False
         finally: session.close()
+
+    def assign_period_to_channels(self, period_id: str, channel_ids: List[int], profile_id: str, replace: bool = False) -> bool:
+        assignments = self._get_config_dict("channel_period_assignments", {})
+        pid = str(period_id)
+        changed = False
+
+        for cid_raw in channel_ids:
+            cid = str(cid_raw)
+            if replace or cid not in assignments or not isinstance(assignments[cid], dict):
+                assignments[cid] = {}
+            if assignments[cid].get(pid) != str(profile_id):
+                assignments[cid][pid] = str(profile_id)
+                changed = True
+
+        if changed:
+            return self._set_config_dict("channel_period_assignments", assignments)
+        return True
+
+    def remove_period_from_channels(self, period_id: str, channel_ids: List[int]) -> bool:
+        assignments = self._get_config_dict("channel_period_assignments", {})
+        pid = str(period_id)
+        changed = False
+
+        for cid_raw in channel_ids:
+            cid = str(cid_raw)
+            channel_assignments = assignments.get(cid)
+            if not isinstance(channel_assignments, dict):
+                continue
+            if pid in channel_assignments:
+                del channel_assignments[pid]
+                if not channel_assignments:
+                    del assignments[cid]
+                changed = True
+
+        if changed:
+            return self._set_config_dict("channel_period_assignments", assignments)
+        return True
+
+    def get_channel_periods(self, channel_id: int) -> Dict[str, str]:
+        assignments = self._get_config_dict("channel_period_assignments", {})
+        channel_assignments = assignments.get(str(channel_id), {})
+        if not isinstance(channel_assignments, dict):
+            return {}
+        return channel_assignments
+
+    def get_period_channels(self, period_id: str) -> List[int]:
+        assignments = self._get_config_dict("channel_period_assignments", {})
+        pid = str(period_id)
+        channels: List[int] = []
+        for cid, period_map in assignments.items():
+            if isinstance(period_map, dict) and pid in period_map:
+                try:
+                    channels.append(int(cid))
+                except (TypeError, ValueError):
+                    continue
+        return channels
 
     # --- Outer scheduler helpers ---
 
