@@ -139,10 +139,16 @@ export default function AutomationProfileEditor() {
                 const parts = field.split('.')
                 let current = newData
                 for (let i = 0; i < parts.length - 1; i++) {
-                    if (!current[parts[i]]) current[parts[i]] = {}
-                    current = current[parts[i]]
+                    const key = parts[i]
+                    if (['__proto__', 'constructor', 'prototype'].includes(key)) {
+                        continue; // Block prototype pollution
+                    }
+                    if (!current[key]) current[key] = {}
+                    current = current[key]
                 }
-                current[parts[parts.length - 1]] = value
+                if (!['__proto__', 'constructor', 'prototype'].includes(parts[parts.length - 1])) {
+                    current[parts[parts.length - 1]] = value
+                }
             } else {
                 newData[field] = value
             }

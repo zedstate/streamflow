@@ -8,6 +8,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 import time
 import threading
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -175,4 +176,4 @@ in different modes!
 Starting server on http://localhost:5000
     """)
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=os.environ.get('FLASK_DEBUG', 'False').lower() == 'true')

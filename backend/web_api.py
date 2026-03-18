@@ -806,7 +806,7 @@ def get_channel_logo_cached(logo_id):
         
     except requests.exceptions.RequestException as e:
         logger.error(f"Error downloading logo {logo_id}: {e}")
-        return jsonify({"error": f"Failed to download logo: {str(e)}"}), 500
+        return jsonify({"error": "Failed to download logo"}), 500
     except Exception as e:
         logger.error(f"Error caching logo {logo_id}: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
