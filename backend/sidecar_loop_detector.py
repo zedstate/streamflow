@@ -59,6 +59,7 @@ class SidecarLoopDetector:
         stream_ctx = f"stream {self.stream_id}" if self.stream_id else "unknown stream"
         logger.info(f"SidecarLoopDetector worker started for {stream_ctx}")
         try:
+            last_process_time = 0.0
             while not self.is_closed:
                 frame_data = self._read_ppm_frame()
                 if not frame_data:
@@ -68,6 +69,12 @@ class SidecarLoopDetector:
                 timestamp = time.monotonic()
                 self.last_frame_time = timestamp
                 
+                # Frame dropping: Only process roughly 1 FPS
+                if timestamp - last_process_time < 1.0:
+                    continue  # Skip processing for this frame
+                
+                last_process_time = timestamp
+                
                 try:
                     # Parse PPM frame
                     img = Image.open(io.BytesIO(frame_data))
@@ -76,8 +83,6 @@ class SidecarLoopDetector:
                     if imagehash:
                         h = imagehash.phash(img)
                     else:
-                        # Fallback simple mean hash if imagehash not available
-                        # (Not ideal, but prevents total failure)
                         h = self._simple_hash(img)
                     
                     self.buffer.append((timestamp, h))
@@ -165,22 +170,21 @@ class SidecarLoopDetector:
         """
         try:
             # Header: P6\nwidth height\nmaxval\n
-            header = b""
-            newlines_needed = 3
-            while newlines_needed > 0:
-                chunk = self.pipe.read(1)
-                if not chunk:
+            # Read 3 lines for the PPM header
+            header_lines = []
+            for _ in range(3):
+                line = self.pipe.readline()
+                if not line:
                     return None
-                header += chunk
-                if chunk == b'\n':
-                    newlines_needed -= 1
+                header_lines.append(line)
+            header = b"".join(header_lines)
             
             # Parse header to get dimensions
-            header_lines = header.decode().strip().split('\n')
-            if len(header_lines) < 3 or header_lines[0] != 'P6':
+            parsed_lines = [l.decode().strip() for l in header_lines]
+            if not parsed_lines or parsed_lines[0] != 'P6':
                 return None
             
-            dims = header_lines[1].split()
+            dims = parsed_lines[1].split()
             if len(dims) != 2:
                 return None
             width, height = map(int, dims)

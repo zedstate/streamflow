@@ -85,7 +85,7 @@ class StreamInfo:
     last_status_change: float = 0.0
     failure_count: int = 0
     reliability_score: float = 50.0  # Start at middle score
-    metrics_history: List[StreamMetrics] = None
+    metrics_history: Optional[deque] = None
     rank: Optional[int] = None
     last_screenshot_time: float = 0
     screenshot_path: Optional[str] = None
@@ -124,7 +124,7 @@ class StreamInfo:
 
     def __post_init__(self):
         if self.metrics_history is None:
-            self.metrics_history = []
+            self.metrics_history = deque(maxlen=3600)
         if self.last_status_change == 0.0:
             self.last_status_change = time.time()
 
@@ -350,14 +350,29 @@ class StreamSessionManager:
     def _save_sessions(self):
         """Save sessions to persistent storage"""
         try:
-            data = {
-                'sessions': [self._serialize_session(s) for s in self.sessions.values()],
-                'updated_at': datetime.now().isoformat()
-            }
-            with open(SESSION_DATA_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
+            import copy
+            # Snapshot sessions for thread-safe background serialization
+            sessions_snapshot = copy.deepcopy(dict(self.sessions))
+            
+            def _execute_save(snapshot):
+                try:
+                    data = {
+                        'sessions': [self._serialize_session(s) for s in snapshot.values()],
+                        'updated_at': datetime.now().isoformat()
+                    }
+                    with open(SESSION_DATA_FILE, 'w') as f:
+                        json.dump(data, f, indent=2)
+                except Exception as e:
+                    logger.error(f"Failed to save sessions in background: {e}")
+
+            threading.Thread(
+                target=_execute_save,
+                args=(sessions_snapshot,),
+                daemon=True,
+                name="SessionSaver"
+            ).start()
         except Exception as e:
-            logger.error(f"Failed to save sessions: {e}")
+            logger.error(f"Failed to trigger save sessions: {e}")
     
     def _serialize_session(self, session: SessionInfo) -> Dict[str, Any]:
         """Serialize session to JSON-compatible dict"""
@@ -369,7 +384,8 @@ class StreamSessionManager:
                 stream_dict = dict(stream_info) if isinstance(stream_info, dict) else asdict(stream_info)
                 # Limit metrics history size for storage
                 if 'metrics_history' in stream_dict and stream_dict['metrics_history']:
-                    stream_dict['metrics_history'] = stream_dict['metrics_history'][-1000:]  # Keep last 1000
+                    # Convert to list to ensure JSON serializability
+                    stream_dict['metrics_history'] = list(stream_dict['metrics_history'])[-1000:]
                 streams_dict[str(stream_id)] = stream_dict
             data['streams'] = streams_dict
             
@@ -399,7 +415,9 @@ class StreamSessionManager:
                             metrics.append(StreamMetrics(**m))
                         else:
                             metrics.append(m)
-                    stream_data['metrics_history'] = metrics
+                    # Convert list back to deque with maxlen
+                    window_size = data.get('window_size', DEFAULT_WINDOW_SIZE)
+                    stream_data['metrics_history'] = deque(metrics, maxlen=window_size)
                 
                 streams[int(stream_id)] = StreamInfo(**stream_data)
             data['streams'] = streams
@@ -946,13 +964,12 @@ class StreamSessionManager:
             return False
         
         session = self.sessions[session_id]
-        stream_info = session.streams.get(stream_id)
-        
-        if not stream_info:
-            logger.error(f"Stream {stream_id} not found in session {session_id}")
-            return False
-        
         with self.session_locks[session_id]:
+            stream_info = session.streams.get(stream_id)
+            
+            if not stream_info:
+                logger.error(f"Stream {stream_id} not found in session {session_id}")
+                return False
             if stream_info.status != 'quarantined':
                 # Update status to quarantined
                 stream_info.status = 'quarantined'
@@ -1040,23 +1057,24 @@ class StreamSessionManager:
             return False
             
         session = self.sessions[session_id]
-        stream_info = session.streams.get(stream_id)
-        
-        if not stream_info:
-            logger.error(f"Stream {stream_id} not found in session {session_id}")
-            return False
+        with self.session_locks[session_id]:
+            stream_info = session.streams.get(stream_id)
             
-        if stream_info.status == "quarantined":
-            logger.debug(f"Stream {stream_id} is quarantined; not moving to review.")
-            return False
-            
-        if stream_info.status != "review":
-            stream_info.status = "review"
-            stream_info.status_reason = reason
-            stream_info.last_status_change = time.time()
-            logger.debug(f"Stream {stream_id} moved to Review. Reason: {reason}")
-            self._save_sessions()
-            return True
+            if not stream_info:
+                logger.error(f"Stream {stream_id} not found in session {session_id}")
+                return False
+                
+            if stream_info.status == "quarantined":
+                logger.debug(f"Stream {stream_id} is quarantined; not moving to review.")
+                return False
+                
+            if stream_info.status != "review":
+                stream_info.status = "review"
+                stream_info.status_reason = reason
+                stream_info.last_status_change = time.time()
+                logger.debug(f"Stream {stream_id} moved to Review. Reason: {reason}")
+                self._save_sessions()
+                return True
             
         return False
 
@@ -1075,12 +1093,11 @@ class StreamSessionManager:
             return False
             
         session = self.sessions[session_id]
-        stream_info = session.streams.get(stream_id)
-        
-        if not stream_info:
-            return False
-            
         with self.session_locks[session_id]:
+            stream_info = session.streams.get(stream_id)
+            
+            if not stream_info:
+                return False
             if stream_info.status == 'quarantined':
                 stream_info.status = 'review'
                 stream_info.last_status_change = time.time()

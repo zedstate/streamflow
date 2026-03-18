@@ -89,6 +89,10 @@ class StreamMonitoringService:
         self.screenshot_service = get_screenshot_service()
         self.dead_streams_tracker = DeadStreamsTracker()
         
+        # Centralized ThreadPool for I/O tasks
+        self.io_pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
+        self._state_lock = threading.Lock()
+        
         # Active monitors: session_id -> stream_id -> FFmpegStreamMonitor
         self.monitors: Dict[str, Dict[int, FFmpegStreamMonitor]] = {}
         
@@ -164,32 +168,33 @@ class StreamMonitoringService:
         Args:
             session_id: Session ID to stop monitors for
         """
-        if session_id in self.monitors:
-            logger.info(f"Stopping all monitors for session {session_id}")
-            # Stop all monitors and sidecars
-            for stream_id, monitor in list(self.monitors[session_id].items()):
-                try:
-                    monitor.stop()
-                    logger.debug(f"Stopped monitor for stream {stream_id}")
-                except Exception as e:
-                    logger.error(f"Error stopping monitor for stream {stream_id}: {e}")
-            
-            if session_id in self.sidecars:
-                for stream_id, (proc, detector) in list(self.sidecars[session_id].items()):
+        with self._state_lock:
+            if session_id in self.monitors:
+                logger.info(f"Stopping all monitors for session {session_id}")
+                # Stop all monitors and sidecars
+                for stream_id, monitor in list(self.monitors[session_id].items()):
                     try:
-                        detector.is_closed = True
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=2)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                        logger.debug(f"Stopped sidecar for stream {stream_id}")
+                        monitor.stop()
+                        logger.debug(f"Stopped monitor for stream {stream_id}")
                     except Exception as e:
-                        logger.error(f"Error stopping sidecar for stream {stream_id}: {e}")
-                del self.sidecars[session_id]
-            
-            # Remove session from monitors
-            del self.monitors[session_id]
+                        logger.error(f"Error stopping monitor for stream {stream_id}: {e}")
+                
+                if session_id in self.sidecars:
+                    for stream_id, (proc, detector) in list(self.sidecars[session_id].items()):
+                        try:
+                            detector.is_closed = True
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                            logger.debug(f"Stopped sidecar for stream {stream_id}")
+                        except Exception as e:
+                            logger.error(f"Error stopping sidecar for stream {stream_id}: {e}")
+                    del self.sidecars[session_id]
+                
+                # Remove session from monitors
+                del self.monitors[session_id]
             logger.info(f"All monitors and sidecars stopped for session {session_id}")
     
     def _remove_stream_from_dispatcharr(self, session_id: str, stream_id: int, reason: str):
@@ -264,12 +269,8 @@ class StreamMonitoringService:
             except Exception as e:
                 logger.error(f"Error removing {reason} stream from Dispatcharr: {e}", exc_info=True)
 
-        # Offload external REST patching to a daemon thread to prevent evaluate_session_streams from blocking
-        threading.Thread(
-            target=_execute_removal,
-            daemon=True,
-            name=f"RemoveDispatcharr-{stream_id}"
-        ).start()
+        # Offload external REST patching to thread pool
+        self.io_pool.submit(_execute_removal)
     
     def _manage_quarantine_lifecycle(self, session) -> bool:
         """
@@ -512,20 +513,26 @@ class StreamMonitoringService:
         """Monitor all streams in a session"""
         session = self.session_manager.get_session(session_id)
         if not session or not session.is_active:
-            if session_id in self.monitors:
-                for monitor in self.monitors[session_id].values():
-                    monitor.stop()
-                del self.monitors[session_id]
+            with self._state_lock:
+                if session_id in self.monitors:
+                    for monitor in self.monitors[session_id].values():
+                        monitor.stop()
+                    del self.monitors[session_id]
             return
         
-        if session_id not in self.monitors:
-            self.monitors[session_id] = {}
+        with self._state_lock:
+            if session_id not in self.monitors:
+                self.monitors[session_id] = {}
+            monitors_dict = self.monitors[session_id]
         
         for stream_id, stream_info in session.streams.items():
             if stream_info.is_quarantined:
                 continue
             
-            if stream_id not in self.monitors[session_id]:
+            with self._state_lock:
+                has_monitor = stream_id in monitors_dict
+            
+            if not has_monitor:
                 monitor = FFmpegStreamMonitor(
                     url=stream_info.url,
                     stream_id=stream_id,
@@ -534,7 +541,8 @@ class StreamMonitoringService:
                 )
                 
                 if monitor.start():
-                    self.monitors[session_id][stream_id] = monitor
+                    with self._state_lock:
+                        monitors_dict[stream_id] = monitor
                     # Initialize last_screenshot_time to current time to stagger first attempts
                     stream_info.last_screenshot_time = time.time()
                     logger.debug(f"Started primary monitor for stream {stream_id} in session {session_id}")
@@ -548,51 +556,34 @@ class StreamMonitoringService:
 
     def _start_sidecar_detector(self, session_id: str, stream_id: int, port: int):
         """Start secondary FFmpeg process and SidecarLoopDetector"""
-        if session_id not in self.sidecars:
-            self.sidecars[session_id] = {}
+        with self._state_lock:
+            if session_id not in self.sidecars:
+                self.sidecars[session_id] = {}
             
         cmd = [
             'ffmpeg',
             '-hide_banner',
-            '-nostdin',                    # Disable interactive stdin
-            '-loglevel', 'warning',        # Reduce log clutter
-            '-skip_frame:v', 'nokey',      # Decode only keyframes (input option)
-            '-analyzeduration', '2000000', # 2s for more robust stream detection
-            '-probesize', '2000000',       # 2MB
-            '-f', 'mpegts',                # Force input format to bypass terminal-probing
+            '-nostdin',
+            '-loglevel', 'fatal',          # Changed to fatal
+            '-skip_frame:v', 'nokey',
+            '-analyzeduration', '2000000',
+            '-probesize', '2000000',
+            '-f', 'mpegts',
             '-i', f'udp://127.0.0.1:{port}?fifo_size=1000000&overrun_nonfatal=1',
-            '-an', '-sn',                  # Disable audio/subs
-            '-vf', 'scale=32:32:flags=fast_bilinear,format=gray', # Cheap scaling
-            '-c:v', 'ppm',                 # Modern codec selection
-            '-f', 'image2pipe',            # Ensure image2pipe format
+            '-an', '-sn',
+            '-vf', 'scale=32:32:flags=fast_bilinear,format=gray',
+            '-c:v', 'ppm',
+            '-f', 'image2pipe',
             'pipe:1'
         ]
         
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, # Capture stderr for debugging
-            stdin=subprocess.DEVNULL, # Explicitly redirect stdin to prevent ioctl errors
-            bufsize=10**6 # Buffer for frames
+            stderr=subprocess.DEVNULL,     # Changed to DEVNULL
+            stdin=subprocess.DEVNULL,
+            bufsize=10**6
         )
-        
-        # Monitor sidecar stderr in a background thread to log errors
-        def log_stderr(p, sid, stid):
-            for line in p.stderr:
-                try:
-                    line_str = line.decode('utf-8').strip()
-                    if line_str and "Error" in line_str:
-                        logger.warning(f"Sidecar FFmpeg error for stream {stid} in session {sid}: {line_str}")
-                    elif line_str:
-                        logger.debug(f"Sidecar FFmpeg [{stid}]: {line_str}")
-                except: pass
-
-        threading.Thread(
-            target=log_stderr,
-            args=(proc, session_id, stream_id),
-            daemon=True,
-            name=f"SidecarStderr-{stream_id}"
-        ).start()
         
         detector = SidecarLoopDetector(proc.stdout, stream_id=stream_id)
         
@@ -604,7 +595,8 @@ class StreamMonitoringService:
         )
         thread.start()
         
-        self.sidecars[session_id][stream_id] = (proc, detector)
+        with self._state_lock:
+            self.sidecars[session_id][stream_id] = (proc, detector)
         logger.info(f"Started sidecar loop detector for stream {stream_id} on port {port}")
 
     
@@ -632,10 +624,11 @@ class StreamMonitoringService:
                 )
                 
                 # Stop and cleanup monitor
-                if session_id in self.monitors and stream_id in self.monitors[session_id]:
-                    monitor = self.monitors[session_id][stream_id]
-                    monitor.stop()
-                    del self.monitors[session_id][stream_id]
+                with self._state_lock:
+                    if session_id in self.monitors and stream_id in self.monitors[session_id]:
+                        monitor = self.monitors[session_id][stream_id]
+                        monitor.stop()
+                        del self.monitors[session_id][stream_id]
                 
                 # Quarantine via session manager to update blocklist
                 self.session_manager.quarantine_stream(session_id, stream_id, reason=stats.error_message)
@@ -643,10 +636,11 @@ class StreamMonitoringService:
             else:
                 logger.info(f"Stream {stream_id} needs RESTART (non-fatal error) in session {session_id}: {stats.error_message}")
                 # Just stop and remove from monitors, the next monitoring loop will restart it
-                if session_id in self.monitors and stream_id in self.monitors[session_id]:
-                    monitor = self.monitors[session_id][stream_id]
-                    monitor.stop()
-                    del self.monitors[session_id][stream_id]
+                with self._state_lock:
+                    if session_id in self.monitors and stream_id in self.monitors[session_id]:
+                        monitor = self.monitors[session_id][stream_id]
+                        monitor.stop()
+                        del self.monitors[session_id][stream_id]
             return
         
         if stats.width > 0:
@@ -671,7 +665,8 @@ class StreamMonitoringService:
             return
         
         current_time = time.time()
-        session_monitors = self.monitors.get(session_id, {})
+        with self._state_lock:
+            session_monitors = dict(self.monitors.get(session_id, {}))
         
         # === Pillar 3: Cross-Stream Consensus ===
         active_logo_statuses = {}
@@ -801,17 +796,16 @@ class StreamMonitoringService:
             )
             stream_info.metrics_history.append(metrics)
             
-            # Keep history to window size
-            while len(stream_info.metrics_history) > session.window_size:
-                stream_info.metrics_history.pop(0)
+            # History is bounded deque, no manual pruning needed
             
             # Check for death/timeout/slow-speed/logo-mismatch
             if stream_info.consecutive_logo_misses >= 4:
                 logger.warning(f"Stream {stream_id} auto-quarantined for {stream_info.consecutive_logo_misses} consecutive logo misses (Wrong Channel Expected)")
                 stream_info.status_reason = 'logo-mismatch'
                 monitor.stop()
-                if stream_id in self.monitors.get(session_id, {}):
-                    del self.monitors[session_id][stream_id]
+                with self._state_lock:
+                    if stream_id in self.monitors.get(session_id, {}):
+                        del self.monitors[session_id][stream_id]
                 self.session_manager.quarantine_stream(session_id, stream_id)
                 self._remove_stream_from_dispatcharr(session_id, stream_id, "logo-mismatch")
                 continue
@@ -829,8 +823,9 @@ class StreamMonitoringService:
                 else:
                     logger.debug(f"Stream {stream_id} triggered RESTART (non-fatal) in session {session_id}. Error: {stats.error_message}")
                     monitor.stop()
-                    if stream_id in self.monitors.get(session_id, {}):
-                        del self.monitors[session_id][stream_id]
+                    with self._state_lock:
+                        if stream_id in self.monitors.get(session_id, {}):
+                            del self.monitors[session_id][stream_id]
             else:
                 time_since_update = current_time - stats.last_updated
                 if time_since_update > (session.timeout_ms / 1000.0):
@@ -838,8 +833,9 @@ class StreamMonitoringService:
                     logger.warning(f"Stream {stream_id} timed out in session {session_id} ({time_since_update:.1f}s), triggering restart")
                     stream_info.status_reason = 'timeout-restart'
                     monitor.stop()
-                    if stream_id in self.monitors.get(session_id, {}):
-                        del self.monitors[session_id][stream_id]
+                    with self._state_lock:
+                        if stream_id in self.monitors.get(session_id, {}):
+                            del self.monitors[session_id][stream_id]
                     # Note: We don't quarantine yet, let it try to restart once. 
                     # If it keeps timing out, reliability score will plummet and it might be quarantined via score logic.
                 else:
@@ -861,15 +857,17 @@ class StreamMonitoringService:
                         stream_info.low_speed_start_time = None
                     
                     # Sidecar loop detection logic
-                    sidecar = self.sidecars.get(session_id, {}).get(stream_id)
+                    with self._state_lock:
+                        sidecar = self.sidecars.get(session_id, {}).get(stream_id)
                     if sidecar:
                         proc, detector = sidecar
                         if proc.poll() is not None or detector.is_closed:
                             logger.warning(f"Sidecar for stream {stream_id} died, cleaning up")
                             try: proc.terminate()
                             except: pass
-                            if stream_id in self.sidecars.get(session_id, {}):
-                                del self.sidecars[session_id][stream_id]
+                            with self._state_lock:
+                                if stream_id in self.sidecars.get(session_id, {}):
+                                    del self.sidecars[session_id][stream_id]
                             sidecar = None
                     
                     if not sidecar and stats.is_alive and stats.speed > 0:
@@ -972,8 +970,6 @@ class StreamMonitoringService:
                     display_logo_status=getattr(stream_info, 'display_logo_status', 'PENDING')
                 )
                 stream_info.metrics_history.append(metrics)
-                while len(stream_info.metrics_history) > session.window_size:
-                    stream_info.metrics_history.pop(0)
             else:
                 # Update the rank on the metric added in step 1
                 last_metric.rank = rank
@@ -1000,22 +996,8 @@ class StreamMonitoringService:
             msg = f"Enforcing new stream order count={len(new_order_ids)} for session {session_id}"
             logger.debug(msg)
             
-            def _execute_sync():
-                try:
-                    from api_utils import update_channel_streams
-                    if update_channel_streams(session.channel_id, new_order_ids):
-                        udi.refresh_channel_by_id(session.channel_id)
-                        self.last_switch_times[session_id] = current_time
-                except Exception as e:
-                    logger.error(f"Error syncing rank to Dispatcharr: {e}")
-
-            # Offload synchronous network call to a background thread to prevent
-            # blocking the main evaluation loop and causing time drift
-            threading.Thread(
-                target=_execute_sync,
-                daemon=True,
-                name=f"RankSync-{session_id}"
-            ).start()
+            # Offload synchronous network call to thread pool
+            self.io_pool.submit(_execute_sync)
     
     def _calculate_monitoring_sort_key(self, info):
         """Calculate sort key for stream monitoring ranking."""
@@ -1087,13 +1069,8 @@ class StreamMonitoringService:
                     stream_info.last_screenshot_time = current_time
         
         if streams_to_capture:
-            # Capture screenshots in background
-            threading.Thread(
-                target=self._capture_screenshot_batch,
-                args=(session_id, streams_to_capture),
-                daemon=True,
-                name=f"ScreenshotBatch-{session_id}"
-            ).start()
+            # Capture screenshots in background via ThreadPool
+            self.io_pool.submit(self._capture_screenshot_batch, session_id, streams_to_capture)
                 
     def _capture_screenshot_batch(self, session_id: str, stream_ids: list[int]):
         """Capture multiple screenshots and log a summary in parallel"""

@@ -25,33 +25,26 @@ logger = setup_logging(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Diagnostic patterns grouped by impact severity
-_DIAG_PATTERNS: Dict[str, list] = {
+_DIAG_REGEX: Dict[str, re.Pattern] = {
     # Minor decoding artefacts
-    'decode_error': [
-        'error while decoding mb',
-        'corrupt decoded frame',
-        'concealing',
-        'missing picture in access unit',
-        'reference picture missing',
-        'non-existing pps',
-        'decode_slice_header error',
-    ],
+    'decode_error': re.compile(
+        r'error while decoding mb|corrupt decoded frame|concealing|'
+        r'missing picture in access unit|reference picture missing|'
+        r'non-existing pps|decode_slice_header error',
+        re.IGNORECASE
+    ),
     # Corrupt transport-layer packets
-    'corrupt_packet': [
-        'corrupt input packet',
-        'invalid data found when processing input',
-        'reference frames exceeds max',
-    ],
+    'corrupt_packet': re.compile(
+        r'corrupt input packet|invalid data found when processing input|'
+        r'reference frames exceeds max',
+        re.IGNORECASE
+    ),
     # Fatal / complete stream failure signals
-    'fatal': [
-        'connection timed out',
-        'server returned 4',
-        'server returned 5',
-        'end of file',
-        'error opening input',
-        'connection refused',
-        'no route to host',
-    ],
+    'fatal': re.compile(
+        r'connection timed out|server returned 4|server returned 5|'
+        r'end of file|error opening input|connection refused|no route to host',
+        re.IGNORECASE
+    ),
 }
 
 # Freeze / black-screen detection (seconds)
@@ -68,7 +61,7 @@ class DiagnosticTracker:
 
     def __init__(self):
         self._events: Dict[str, deque] = {
-            cat: deque() for cat in _DIAG_PATTERNS
+            cat: deque() for cat in _DIAG_REGEX
         }
         self._lock = threading.Lock()
         self._fatal_detected = False
@@ -79,14 +72,14 @@ class DiagnosticTracker:
     # Feed
     # ──────────────────────────────────────────────────────────
 
-    def record_line(self, line_lower: str, ts: float = None) -> None:
+    def record_line(self, line: str, ts: float = None) -> None:
         """Parse a single FFmpeg stderr line and record any diagnostic events."""
         if ts is None:
             ts = time.time()
 
         with self._lock:
-            for cat, patterns in _DIAG_PATTERNS.items():
-                if any(p in line_lower for p in patterns):
+            for cat, regex in _DIAG_REGEX.items():
+                if regex.search(line):
                     self._events[cat].append(ts)
                     if cat == 'fatal':
                         self._fatal_detected = True
@@ -212,6 +205,37 @@ class FFmpegStreamMonitor:
     Uses `ffmpeg -i <url> -c copy -f null -` to monitor stream health
     without significant CPU/memory overhead.
     """
+    
+    # Pre-compiled regexes for output monitoring (avoid recreating inside loop)
+    _REGEX_FATAL_ERRORS = re.compile(
+        r'error opening input:|error opening input file|error opening input files:|'
+        r'server returned 4|server returned 5|connection refused|no route to host|'
+        r'connection timed out|end of file|protocol not found',
+        re.IGNORECASE
+    )
+
+    _REGEX_NON_FATAL_ERRORS = re.compile(
+        r'decode_slice_header error|concealing|error while decoding mb|'
+        r'missing picture in access unit|error decoding the audio block|'
+        r'invalid data found when processing input|non-existing pps 0 referenced|'
+        r'no frame!|reference picture missing|i/o error|no such file or directory',
+        re.IGNORECASE
+    )
+
+    _REGEX_GENERAL_ERROR = re.compile(r'error|failed', re.IGNORECASE)
+    _REGEX_FATAL_WORD = re.compile(r'fatal', re.IGNORECASE)
+
+    # Pre-compiled regexes for metadata parsing
+    _REGEX_RESOLUTION = re.compile(r'(\d{3,5})x(\d{3,5})')
+    _REGEX_FPS_METADATA = re.compile(r'(\d+(?:\.\d+)?)\s*fps')
+    _REGEX_AUDIO_LANG = re.compile(r'Stream #\d+:\d+\((\w+)\):')
+
+    # Pre-compiled regexes for stats parsing
+    _REGEX_SPEED = re.compile(r'speed=\s*(\d+(?:\.\d+)?)\s*x?')
+    _REGEX_BITRATE = re.compile(r'bitrate=\s*([0-9.]+)\s*([kmg]?)bits/s', re.IGNORECASE)
+    _REGEX_SIZE = re.compile(r'size=\s*([0-9.]+)\s*([kmg]?)B', re.IGNORECASE)
+    _REGEX_FPS = re.compile(r'fps=\s*(\d+(?:\.\d+)?)')
+    _REGEX_TIME = re.compile(r'time=(\d{2}):(\d{2}):(\d{2}\.\d{2})')
     
     def __init__(self, url: str, stream_id: Optional[int] = None, on_stats_update: Optional[Callable[[FFmpegStats], None]] = None):
         """
@@ -392,36 +416,6 @@ class FFmpegStreamMonitor:
         if not self._process or not self._process.stderr:
             return
         
-        # Pre-lowercase fatal error patterns for performance
-        fatal_error_patterns = [
-            'error opening input:',
-            'error opening input file',
-            'error opening input files:',
-            'server returned 4',  # HTTP errors
-            'server returned 5',  # HTTP errors
-            'connection refused',
-            'no route to host',
-            'connection timed out',
-            'end of file',
-            'protocol not found',
-        ]
-        
-        # Non-fatal error patterns that should be logged at debug level only
-        # These are common codec errors that don't indicate stream failure
-        non_fatal_error_patterns = [
-            'decode_slice_header error',
-            'concealing',
-            'error while decoding mb',
-            'missing picture in access unit',
-            'error decoding the audio block',
-            'invalid data found when processing input',
-            'non-existing pps 0 referenced',
-            'no frame!',
-            'reference picture missing',
-            'i/o error',
-            'no such file or directory',
-        ]
-        
         try:
             for line in self._process.stderr:
                 if not self._running:
@@ -432,17 +426,16 @@ class FFmpegStreamMonitor:
                 self._parse_metadata(line)
                 
                 # Check for fatal errors that should stop the monitor
-                line_lower = line.lower()
-                is_fatal = any(pattern in line_lower for pattern in fatal_error_patterns)
+                is_fatal = self._REGEX_FATAL_ERRORS.search(line) is not None
                 
                 # Check if this is a non-fatal error that should be logged at debug level
-                is_non_fatal_error = any(pattern in line_lower for pattern in non_fatal_error_patterns)
+                is_non_fatal_error = self._REGEX_NON_FATAL_ERRORS.search(line) is not None
                 
                 # Feed diagnostic tracker for transport health evaluation
-                self.diagnostics.record_line(line_lower)
+                self.diagnostics.record_line(line)
 
                 # Check for errors
-                if 'error' in line_lower or 'failed' in line_lower:
+                if self._REGEX_GENERAL_ERROR.search(line):
                     if is_non_fatal_error:
                         # Log non-fatal errors at debug level to avoid spam
                         logger.debug(f"FFmpeg non-fatal error for {self.url[:50]}: {line.strip()}")
@@ -452,7 +445,6 @@ class FFmpegStreamMonitor:
                         self._error_history.append(current_time)
                         
                         # If more than 50 errors in 30 seconds, consider it a stalled stream that needs restart
-                        # Increased from 20 to 50 to be less sensitive to transient audio glitches
                         recent_errors = [t for t in self._error_history if current_time - t < 30]
                         if len(recent_errors) > 50:
                             logger.debug(f"Excessive decoding errors ({len(recent_errors)} in 30s) for {self.url[:50]}. Triggering restart.")
@@ -465,7 +457,7 @@ class FFmpegStreamMonitor:
                         # Log other errors at warning level
                         logger.warning(f"FFmpeg error for {self.url[:50]}: {line.strip()}")
                     
-                    if is_fatal or 'fatal' in line_lower:
+                    if is_fatal or self._REGEX_FATAL_WORD.search(line):
                         self.stats.error_message = line.strip()
                         self.stats.is_alive = False
                         self.stats.is_fatal = True # Fatal error, stop and quarantine
@@ -504,19 +496,19 @@ class FFmpegStreamMonitor:
         # Look for video stream info: "Stream #0:0: Video: h264... 1920x1080 ..."
         if 'Video:' in output:
             # Extract resolution
-            res_match = re.search(r'(\d{3,5})x(\d{3,5})', output)
+            res_match = self._REGEX_RESOLUTION.search(output)
             if res_match:
                 self.stats.width = int(res_match.group(1))
                 self.stats.height = int(res_match.group(2))
             
             # Extract FPS from metadata line
-            fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', output)
+            fps_match = self._REGEX_FPS_METADATA.search(output)
             if fps_match:
                 self.stats.fps = round(float(fps_match.group(1)), 0)
         
         # Extract audio language: "Stream #0:1(eng): Audio: ..."
         if 'Audio:' in output:
-            lang_match = re.search(r'Stream #\d+:\d+\((\w+)\):', output)
+            lang_match = self._REGEX_AUDIO_LANG.search(output)
             if lang_match:
                 self.stats.audio_language = lang_match.group(1)
                 logger.debug(f"Detected audio language for {self.url[:50]}: {self.stats.audio_language}")
@@ -524,13 +516,13 @@ class FFmpegStreamMonitor:
     def _parse_stats(self, output: str):
         """Parse real-time statistics from FFmpeg output"""
         # Speed (e.g., "speed=1.02x")
-        speed_match = re.search(r'speed=\s*(\d+(?:\.\d+)?)x?', output)
+        speed_match = self._REGEX_SPEED.search(output)
         if speed_match:
             self.stats.speed = float(speed_match.group(1))
         
         # Bitrate (e.g., "bitrate= 406.1kbits/s")
         bitrate_found = False
-        bitrate_match = re.search(r'bitrate=\s*([0-9.]+)\s*([kmg]?)bits/s', output, re.IGNORECASE)
+        bitrate_match = self._REGEX_BITRATE.search(output)
         if bitrate_match:
             value = float(bitrate_match.group(1))
             unit = bitrate_match.group(2).lower()
@@ -546,7 +538,7 @@ class FFmpegStreamMonitor:
             bitrate_found = True
         
         # Size (e.g., "size= 12345kB") - for calculating bitrate if not provided
-        size_match = re.search(r'size=\s*([0-9.]+)\s*([kmg]?)B', output, re.IGNORECASE)
+        size_match = self._REGEX_SIZE.search(output)
         if size_match:
             value = float(size_match.group(1))
             unit = size_match.group(2).lower()
@@ -562,14 +554,11 @@ class FFmpegStreamMonitor:
             self.stats.total_size = int(value)
             
             # Calculate bitrate from size and time if explicit bitrate not available
-            # We check !bitrate_found rather than stats.bitrate == 0 to allow updates 
-            # if the stream stays in "bitrate=N/A" state but size/time keep growing.
             if not bitrate_found and self.stats.time > 0:
-                # bitrate = (total_size * BITS_PER_BYTE) / time / BYTES_TO_KBPS (to get kbps)
                 self.stats.bitrate = (self.stats.total_size * BITS_PER_BYTE) / self.stats.time / BYTES_TO_KBPS
         
         # FPS (e.g., "fps= 30")
-        fps_match = re.search(r'fps=\s*(\d+(?:\.\d+)?)', output)
+        fps_match = self._REGEX_FPS.search(output)
         if fps_match:
             ffmpeg_fps = float(fps_match.group(1))
             
@@ -577,11 +566,10 @@ class FFmpegStreamMonitor:
             if self.stats.speed > 0:
                 self.stats.fps = round(ffmpeg_fps / self.stats.speed, 0)
             elif ffmpeg_fps > 0:
-                # Fallback if speed not available yet
                 self.stats.fps = round(ffmpeg_fps, 0)
         
         # Time (e.g., "time=00:01:23.45")
-        time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2}\.\d{2})', output)
+        time_match = self._REGEX_TIME.search(output)
         if time_match:
             hours = float(time_match.group(1))
             minutes = float(time_match.group(2))

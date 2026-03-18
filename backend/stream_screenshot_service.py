@@ -7,6 +7,7 @@ or incorrect streams during live events.
 
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -21,6 +22,13 @@ logger = setup_logging(__name__)
 SCREENSHOT_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data')) / 'screenshots'
 SCREENSHOT_TIMEOUT = 10  # seconds
 SCREENSHOT_QUALITY = 5  # JPEG quality (2-31, lower is better)
+
+
+# Pre-compiled regexes for stats extraction
+_REGEX_BITRATE = re.compile(r'bitrate:\s+(\d+)\s+kb/s')
+_REGEX_RESOLUTION = re.compile(r'Video:.*? (\d{3,5})x(\d{3,5})')
+_REGEX_FPS = re.compile(r'(\d+(?:\.\d+)?)\s+fps')
+_REGEX_COLOR = re.compile(r'(yuv\w+?p?\d{1,2}le)[^,]*,\s*([^,)]+)', re.IGNORECASE)
 
 
 class StreamScreenshotService:
@@ -53,7 +61,7 @@ class StreamScreenshotService:
         
         logger.info(f"Screenshot service initialized, saving to {self.screenshot_dir}")
     
-    def capture(self, url: str, stream_id: int, timeout: int = SCREENSHOT_TIMEOUT, extract_stats: bool = True) -> tuple[Optional[str], dict]:
+    def capture(self, url: str, stream_id: int, timeout: int = SCREENSHOT_TIMEOUT, extract_stats: bool = True, local_udp_port: Optional[int] = None) -> tuple[Optional[str], dict]:
         """
         Capture a screenshot from a stream and optionally extract stats (resolution, fps, bitrate).
         
@@ -62,6 +70,7 @@ class StreamScreenshotService:
             stream_id: Stream ID (used for filename)
             timeout: Maximum time to wait for capture
             extract_stats: If True, attempts to parse stats from FFmpeg output
+            local_udp_port: Optional local UDP port to capture from instead of remote URL
             
         Returns:
             Tuple of (screenshot_path, stats_dict)
@@ -73,17 +82,21 @@ class StreamScreenshotService:
             filename = f"{stream_id}.jpg"
             output_path = self.screenshot_dir / filename
             
+            # Determine input URL and probe sizes
+            input_url = f"udp://127.0.0.1:{local_udp_port}" if local_udp_port else f"{url}{'?' if '?' not in url else '&'}timeout=5000000"
+            probe_size = '1000000' if local_udp_port else '3000000'
+            analyze_duration = '1000000' if local_udp_port else '3000000'
+            
             # Use FFmpeg to capture a single frame
-            # Add -analyzeduration and -probesize to help with stream info detection
             process = subprocess.Popen(
                 [
                     'ffmpeg',
                     '-hide_banner',
                     '-nostdin',   # Disable interactive stdin
                     '-y',         # Overwrite output files
-                    '-analyzeduration', '3000000', # 3s analysis is enough for snapshots
-                    '-probesize', '3000000',       # 3MB probe size
-                    '-i', f"{url}{'?' if '?' not in url else '&'}timeout=5000000",
+                    '-analyzeduration', analyze_duration,
+                    '-probesize', probe_size,
+                    '-i', input_url,
                     '-vframes', '1',  # Capture 1 frame immediately
                     '-q:v', str(SCREENSHOT_QUALITY),  # JPEG quality
                     '-f', 'image2',
@@ -113,20 +126,16 @@ class StreamScreenshotService:
                 
                 # Parse stats if requested
                 if extract_stats and stderr:
-                    import re
-                    
                     # 1. Bitrate
-                    # Look for "bitrate: 1234 kb/s" in stderr
-                    bitrate_match = re.search(r'bitrate:\s+(\d+)\s+kb/s', stderr)
+                    bitrate_match = _REGEX_BITRATE.search(stderr)
                     if bitrate_match:
                         try:
                             stats['bitrate'] = int(bitrate_match.group(1))
                         except ValueError:
                             pass
                     
-                    # 2. Resolution (look for "Video: ... 1920x1080 ...")
-                    # Use a robust regex that requires at least 3 digits for width/height to avoid aspect ratios
-                    res_match = re.search(r'Video:.*? (\d{3,5})x(\d{3,5})', stderr)
+                    # 2. Resolution
+                    res_match = _REGEX_RESOLUTION.search(stderr)
                     if res_match:
                         try:
                             stats['width'] = int(res_match.group(1))
@@ -135,7 +144,7 @@ class StreamScreenshotService:
                             pass
                             
                     # 3. FPS
-                    fps_match = re.search(r'(\d+(?:\.\d+)?)\s+fps', stderr)
+                    fps_match = _REGEX_FPS.search(stderr)
                     if fps_match:
                         try:
                             stats['fps'] = float(fps_match.group(1))
@@ -143,8 +152,7 @@ class StreamScreenshotService:
                             pass
                             
                     # 4. HDR Detection
-                    # Extract pixel format and color info (e.g., yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67))
-                    color_match = re.search(r'(yuv\w+?p?\d{1,2}le)[^,]*,\s*([^,)]+)', stderr, re.IGNORECASE)
+                    color_match = _REGEX_COLOR.search(stderr)
                     if color_match:
                         pix_fmt = color_match.group(1).lower()
                         color_info = color_match.group(2).lower()
