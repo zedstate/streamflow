@@ -1,5 +1,6 @@
 import logging
-from typing import List, Dict, Optional, Any, Set
+from typing import List, Dict, Optional, Any, Set, Tuple
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -227,6 +228,106 @@ class DatabaseManager:
                 # For backward compatibility, return a DICT keyed by URL
                 return {d.url: _model_to_dict(d) for d in dead}
             return dead
+        finally:
+            session.close()
+
+    def get_dead_streams_paginated(
+        self,
+        page: int = 1,
+        per_page: int = 20,
+        sort_by: str = 'marked_dead_at',
+        sort_dir: str = 'desc',
+        search: str = '',
+    ) -> Dict[str, Any]:
+        """Return dead streams with SQL-native pagination, sorting, and optional search.
+
+        Returns a dict with keys: items, total, page, per_page, total_pages,
+        has_next, has_prev.
+        """
+        _VALID_SORT_COLS = {'marked_dead_at', 'stream_name', 'url', 'reason'}
+        if sort_by not in _VALID_SORT_COLS:
+            sort_by = 'marked_dead_at'
+
+        session = self._get_session()
+        try:
+            q = session.query(DeadStream)
+            if search:
+                like = f'%{search}%'
+                q = q.filter(
+                    DeadStream.stream_name.ilike(like) | DeadStream.url.ilike(like)
+                )
+            col = getattr(DeadStream, sort_by, DeadStream.marked_dead_at)
+            q = q.order_by(desc(col) if sort_dir == 'desc' else asc(col))
+            total = q.count()
+            offset = (page - 1) * per_page
+            items = q.offset(offset).limit(per_page).all()
+            total_pages = max(1, (total + per_page - 1) // per_page)
+            return {
+                'items': [_model_to_dict(d) for d in items],
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': total_pages,
+                'has_next': (offset + per_page) < total,
+                'has_prev': page > 1,
+            }
+        finally:
+            session.close()
+
+    def get_channels_paginated(
+        self,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        sort_by: str = 'name',
+        sort_dir: str = 'asc',
+        search: str = '',
+    ) -> Dict[str, Any]:
+        """Return channels with optional SQL-native pagination, sorting, and search.
+
+        When *page* is None the full list is returned (no pagination envelope),
+        which preserves backward compatibility for callers that do not pass page/per_page.
+        When *page* is provided a dict with pagination metadata is returned.
+        """
+        _VALID_SORT_COLS = {'name', 'channel_number', 'id'}
+        if sort_by not in _VALID_SORT_COLS:
+            sort_by = 'name'
+
+        session = self._get_session()
+        try:
+            q = session.query(Channel)
+            if search:
+                like = f'%{search}%'
+                q = q.filter(Channel.name.ilike(like))
+            col = getattr(Channel, sort_by, Channel.name)
+            q = q.order_by(desc(col) if sort_dir == 'desc' else asc(col))
+
+            if page is None:
+                channels = q.all()
+                result = []
+                for ch in channels:
+                    d = _model_to_dict(ch)
+                    d['streams'] = [st.id for st in ch.streams]
+                    result.append(d)
+                return result
+
+            total = q.count()
+            offset = (page - 1) * per_page
+            channels = q.offset(offset).limit(per_page).all()
+            result = []
+            for ch in channels:
+                d = _model_to_dict(ch)
+                d['streams'] = [st.id for st in ch.streams]
+                result.append(d)
+            total_pages = max(1, (total + per_page - 1) // per_page)
+            return {
+                'items': result,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': total_pages,
+                'has_next': (offset + per_page) < total,
+                'has_prev': page > 1,
+            }
         finally:
             session.close()
 

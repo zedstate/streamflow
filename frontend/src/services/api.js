@@ -91,7 +91,17 @@ export const automationAPI = {
 };
 
 export const channelsAPI = {
-  getChannels: () => api.get('/channels'),
+  /**
+   * Fetch channels with optional filtering, sorting, and pagination.
+   *
+   * @param {Object} [params]
+   * @param {string}  [params.search]    - Filter by channel name (case-insensitive substring match).
+   * @param {string}  [params.sort_by]   - Sort field: 'name' (default), 'channel_number', or 'id'.
+   * @param {string}  [params.sort_dir]  - Sort direction: 'asc' (default) or 'desc'.
+   * @param {number}  [params.page]      - Page number (1-based). Omit for full list.
+   * @param {number}  [params.per_page]  - Items per page (default 50, max 500).
+   */
+  getChannels: (params = {}) => api.get('/channels', { params }),
   getGroups: () => api.get('/channels/groups'),
   getChannelStats: (channelId) => api.get(`/channels/${channelId}/stats`),
   getLogo: (logoId) => api.get(`/channels/logos/${logoId}`),
@@ -156,11 +166,21 @@ export const changelogAPI = {
 };
 
 export const deadStreamsAPI = {
-  getDeadStreams: (page = 1, per_page = 20) => {
-    // Ensure page and per_page are primitive numbers to avoid sending objects
+  /**
+   * Fetch dead streams with SQL-native pagination, sorting, and optional search.
+   *
+   * @param {number} [page=1]         - Page number (1-based).
+   * @param {number} [per_page=20]    - Items per page.
+   * @param {string} [sort_by]        - Sort field: 'marked_dead_at' (default), 'stream_name', 'url', 'reason'.
+   * @param {string} [sort_dir]       - Sort direction: 'desc' (default) or 'asc'.
+   * @param {string} [search]         - Filter by stream name or URL (case-insensitive substring).
+   */
+  getDeadStreams: (page = 1, per_page = 20, sort_by = 'marked_dead_at', sort_dir = 'desc', search = '') => {
     const safePage = typeof page === 'number' ? page : parseInt(page) || 1;
     const safePerPage = typeof per_page === 'number' ? per_page : parseInt(per_page) || 20;
-    return api.get('/dead-streams', { params: { page: safePage, per_page: safePerPage } });
+    const params = { page: safePage, per_page: safePerPage, sort_by, sort_dir };
+    if (search) params.search = search;
+    return api.get('/dead-streams', { params });
   },
   reviveStream: (streamUrl) => api.post('/dead-streams/revive', { stream_url: streamUrl }),
   clearAllDeadStreams: () => api.post('/dead-streams/clear'),
