@@ -158,18 +158,12 @@ def _sanitize_resolution(res_str):
         return None, None
 
 def _get_provider_id(m3u_account_name, session):
-    # Depending on how the system stores providers, this can be complex.
-    # For now, m3u_account_name is passed as a string or sometimes ID. Try to parse ID.
     from udi import get_udi_manager
-    if isinstance(m3u_account_name, int):
-        return m3u_account_name
-    
-    # Try looking up via UDI
     udi = get_udi_manager()
-    accounts = udi.get_m3u_accounts()
+    accounts = udi.get_m3u_accounts() if udi else []
     if accounts:
         for acc in accounts:
-            if acc.get('name') == m3u_account_name:
+            if acc.get('name') == m3u_account_name or acc.get('id') == m3u_account_name:
                 return acc.get('id')
     return None
 
@@ -254,7 +248,11 @@ def save_automation_run_telemetry(action, details, subentries=None, timestamp=No
                             stream_id = ds.get('id', ds.get('stream_id', 0))
                             provider_id = None
                             try:
-                                if udi:
+                                provider_ident = ds.get('m3u_account')
+                                if provider_ident:
+                                    provider_id = _get_provider_id(provider_ident, session)
+                                
+                                if not provider_id and udi:
                                     stream_obj = udi.get_stream_by_id(stream_id)
                                     if stream_obj:
                                         provider_id = stream_obj.get('m3u_account_id')
