@@ -78,9 +78,38 @@ def get_engine():
     return engine
 
 def init_db():
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist and run simple column migrations."""
     engine = get_engine()
     Base.metadata.create_all(engine)
+    
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            # 1. Migrate 'runs' table columns
+            result = conn.execute(text("PRAGMA table_info(runs)"))
+            runs_cols = [row[1] for row in result]
+            
+            if 'raw_details' not in runs_cols:
+                conn.execute(text("ALTER TABLE runs ADD COLUMN raw_details TEXT"))
+                logger.info("Executed migration: ALTER TABLE runs ADD COLUMN raw_details")
+            if 'raw_subentries' not in runs_cols:
+                conn.execute(text("ALTER TABLE runs ADD COLUMN raw_subentries TEXT"))
+                logger.info("Executed migration: ALTER TABLE runs ADD COLUMN raw_subentries")
+
+            # 2. Migrate 'stream_telemetry' table columns
+            result = conn.execute(text("PRAGMA table_info(stream_telemetry)"))
+            stream_cols = [row[1] for row in result]
+            
+            if 'audio_codec' not in stream_cols:
+                conn.execute(text("ALTER TABLE stream_telemetry ADD COLUMN audio_codec VARCHAR(50)"))
+                logger.info("Executed migration: ALTER TABLE stream_telemetry ADD COLUMN audio_codec")
+            if 'is_hdr' not in stream_cols:
+                conn.execute(text("ALTER TABLE stream_telemetry ADD COLUMN is_hdr BOOLEAN DEFAULT 0"))
+                logger.info("Executed migration: ALTER TABLE stream_telemetry ADD COLUMN is_hdr")
+                
+    except Exception as e:
+        logger.warning(f"Lightweight schema migration statement failed (might be already migrated): {e}")
+
     logger.info(f"Initialized Telemetry Database at {DB_PATH}")
 
 def get_session():
