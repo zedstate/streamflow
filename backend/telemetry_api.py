@@ -1,0 +1,115 @@
+from flask import Blueprint, jsonify, request
+from sqlalchemy import func, case
+from datetime import datetime, timedelta
+import logging
+
+from telemetry_db import get_session, Run, ChannelHealth, StreamTelemetry
+
+logger = logging.getLogger(__name__)
+
+telemetry_bp = Blueprint('telemetry', __name__)
+
+@telemetry_bp.route('/global', methods=['GET'])
+def get_global_telemetry():
+    """Get global telemetry statistics (runs over time)."""
+    days = int(request.args.get('days', 7))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    
+    session = get_session()
+    try:
+        runs = session.query(Run).filter(Run.timestamp >= cutoff).order_by(Run.timestamp.asc()).all()
+        
+        data = []
+        for r in runs:
+            data.append({
+                "id": r.id,
+                "timestamp": r.timestamp.isoformat(),
+                "duration_seconds": r.duration_seconds,
+                "total_channels": r.total_channels,
+                "global_dead_count": r.global_dead_count,
+                "global_revived_count": r.global_revived_count,
+                "run_type": r.run_type
+            })
+            
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        logger.error(f"Error fetching global telemetry: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        session.close()
+
+@telemetry_bp.route('/providers', methods=['GET'])
+def get_provider_telemetry():
+    """Get stream resilience and stats by provider."""
+    days = int(request.args.get('days', 7))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    
+    session = get_session()
+    try:
+        # We want to aggregate streams by provider over the last N days
+        # We calculate total checked, total dead, average quality, avg bitrate
+        stats = session.query(
+            StreamTelemetry.provider_id,
+            func.count(StreamTelemetry.id).label('total_streams'),
+            func.sum(case((StreamTelemetry.is_dead == True, 1), else_=0)).label('dead_streams'),
+            func.avg(StreamTelemetry.bitrate_kbps).label('avg_bitrate_kbps'),
+            func.avg(StreamTelemetry.fps).label('avg_fps'),
+            func.avg(StreamTelemetry.quality_score).label('avg_quality_score')
+        ).join(Run).filter(Run.timestamp >= cutoff).group_by(StreamTelemetry.provider_id).all()
+        
+        # We need to map provider_id back to provider name. We can do this safely via UDI if accessible
+        from udi import get_udi_manager
+        udi = get_udi_manager()
+        accounts = {acc['id']: acc['name'] for acc in udi.get_m3u_accounts()} if udi else {}
+        
+        data = []
+        for s in stats:
+            provider_id = s.provider_id
+            data.append({
+                "provider_id": provider_id,
+                "provider_name": accounts.get(provider_id, f"Provider {provider_id}" if provider_id else "Unknown Account"),
+                "total_streams": s.total_streams,
+                "dead_streams": int(s.dead_streams) if s.dead_streams else 0,
+                "availability_pecentage": 100 - (int(s.dead_streams) / s.total_streams * 100) if s.total_streams else 100,
+                "avg_bitrate_kbps": round(s.avg_bitrate_kbps or 0, 2),
+                "avg_fps": round(s.avg_fps or 0, 2),
+                "avg_quality_score": round(s.avg_quality_score or 0, 2)
+            })
+            
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        logger.error(f"Error fetching provider telemetry: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        session.close()
+
+@telemetry_bp.route('/channels/<int:channel_id>', methods=['GET'])
+def get_channel_telemetry(channel_id):
+    """Get history for a specific channel."""
+    days = int(request.args.get('days', 7))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    
+    session = get_session()
+    try:
+        history = session.query(ChannelHealth, Run.timestamp).join(Run).filter(
+            ChannelHealth.channel_id == channel_id,
+            Run.timestamp >= cutoff
+        ).order_by(Run.timestamp.asc()).all()
+        
+        data = []
+        for h, ts in history:
+            data.append({
+                "run_id": h.run_id,
+                "timestamp": ts.isoformat(),
+                "channel_name": h.channel_name,
+                "offline": h.offline,
+                "available_streams": h.available_streams,
+                "dead_streams": h.dead_streams
+            })
+            
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        logger.error(f"Error fetching channel telemetry: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        session.close()

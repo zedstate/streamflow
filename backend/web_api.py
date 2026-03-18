@@ -5397,6 +5397,10 @@ def serve_frontend(path):
             return send_file(static_folder / 'index.html')
         except FileNotFoundError:
             return jsonify({"error": "Frontend not found"}), 404
+# --- Telemetry API ---
+from telemetry_api import telemetry_bp
+app.register_blueprint(telemetry_bp, url_prefix='/api/telemetry')
+
 
 
 if __name__ == '__main__':

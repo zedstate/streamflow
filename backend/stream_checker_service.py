@@ -2204,9 +2204,10 @@ class StreamCheckerService:
                         'resolution': formatted_stats['resolution'],
                         'fps': formatted_stats['fps'],
                         'video_codec': formatted_stats['video_codec'],
+                        'audio_codec': formatted_stats.get('audio_codec', 'N/A'),
                         'bitrate': formatted_stats['bitrate'],
                         'm3u_account': m3u_account_name,
-                        'hdr_format': analyzed.get('hdr_format')
+                        'hdr_format': extracted_stats.get('hdr_format')
                     }
                     
                     # Mark dead streams as "dead" instead of showing score:0

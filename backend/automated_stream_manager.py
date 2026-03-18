@@ -81,70 +81,41 @@ class ChangelogManager:
         if changelog_file is None:
             changelog_file = CONFIG_DIR / "changelog.json"
         self.changelog_file = Path(changelog_file)
-        self.changelog = self._load_changelog()
+        self.changelog = [] # deprecated but kept for backwards comp
+        
+        try:
+            from telemetry_db import init_db
+            init_db()
+        except:
+            pass
     
     def _load_changelog(self) -> List[Dict]:
-        """Load existing changelog or create empty one."""
-        if self.changelog_file.exists():
-            try:
-                with open(self.changelog_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                logger.warning(f"Could not load {self.changelog_file}, creating new changelog")
+        """Deprecated."""
         return []
     
     def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None, subentries: Optional[List[Dict[str, Any]]] = None):
-        """Add a new changelog entry.
-        
-        Args:
-            action: Type of action (e.g., 'playlist_update_match', 'global_check', 'single_channel_check')
-            details: Main details of the action including global stats
-            timestamp: Optional timestamp (defaults to now)
-            subentries: Optional list of subentry groups (e.g., updates, checks)
-        """
+        """Add a new changelog entry."""
         if timestamp is None:
             timestamp = datetime.now().isoformat()
         
-        entry = {
-            "timestamp": timestamp,
-            "action": action,
-            "details": details
-        }
-        
-        # Add subentries if provided
-        if subentries:
-            entry["subentries"] = subentries
-        
-        self.changelog.append(entry)
-        self._save_changelog()
-        logger.info(f"Changelog entry added: {action}")
+        # New telemetry DB logic
+        try:
+            from telemetry_db import save_automation_run_telemetry, save_generic_telemetry
+            if action == 'automation_run':
+                save_automation_run_telemetry(action, details, subentries, timestamp)
+            else:
+                save_generic_telemetry(action, details, subentries, timestamp)
+            logger.info(f"Telemetry entry added: {action}")
+        except Exception as e:
+            logger.error(f"Failed to process telemetry: {e}")
     
     def _save_changelog(self):
-        """Save changelog to file."""
-        # Ensure parent directory exists
-        self.changelog_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.changelog_file, 'w') as f:
-            json.dump(self.changelog, f, indent=2)
+        """Deprecated."""
+        pass
     
     def get_recent_entries(self, days: int = 7) -> List[Dict]:
-        """Get changelog entries from the last N days, filtered and sorted."""
-        cutoff = datetime.now() - timedelta(days=days)
-        recent = []
-        
-        for entry in self.changelog:
-            try:
-                entry_time = datetime.fromisoformat(entry['timestamp'])
-                if entry_time >= cutoff:
-                    # Filter out entries without meaningful channel updates
-                    if self._has_channel_updates(entry):
-                        recent.append(entry)
-            except (ValueError, KeyError):
-                continue
-        
-        # Sort by timestamp in reverse chronological order (newest first)
-        recent.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        
-        return recent
+        """Deprecated: The UI will update to use the new Telemetry API."""
+        return []
     
     def add_playlist_update_entry(self, channels_updated: Dict[int, Dict], global_stats: Dict):
         """Add a playlist update & match entry with subentries.
