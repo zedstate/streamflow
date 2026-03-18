@@ -21,6 +21,7 @@ class Run(Base):
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     duration_seconds = Column(Float, nullable=False, default=0.0)
     total_channels = Column(Integer, nullable=False, default=0)
+    total_streams = Column(Integer, nullable=False, default=0)
     global_dead_count = Column(Integer, nullable=False, default=0)
     global_revived_count = Column(Integer, nullable=False, default=0)
     run_type = Column(String(50), nullable=False, default='automation_run') # 'automation_run', 'playlist_refresh', 'single_channel_check', etc.
@@ -95,6 +96,9 @@ def init_db():
             if 'raw_subentries' not in runs_cols:
                 conn.execute(text("ALTER TABLE runs ADD COLUMN raw_subentries TEXT"))
                 logger.info("Executed migration: ALTER TABLE runs ADD COLUMN raw_subentries")
+            if 'total_streams' not in runs_cols:
+                conn.execute(text("ALTER TABLE runs ADD COLUMN total_streams INTEGER DEFAULT 0"))
+                logger.info("Executed migration: ALTER TABLE runs ADD COLUMN total_streams")
 
             # 2. Migrate 'stream_telemetry' table columns
             result = conn.execute(text("PRAGMA table_info(stream_telemetry)"))
@@ -186,11 +190,14 @@ def save_automation_run_telemetry(action, details, subentries=None, timestamp=No
         # Create Run record
         duration = details.get('duration_seconds', details.get('duration', 0.0))
         if isinstance(duration, str):
-            try: duration = float(duration)
-            except: duration = 0.0
+            try: 
+                duration = float(duration.lower().replace('s', '').strip())
+            except: 
+                duration = 0.0
             
         global_stats = details.get('global_stats', {})
         total_channels = details.get('total_channels_processed') or details.get('total_channels') or global_stats.get('total_channels_processed', 0)
+        total_streams = details.get('total_streams', 0) or global_stats.get('total_streams', 0)
         dead_count = details.get('total_dead_streams') or details.get('dead_streams') or global_stats.get('total_dead_streams', 0)
         revived_count = details.get('total_revived_streams') or details.get('streams_revived') or global_stats.get('total_revived_streams', 0)
 
@@ -198,6 +205,7 @@ def save_automation_run_telemetry(action, details, subentries=None, timestamp=No
             timestamp=run_ts,
             duration_seconds=duration,
             total_channels=total_channels,
+            total_streams=total_streams,
             global_dead_count=dead_count,
             global_revived_count=revived_count,
             run_type=action,
@@ -239,11 +247,24 @@ def save_automation_run_telemetry(action, details, subentries=None, timestamp=No
                         channel_health.offline = (channel_health.available_streams == 0 and channel_health.dead_streams > 0)
                         
                         # Process dead streams
+                        from udi import get_udi_manager
+                        udi = get_udi_manager()
+                        
                         for ds in dead_streams:
+                            stream_id = ds.get('id', ds.get('stream_id', 0))
+                            provider_id = None
+                            try:
+                                if udi:
+                                    stream_obj = udi.get_stream_by_id(stream_id)
+                                    if stream_obj:
+                                        provider_id = stream_obj.get('m3u_account_id')
+                            except: pass
+
                             dtel = StreamTelemetry(
                                 run_id=run.id,
                                 channel_id=channel_id,
-                                stream_id=ds.get('id', 0) if 'id' in ds else ds.get('stream_id', 0),
+                                stream_id=stream_id,
+                                provider_id=provider_id,
                                 is_dead=True
                             )
                             session.add(dtel)
@@ -291,8 +312,9 @@ def save_generic_telemetry(action, details, subentries=None, timestamp=None):
 
         run = Run(
             timestamp=run_ts,
-            duration_seconds=details.get('duration_seconds', 0.0),
+            duration_seconds=details.get('duration_seconds', details.get('duration', 0.0)),
             total_channels=details.get('total_channels', 0) or details.get('total_channels_processed', 0),
+            total_streams=details.get('total_streams', 0),
             global_dead_count=details.get('total_dead_streams', 0) or details.get('dead_streams', 0),
             global_revived_count=details.get('total_revived_streams', 0),
             run_type=action,

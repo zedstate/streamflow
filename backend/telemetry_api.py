@@ -26,6 +26,7 @@ def get_global_telemetry():
                 "timestamp": r.timestamp.isoformat(),
                 "duration_seconds": r.duration_seconds,
                 "total_channels": r.total_channels,
+                "total_streams": r.total_streams,
                 "global_dead_count": r.global_dead_count,
                 "global_revived_count": r.global_revived_count,
                 "run_type": r.run_type
@@ -54,7 +55,8 @@ def get_provider_telemetry():
             func.sum(case((StreamTelemetry.is_dead == True, 1), else_=0)).label('dead_streams'),
             func.avg(StreamTelemetry.bitrate_kbps).label('avg_bitrate_kbps'),
             func.avg(StreamTelemetry.fps).label('avg_fps'),
-            func.avg(StreamTelemetry.quality_score).label('avg_quality_score')
+            func.avg(StreamTelemetry.quality_score).label('avg_quality_score'),
+            func.avg(StreamTelemetry.resolution_height).label('avg_res_height')
         ).join(Run).filter(Run.timestamp >= cutoff).group_by(StreamTelemetry.provider_id).all()
         
         # We need to map provider_id back to provider name. We can do this safely via UDI if accessible
@@ -73,7 +75,8 @@ def get_provider_telemetry():
                 "availability_pecentage": 100 - (int(s.dead_streams) / s.total_streams * 100) if s.total_streams else 100,
                 "avg_bitrate_kbps": round(s.avg_bitrate_kbps or 0, 2),
                 "avg_fps": round(s.avg_fps or 0, 2),
-                "avg_quality_score": round(s.avg_quality_score or 0, 2)
+                "avg_quality_score": round(s.avg_quality_score or 0, 2),
+                "avg_res_height": round(s.avg_res_height or 0, 0)
             })
             
         return jsonify({"success": True, "data": data})

@@ -15,6 +15,7 @@ export default function StatsDashboard() {
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState('7')
   const [useMaximums, setUseMaximums] = useState(false)
+  const [providerMetric, setProviderMetric] = useState('quality')
   const { toast } = useToast()
 
   useEffect(() => {
@@ -140,7 +141,7 @@ export default function StatsDashboard() {
                       <RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
                       <Legend />
                       <Line type="monotone" dataKey="global_dead_count" name="Dead Streams" stroke="#ff4d4f" strokeWidth={2} dot={false} animationDuration={1000} />
-                      <Line type="monotone" dataKey="total_channels" name="Channels Processed" stroke="#82ca9d" strokeWidth={2} dot={false} animationDuration={1000} />
+                      <Line type="monotone" dataKey="total_streams" name="Streams Processed" stroke="#82ca9d" strokeWidth={2} dot={false} animationDuration={1000} />
                     </LineChart>
                   </ResponsiveContainer>
                 )}
@@ -176,9 +177,19 @@ export default function StatsDashboard() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card className="border-none shadow-md bg-card/50 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle>Average Quality Score</CardTitle>
-                <CardDescription>Calculated quality index per provider</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>{providerMetric === 'quality' ? 'Average Quality Score' : 'Average Resolution'}</CardTitle>
+                  <CardDescription>
+                    {providerMetric === 'quality' ? 'Calculated quality index per provider' : 'Calculated height in pixels'}
+                  </CardDescription>
+                </div>
+                <Tabs value={providerMetric} onValueChange={setProviderMetric} className="w-[180px]">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="quality">Quality</TabsTrigger>
+                    <TabsTrigger value="resolution">Res</TabsTrigger>
+                  </TabsList>
+                </Tabs>
               </CardHeader>
               <CardContent className="h-[300px]">
                 {loading ? (
@@ -187,10 +198,14 @@ export default function StatsDashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart layout="vertical" data={providerData} margin={{ top: 5, right: 30, left: 50, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                      <XAxis type="number" domain={[0, 1]} />
+                      <XAxis type="number" domain={providerMetric === 'quality' ? [0, 1] : [0, 'auto']} />
                       <YAxis dataKey="provider_name" type="category" width={100} />
                       <RechartsTooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{borderRadius: '8px', border: 'none'}} />
-                      <Bar dataKey="avg_quality_score" name="Avg Score" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} animationDuration={1000} />
+                      {providerMetric === 'quality' ? (
+                        <Bar dataKey="avg_quality_score" name="Avg Score" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} animationDuration={1000} />
+                      ) : (
+                        <Bar dataKey="avg_res_height" name="Avg Height (p)" fill="#8b5cf6" radius={[0, 4, 4, 0]} barSize={20} animationDuration={1000} />
+                      )}
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -207,24 +222,13 @@ export default function StatsDashboard() {
                   <div className="h-full flex items-center justify-center">Loading...</div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                     <PieChart>
-                        <Pie
-                          data={providerData}
-                          dataKey="avg_bitrate_kbps"
-                          nameKey="provider_name"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={100}
-                          fill="#8884d8"
-                          label={({name, percent}) => `${name} ${(percent * 100).toFixed(0)}%`}
-                          animationDuration={1000}
-                        >
-                          {providerData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none'}} />
-                      </PieChart>
+                    <BarChart layout="vertical" data={providerData} margin={{ top: 5, right: 30, left: 50, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                      <XAxis type="number" />
+                      <YAxis dataKey="provider_name" type="category" width={100} />
+                      <RechartsTooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{borderRadius: '8px', border: 'none'}} />
+                      <Bar dataKey="avg_bitrate_kbps" name="Avg Bitrate (kbps)" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} animationDuration={1000} />
+                    </BarChart>
                   </ResponsiveContainer>
                 )}
               </CardContent>
