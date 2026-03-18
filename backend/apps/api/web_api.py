@@ -100,7 +100,11 @@ THREAD_SHUTDOWN_TIMEOUT_SECONDS = 5  # Timeout for graceful thread shutdown
 # Initialize Flask app with static file serving
 # Note: static_folder set to None to disable Flask's built-in static route
 # The catch-all route will handle serving all static files from the React build
-static_folder = Path(__file__).parent / 'static'
+# Try Docker/Production path: up 3 levels then /static
+static_folder_docker = Path(__file__).parent.parent.parent / 'static'
+static_folder_local = Path(__file__).parent.parent.parent.parent / 'frontend' / 'build'
+
+static_folder = static_folder_docker if static_folder_docker.exists() else static_folder_local
 app = Flask(__name__, static_folder=None)
 CORS(app)  # Enable CORS for React frontend
 
