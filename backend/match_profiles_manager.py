@@ -26,141 +26,176 @@ logger = setup_logging(__name__)
 class MatchProfilesManager:
     """Manager for match profiles that define stream-to-channel matching rules."""
     
-    def __init__(self, storage: Optional[UDIStorage] = None):
+    def __init__(self, storage: Optional[Any] = None):
         """
-        Initialize the MatchProfilesManager.
-        
-        Args:
-            storage: Optional UDIStorage instance. If None, creates a new instance.
+        Initialize the MatchProfilesManager using the database session directly.
         """
-        self.storage = storage or UDIStorage()
-        logger.info("MatchProfilesManager initialized")
+        from database.connection import get_session
+        self.get_session = get_session
+        logger.info("MatchProfilesManager initialized with SQL backend")
     
+    def _orm_to_model(self, orm_profile) -> MatchProfile:
+        """Helper to convert ORM profile with steps to UDI `MatchProfile` object."""
+        # Convert steps to dicts first
+        steps_data = []
+        for step in sorted(orm_profile.steps, key=lambda s: s.step_order):
+            steps_data.append({
+                'id': step.id,
+                'type': step.type,
+                'pattern': step.pattern,
+                'variables': step.variables,
+                'enabled': step.enabled,
+                'order': step.step_order
+            })
+            
+        profile_data = {
+            'id': orm_profile.id,
+            'name': orm_profile.name,
+            'description': orm_profile.description,
+            'steps': steps_data,
+            'enabled': orm_profile.enabled,
+            'created_at': orm_profile.created_at.isoformat() if orm_profile.created_at else None,
+            'updated_at': orm_profile.updated_at.isoformat() if orm_profile.updated_at else None
+        }
+        return MatchProfile.from_dict(profile_data)
+
     def list_profiles(self) -> List[MatchProfile]:
         """
         Get all match profiles.
-        
-        Returns:
-            List of MatchProfile objects
         """
-        profiles_data = self.storage.load_match_profiles()
-        return [MatchProfile.from_dict(p) for p in profiles_data]
+        from database.models import MatchProfile as DBMatchProfile
+        from sqlalchemy.orm import joinedload
+        
+        session = self.get_session()
+        try:
+            # Eager load steps to avoid detached errors
+            profiles = session.query(DBMatchProfile).options(joinedload(DBMatchProfile.steps)).all()
+            return [self._orm_to_model(p) for p in profiles]
+        finally:
+            session.close()
     
     def get_profile(self, profile_id: int) -> Optional[MatchProfile]:
         """
         Get a specific match profile by ID.
-        
-        Args:
-            profile_id: The profile ID
-            
-        Returns:
-            MatchProfile object or None if not found
         """
-        profile_data = self.storage.get_match_profile(profile_id)
-        if profile_data:
-            return MatchProfile.from_dict(profile_data)
-        return None
+        from database.models import MatchProfile as DBMatchProfile
+        from sqlalchemy.orm import joinedload
+        
+        session = self.get_session()
+        try:
+            p = session.query(DBMatchProfile).options(joinedload(DBMatchProfile.steps)).filter(DBMatchProfile.id == profile_id).first()
+            if p:
+                return self._orm_to_model(p)
+            return None
+        finally:
+            session.close()
     
     def create_profile(self, name: str, description: Optional[str] = None,
-                      steps: Optional[List[Dict[str, Any]]] = None) -> MatchProfile:
+                       steps: Optional[List[Dict[str, Any]]] = None) -> MatchProfile:
         """
         Create a new match profile.
-        
-        Args:
-            name: Profile name
-            description: Optional description
-            steps: Optional list of step dictionaries
-            
-        Returns:
-            The created MatchProfile
         """
-        profiles = self.storage.load_match_profiles()
+        from database.models import MatchProfile as DBMatchProfile, MatchProfileStep as DBMatchProfileStep
         
-        # Generate new ID
-        new_id = max([p.get('id', 0) for p in profiles], default=0) + 1
-        
-        # Create profile data
-        now = datetime.now().isoformat()
-        profile_data = {
-            'id': new_id,
-            'name': name,
-            'description': description,
-            'steps': steps or [],
-            'enabled': True,
-            'created_at': now,
-            'updated_at': now
-        }
-        
-        # Save to storage
-        profiles.append(profile_data)
-        self.storage.save_match_profiles(profiles)
-        
-        logger.info(f"Created match profile: {name} (ID: {new_id})")
-        return MatchProfile.from_dict(profile_data)
+        session = self.get_session()
+        try:
+            profile = DBMatchProfile(
+                name=name,
+                description=description,
+                enabled=True
+            )
+            session.add(profile)
+            session.flush() # Populate profile.id
+            
+            if steps:
+                for idx, step_item in enumerate(steps):
+                    step = DBMatchProfileStep(
+                        profile_id=profile.id,
+                        type=step_item.get('type'),
+                        pattern=step_item.get('pattern'),
+                        variables=step_item.get('variables'),
+                        enabled=step_item.get('enabled', True),
+                        step_order=step_item.get('order', idx)
+                    )
+                    session.add(step)
+            
+            session.commit()
+            logger.info(f"Created match profile: {name} (ID: {profile.id})")
+            return self._orm_to_model(profile)
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to create match profile {name}: {e}")
+            raise
+        finally:
+            session.close()
     
     def update_profile(self, profile_id: int, name: Optional[str] = None,
-                      description: Optional[str] = None, steps: Optional[List[Dict[str, Any]]] = None,
-                      enabled: Optional[bool] = None) -> Optional[MatchProfile]:
+                       description: Optional[str] = None, steps: Optional[List[Dict[str, Any]]] = None,
+                       enabled: Optional[bool] = None) -> Optional[MatchProfile]:
         """
         Update an existing match profile.
-        
-        Args:
-            profile_id: The profile ID
-            name: Optional new name
-            description: Optional new description
-            steps: Optional new steps
-            enabled: Optional enabled status
-            
-        Returns:
-            Updated MatchProfile or None if not found
         """
-        profile_data = self.storage.get_match_profile(profile_id)
-        if not profile_data:
-            logger.warning(f"Match profile {profile_id} not found")
+        from database.models import MatchProfile as DBMatchProfile, MatchProfileStep as DBMatchProfileStep
+        
+        session = self.get_session()
+        try:
+            profile = session.query(DBMatchProfile).filter(DBMatchProfile.id == profile_id).first()
+            if not profile:
+                logger.warning(f"Match profile {profile_id} not found")
+                return None
+            
+            if name is not None: profile.name = name
+            if description is not None: profile.description = description
+            if enabled is not None: profile.enabled = enabled
+            
+            if steps is not None:
+                # Easiest way in SQLite that matches typical behavior: recreate steps list
+                session.query(DBMatchProfileStep).filter(DBMatchProfileStep.profile_id == profile_id).delete()
+                for idx, step_item in enumerate(steps):
+                    step = DBMatchProfileStep(
+                        profile_id=profile_id,
+                        type=step_item.get('type'),
+                        pattern=step_item.get('pattern'),
+                        variables=step_item.get('variables'),
+                        enabled=step_item.get('enabled', True),
+                        step_order=step_item.get('order', idx)
+                    )
+                    session.add(step)
+                    
+            profile.updated_at = datetime.now()
+            session.commit()
+            logger.info(f"Updated match profile: {profile_id}")
+            return self.get_profile(profile_id)
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to update match profile {profile_id}: {e}")
             return None
-        
-        # Update fields
-        if name is not None:
-            profile_data['name'] = name
-        if description is not None:
-            profile_data['description'] = description
-        if steps is not None:
-            profile_data['steps'] = steps
-        if enabled is not None:
-            profile_data['enabled'] = enabled
-        
-        profile_data['updated_at'] = datetime.now().isoformat()
-        
-        # Save to storage
-        self.storage.update_match_profile(profile_id, profile_data)
-        
-        logger.info(f"Updated match profile: {profile_id}")
-        return MatchProfile.from_dict(profile_data)
+        finally:
+            session.close()
     
     def delete_profile(self, profile_id: int) -> bool:
         """
         Delete a match profile.
-        
-        Args:
-            profile_id: The profile ID to delete
-            
-        Returns:
-            True if successful, False otherwise
         """
-        # Check if profile exists
-        if not self.storage.get_match_profile(profile_id):
-            logger.warning(f"Match profile {profile_id} not found")
-            return False
+        from database.models import MatchProfile as DBMatchProfile
         
-        # Delete from storage
-        result = self.storage.delete_match_profile(profile_id)
-        
-        if result:
+        session = self.get_session()
+        try:
+            profile = session.query(DBMatchProfile).filter(DBMatchProfile.id == profile_id).first()
+            if not profile:
+                logger.warning(f"Match profile {profile_id} not found")
+                return False
+                
+            session.delete(profile)
+            session.commit()
             logger.info(f"Deleted match profile: {profile_id}")
-        else:
+            return True
+        except Exception as e:
+            session.rollback()
             logger.error(f"Failed to delete match profile: {profile_id}")
-        
-        return result
+            return False
+        finally:
+            session.close()
     
     def apply_profile_to_variables(self, profile: MatchProfile, 
                                    channel_name: str = "",

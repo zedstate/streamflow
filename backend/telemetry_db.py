@@ -1,126 +1,14 @@
 import os
 import json
 from datetime import datetime
-from pathlib import Path
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Index
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
-from logging_config import setup_logging
+from sqlalchemy.orm import sessionmaker
 
+from logging_config import setup_logging
 logger = setup_logging(__name__)
 
-# Configuration directory - persisted via Docker volume
-CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', str(Path(__file__).parent.parent / 'data')))
-DB_PATH = CONFIG_DIR / 'telemetry.db'
-
-Base = declarative_base()
-
-class Run(Base):
-    __tablename__ = 'runs'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    duration_seconds = Column(Float, nullable=False, default=0.0)
-    total_channels = Column(Integer, nullable=False, default=0)
-    total_streams = Column(Integer, nullable=False, default=0)
-    global_dead_count = Column(Integer, nullable=False, default=0)
-    global_revived_count = Column(Integer, nullable=False, default=0)
-    run_type = Column(String(50), nullable=False, default='automation_run') # 'automation_run', 'playlist_refresh', 'single_channel_check', etc.
-    raw_details = Column(String, nullable=True) # Used by legacy UI
-    raw_subentries = Column(String, nullable=True) # Used by legacy UI
-
-    channel_healths = relationship("ChannelHealth", back_populates="run", cascade="all, delete-orphan")
-    stream_telemetries = relationship("StreamTelemetry", back_populates="run", cascade="all, delete-orphan")
-
-
-class ChannelHealth(Base):
-    __tablename__ = 'channel_health'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(Integer, ForeignKey('runs.id', ondelete='CASCADE'), nullable=False, index=True)
-    channel_id = Column(Integer, nullable=False, index=True)
-    channel_name = Column(String(255), nullable=True) # Useful for quick display without joins
-    offline = Column(Boolean, nullable=False, default=False)
-    available_streams = Column(Integer, nullable=False, default=0)
-    dead_streams = Column(Integer, nullable=False, default=0)
-    
-    run = relationship("Run", back_populates="channel_healths")
-
-
-class StreamTelemetry(Base):
-    __tablename__ = 'stream_telemetry'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(Integer, ForeignKey('runs.id', ondelete='CASCADE'), nullable=False, index=True)
-    channel_id = Column(Integer, nullable=False, index=True)
-    provider_id = Column(Integer, nullable=True, index=True) # M3U Account ID
-    stream_id = Column(Integer, nullable=False, index=True)  # Internal UDI stream ID
-
-    bitrate_kbps = Column(Integer, nullable=True)
-    resolution_width = Column(Integer, nullable=True)
-    resolution_height = Column(Integer, nullable=True)
-    fps = Column(Float, nullable=True)
-    codec = Column(String(50), nullable=True)
-    audio_codec = Column(String(50), nullable=True)
-    quality_score = Column(Float, nullable=True)
-    is_dead = Column(Boolean, nullable=False, default=False)
-    is_hdr = Column(Boolean, nullable=False, default=False)
-    
-    run = relationship("Run", back_populates="stream_telemetries")
-
-# Create compound indices if we need them, e.g., for fast dashboard querying:
-Index('idx_stream_provider', StreamTelemetry.provider_id, StreamTelemetry.channel_id)
-
-
-def get_engine():
-    """Returns the SQLAlchemy engine, creating the directory if it doesn't exist."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    # Using SQLite
-    engine = create_engine(f'sqlite:///{DB_PATH}', echo=False)
-    return engine
-
-def init_db():
-    """Create all tables if they don't exist and run simple column migrations."""
-    engine = get_engine()
-    Base.metadata.create_all(engine)
-    
-    from sqlalchemy import text
-    try:
-        with engine.begin() as conn:
-            # 1. Migrate 'runs' table columns
-            result = conn.execute(text("PRAGMA table_info(runs)"))
-            runs_cols = [row[1] for row in result]
-            
-            if 'raw_details' not in runs_cols:
-                conn.execute(text("ALTER TABLE runs ADD COLUMN raw_details TEXT"))
-                logger.info("Executed migration: ALTER TABLE runs ADD COLUMN raw_details")
-            if 'raw_subentries' not in runs_cols:
-                conn.execute(text("ALTER TABLE runs ADD COLUMN raw_subentries TEXT"))
-                logger.info("Executed migration: ALTER TABLE runs ADD COLUMN raw_subentries")
-            if 'total_streams' not in runs_cols:
-                conn.execute(text("ALTER TABLE runs ADD COLUMN total_streams INTEGER DEFAULT 0"))
-                logger.info("Executed migration: ALTER TABLE runs ADD COLUMN total_streams")
-
-            # 2. Migrate 'stream_telemetry' table columns
-            result = conn.execute(text("PRAGMA table_info(stream_telemetry)"))
-            stream_cols = [row[1] for row in result]
-            
-            if 'audio_codec' not in stream_cols:
-                conn.execute(text("ALTER TABLE stream_telemetry ADD COLUMN audio_codec VARCHAR(50)"))
-                logger.info("Executed migration: ALTER TABLE stream_telemetry ADD COLUMN audio_codec")
-            if 'is_hdr' not in stream_cols:
-                conn.execute(text("ALTER TABLE stream_telemetry ADD COLUMN is_hdr BOOLEAN DEFAULT 0"))
-                logger.info("Executed migration: ALTER TABLE stream_telemetry ADD COLUMN is_hdr")
-                
-    except Exception as e:
-        logger.warning(f"Lightweight schema migration statement failed (might be already migrated): {e}")
-
-    logger.info(f"Initialized Telemetry Database at {DB_PATH}")
-
-def get_session():
-    """Returns a new SQLAlchemy session."""
-    engine = get_engine()
-    Session = sessionmaker(bind=engine)
-    return Session()
+# Re-exports from main database context
+from database.connection import get_session
+from database.models import Run, ChannelHealth, StreamTelemetry
 
 def _sanitize_bitrate(bitrate_str):
     if not bitrate_str:

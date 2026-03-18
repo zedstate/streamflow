@@ -78,7 +78,7 @@ class SchedulingService:
         return self._regex_matcher
     
     def _load_config(self) -> Dict[str, Any]:
-        """Load scheduling configuration from file.
+        """Load scheduling configuration from SQL.
         
         Returns:
             Configuration dictionary
@@ -87,66 +87,91 @@ class SchedulingService:
             'epg_refresh_interval_minutes': 60,  # Default 1 hour
             'enabled': True
         }
-        
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            if SCHEDULING_CONFIG_FILE.exists():
-                with open(SCHEDULING_CONFIG_FILE, 'r') as f:
-                    config = json.load(f)
-                    logger.info(f"Loaded scheduling config: {config}")
-                    return config
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'scheduling_config').first()
+            if setting and setting.value:
+                return setting.value
         except Exception as e:
             logger.error(f"Error loading scheduling config: {e}")
-        
+        finally:
+            session.close()
         return default_config
     
     def _save_config(self) -> bool:
-        """Save scheduling configuration to file.
+        """Save scheduling configuration to SQL.
         
         Returns:
             True if successful
         """
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(SCHEDULING_CONFIG_FILE, 'w') as f:
-                json.dump(self._config, f, indent=2)
-            logger.info("Saved scheduling config")
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'scheduling_config').first()
+            if not setting:
+                setting = SystemSetting(key='scheduling_config', value=self._config)
+                session.add(setting)
+            else:
+                from sqlalchemy.orm.attributes import flag_modified
+                setting.value = self._config
+                flag_modified(setting, "value")
+            session.commit()
             return True
         except Exception as e:
+            session.rollback()
             logger.error(f"Error saving scheduling config: {e}")
             return False
+        finally:
+            session.close()
     
     def _load_scheduled_events(self) -> List[Dict[str, Any]]:
-        """Load scheduled events from file.
+        """Load scheduled events from SQL.
         
         Returns:
             List of scheduled event dictionaries
         """
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            if SCHEDULED_EVENTS_FILE.exists():
-                with open(SCHEDULED_EVENTS_FILE, 'r') as f:
-                    events = json.load(f)
-                    logger.info(f"Loaded {len(events)} scheduled events")
-                    return events
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'scheduled_events').first()
+            if setting and setting.value:
+                return setting.value
         except Exception as e:
             logger.error(f"Error loading scheduled events: {e}")
-        
+        finally:
+            session.close()
         return []
     
     def _save_scheduled_events(self) -> bool:
-        """Save scheduled events to file.
+        """Save scheduled events to SQL.
         
         Returns:
             True if successful
         """
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(SCHEDULED_EVENTS_FILE, 'w') as f:
-                json.dump(self._scheduled_events, f, indent=2)
-            logger.info(f"Saved {len(self._scheduled_events)} scheduled events")
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'scheduled_events').first()
+            if not setting:
+                setting = SystemSetting(key='scheduled_events', value=self._scheduled_events)
+                session.add(setting)
+            else:
+                from sqlalchemy.orm.attributes import flag_modified
+                setting.value = self._scheduled_events
+                flag_modified(setting, "value")
+            session.commit()
             return True
         except Exception as e:
+            session.rollback()
             logger.error(f"Error saving scheduled events: {e}")
             return False
+        finally:
+            session.close()
     
     def get_config(self) -> Dict[str, Any]:
         """Get scheduling configuration.
@@ -614,96 +639,111 @@ class SchedulingService:
             return None
     
     def _load_auto_create_rules(self) -> List[Dict[str, Any]]:
-        """Load auto-create rules from file.
+        """Load auto-create rules from SQL.
         
         Returns:
             List of auto-create rule dictionaries
         """
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            if AUTO_CREATE_RULES_FILE.exists():
-                with open(AUTO_CREATE_RULES_FILE, 'r') as f:
-                    rules = json.load(f)
-                    logger.info(f"Loaded {len(rules)} auto-create rules")
-                    return rules
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'auto_create_rules').first()
+            if setting and setting.value:
+                return setting.value
         except Exception as e:
             logger.error(f"Error loading auto-create rules: {e}")
-        
+        finally:
+            session.close()
         return []
     
     def _save_auto_create_rules(self) -> bool:
-        """Save auto-create rules to file using atomic write.
+        """Save auto-create rules to SQL.
         
         Returns:
             True if successful
         """
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            
-            # Atomic write: write to temp file then rename
-            temp_file = AUTO_CREATE_RULES_FILE.with_suffix('.tmp')
-            with open(temp_file, 'w') as f:
-                json.dump(self._auto_create_rules, f, indent=2)
-                f.flush()
-                
-            os.replace(temp_file, AUTO_CREATE_RULES_FILE)
-            logger.info(f"Saved {len(self._auto_create_rules)} auto-create rules")
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'auto_create_rules').first()
+            if not setting:
+                setting = SystemSetting(key='auto_create_rules', value=self._auto_create_rules)
+                session.add(setting)
+            else:
+                from sqlalchemy.orm.attributes import flag_modified
+                setting.value = self._auto_create_rules
+                flag_modified(setting, "value")
+            session.commit()
             return True
         except Exception as e:
+            session.rollback()
             logger.error(f"Error saving auto-create rules: {e}")
             return False
+        finally:
+            session.close()
     
     def _load_executed_events(self) -> List[Dict[str, Any]]:
-        """Load executed events history from file and clean up old entries.
+        """Load executed events history from SQL and clean up old entries.
         
         Returns:
             List of executed event dictionaries (cleaned of old entries)
         """
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            if EXECUTED_EVENTS_FILE.exists():
-                with open(EXECUTED_EVENTS_FILE, 'r') as f:
-                    executed_events = json.load(f)
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'executed_events').first()
+            executed_events = setting.value if setting and setting.value else []
+            
+            # Clean up old executed events (older than retention period)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(days=EXECUTED_EVENTS_RETENTION_DAYS)
+            cleaned_events = []
+            
+            for event in executed_events:
+                try:
+                    executed_at = datetime.fromisoformat(event.get('executed_at', '').replace('Z', '+00:00'))
+                    if executed_at.tzinfo is None:
+                        executed_at = executed_at.replace(tzinfo=timezone.utc)
                     
-                    # Clean up old executed events (older than retention period)
-                    cutoff_time = datetime.now(timezone.utc) - timedelta(days=EXECUTED_EVENTS_RETENTION_DAYS)
-                    cleaned_events = []
-                    
-                    for event in executed_events:
-                        try:
-                            executed_at = datetime.fromisoformat(event.get('executed_at', '').replace('Z', '+00:00'))
-                            if executed_at.tzinfo is None:
-                                executed_at = executed_at.replace(tzinfo=timezone.utc)
-                            
-                            if executed_at >= cutoff_time:
-                                cleaned_events.append(event)
-                        except (ValueError, AttributeError):
-                            # Skip events with invalid timestamps
-                            continue
-                    
-                    if len(cleaned_events) < len(executed_events):
-                        logger.info(f"Cleaned up {len(executed_events) - len(cleaned_events)} old executed events")
-                    
-                    logger.info(f"Loaded {len(cleaned_events)} executed events")
-                    return cleaned_events
+                    if executed_at >= cutoff_time:
+                        cleaned_events.append(event)
+                except (ValueError, AttributeError):
+                    continue
+            return cleaned_events
         except Exception as e:
             logger.error(f"Error loading executed events: {e}")
-        
+        finally:
+            session.close()
         return []
     
     def _save_executed_events(self) -> bool:
-        """Save executed events history to file.
+        """Save executed events history to SQL.
         
         Returns:
             True if successful
         """
+        from database.connection import get_session
+        from database.models import SystemSetting
+        session = get_session()
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(EXECUTED_EVENTS_FILE, 'w') as f:
-                json.dump(self._executed_events, f, indent=2)
-            logger.debug(f"Saved {len(self._executed_events)} executed events")
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'executed_events').first()
+            if not setting:
+                setting = SystemSetting(key='executed_events', value=self._executed_events)
+                session.add(setting)
+            else:
+                from sqlalchemy.orm.attributes import flag_modified
+                setting.value = self._executed_events
+                flag_modified(setting, "value")
+            session.commit()
             return True
         except Exception as e:
+            session.rollback()
             logger.error(f"Error saving executed events: {e}")
             return False
+        finally:
+            session.close()
     
     def _record_executed_event(self, channel_id: int, program_start_time: str) -> None:
         """Record an event as executed to prevent re-creation.

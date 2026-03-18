@@ -1,68 +1,22 @@
-#!/usr/bin/env python3
-"""
-Automation Configuration Manager
-
-Manages Automation Profiles and Global Automation Settings.
-Stores configuration in automation_config.json.
-"""
-
-import json
-import os
-import threading
-import uuid
-import logging
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
-from threading import RLock
 
-from logging_config import setup_logging
+path = Path("backend/automation_config_manager.py")
+if not path.exists():
+    print("File not found!")
+    sys.exit(1)
 
-logger = setup_logging(__name__)
+with open(path, "r") as f:
+    content = f.read()
 
-# Configuration directory
-CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
-AUTOMATION_CONFIG_FILE = CONFIG_DIR / 'automation_config.json'
+index = content.find("    def update_global_settings")
+if index == -1:
+    print("Marker not found in file!")
+    sys.exit(1)
 
-class AutomationConfigManager:
-    """
-    Manages Automation Profiles and Settings.
-    """
-    
-    def __init__(self):
-        from database.manager import get_db_manager
-        self.db = get_db_manager()
-        self._lock = RLock()
-        logger.info("AutomationConfigManager initialized with SQL backend")
-        
-    def _create_default_profile(self):
-        """Deprecated."""
-        pass
+head = content[:index]
 
-    def _get_config_dict(self, key: str, default: Any = None) -> Any:
-        return self.db.get_system_setting(key, default)
-
-    def _set_config_dict(self, key: str, value: Any):
-        return self.db.set_system_setting(key, value)
-        
-    def _load_config(self):
-        """Deprecated."""
-        pass
-
-    def _save_config(self) -> bool:
-        """Deprecated."""
-        return True
-
-
-    # --- Global Settings ---
-
-    def get_global_settings(self) -> Dict[str, Any]:
-        return {
-            "regular_automation_enabled": self._get_config_dict("regular_automation_enabled", False),
-            "playlist_update_interval_minutes": self._get_config_dict("playlist_update_interval_minutes", {"type": "interval", "value": 5}),
-            "validate_existing_streams": self._get_config_dict("validate_existing_streams", False)
-        }
-
-    def update_global_settings(self, regular_automation_enabled: Optional[bool] = None, settings: Dict[str, Any] = None) -> bool:
+new_body = """    def update_global_settings(self, regular_automation_enabled: Optional[bool] = None, settings: Dict[str, Any] = None) -> bool:
         updates = settings or {}
         if isinstance(regular_automation_enabled, dict):
             updates.update(regular_automation_enabled)
@@ -367,3 +321,17 @@ def get_automation_config_manager() -> AutomationConfigManager:
         with _manager_lock:
             if _automation_config_manager is None: _automation_config_manager = AutomationConfigManager()
     return _automation_config_manager
+\"\"\"
+
+with open(path, "w") as f:
+    f.write(head + new_body)
+
+print("✓ Replaced cleanly")
+print("All set")
+" " "
+" " "
+"""
+with open(path, "w") as f:
+    f.write(head + new_body[:-2]) # trim footer wrapper
+
+print("✓ Replaced cleanly")

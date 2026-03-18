@@ -996,6 +996,15 @@ class StreamMonitoringService:
             msg = f"Enforcing new stream order count={len(new_order_ids)} for session {session_id}"
             logger.debug(msg)
             
+            def _execute_sync():
+                try:
+                    from api_utils import update_channel_streams
+                    success = update_channel_streams(session.channel_id, new_order_ids)
+                    if success:
+                        logger.debug(f"Reordered streams for session {session_id} to {new_order_ids}")
+                except Exception as e:
+                    logger.error(f"Failed to sync stream order for session {session_id}: {e}")
+
             # Offload synchronous network call to thread pool
             self.io_pool.submit(_execute_sync)
     

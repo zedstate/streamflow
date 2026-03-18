@@ -83,11 +83,7 @@ class ChangelogManager:
         self.changelog_file = Path(changelog_file)
         self.changelog = [] # deprecated but kept for backwards comp
         
-        try:
-            from telemetry_db import init_db
-            init_db()
-        except:
-            pass
+        pass
     
     def _load_changelog(self) -> List[Dict]:
         """Deprecated."""
@@ -288,10 +284,17 @@ class RegexChannelMatcher:
         - Removing patterns with invalid regex on load to prevent persistent errors
         - Migrating old format (regex array) to new format (regex_patterns array of objects)
         """
-        if self.config_file.exists():
+        from database.connection import get_session
+        from database.models import SystemSetting
+        loaded_config = None
+        if True:
             try:
-                with open(self.config_file, 'r') as f:
-                    loaded_config = json.load(f)
+                session = get_session()
+                setting = session.query(SystemSetting).filter(SystemSetting.key == 'channel_regex_config').first()
+                if setting and setting.value:
+                    loaded_config = setting.value
+                else:
+                    raise FileNotFoundError("No regex config found in DB")
                 
                 # Validate and sanitize patterns - remove any with invalid regex
                 # Also migrate old format to new format
@@ -399,11 +402,26 @@ class RegexChannelMatcher:
         return default_config
     
     def _save_patterns(self, patterns: Dict):
-        """Save patterns to file."""
-        # Ensure parent directory exists
-        self.config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.config_file, 'w') as f:
-            json.dump(patterns, f, indent=2)
+        """Save patterns to SQL."""
+        from database.connection import get_session
+        from database.models import SystemSetting
+        
+        session = get_session()
+        try:
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'channel_regex_config').first()
+            if not setting:
+                setting = SystemSetting(key='channel_regex_config', value=patterns)
+                session.add(setting)
+            else:
+                from sqlalchemy.orm.attributes import flag_modified
+                setting.value = patterns
+                flag_modified(setting, "value")
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to save regex patterns: {e}")
+        finally:
+            session.close()
     
     def validate_regex_patterns(self, patterns: List[str]) -> Tuple[bool, Optional[str]]:
         """Validate a list of regex patterns.
@@ -956,27 +974,40 @@ class AutomatedStreamManager:
     
     def _load_state(self) -> Dict[str, datetime]:
         """Load persisted automation state from file."""
-        if self.state_file.exists():
-            try:
-                with open(self.state_file, 'r') as f:
-                    state = json.load(f)
-                    # Convert stored ISO strings back to datetime objects
-                    loaded_runs = state.get('period_last_run', {})
-                    parsed_runs = {}
-                    for pid, iso_str in loaded_runs.items():
-                        try:
-                            parsed_runs[pid] = datetime.fromisoformat(iso_str)
-                        except (ValueError, TypeError):
-                            pass
-                    if parsed_runs:
-                        logger.info(f"Loaded {len(parsed_runs)} period last-run timestamps from state file")
-                    return parsed_runs
-            except (json.JSONDecodeError, FileNotFoundError):
-                logger.warning(f"Could not load state from {self.state_file}, starting fresh")
+        from database.connection import get_session
+        from database.models import SystemSetting
+        state = None
+        try:
+            session = get_session()
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'automation_state').first()
+            if setting and setting.value:
+                state = setting.value
+            else:
+                raise FileNotFoundError("No automation state found in DB")
+            
+            # Convert stored ISO strings back to datetime objects
+            loaded_runs = state.get('period_last_run', {})
+            parsed_runs = {}
+            for pid, iso_str in loaded_runs.items():
+                try:
+                    parsed_runs[pid] = datetime.fromisoformat(iso_str)
+                except (ValueError, TypeError):
+                    pass
+            
+            if parsed_runs:
+                logger.info(f"Loaded {len(parsed_runs)} period last-run timestamps from state file")
+            return parsed_runs
+        except (Exception):
+            logger.warning(f"Could not load state from DB, starting fresh")
+        finally:
+            try: session.close()
+            except: pass
         return {}
 
     def _save_state(self):
-        """Save current automation state to file."""
+        """Save current automation state to SQL."""
+        from database.connection import get_session
+        from database.models import SystemSetting
         try:
             # Convert datetime objects to ISO strings for JSON serialization
             serializable_runs = {
@@ -985,45 +1016,77 @@ class AutomatedStreamManager:
                 if isinstance(dt, datetime)
             }
             state = {'period_last_run': serializable_runs}
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_file, 'w') as f:
-                json.dump(state, f, indent=2)
+            
+            session = get_session()
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'automation_state').first()
+            if not setting:
+                setting = SystemSetting(key='automation_state', value=state)
+                session.add(setting)
+            else:
+                from sqlalchemy.orm.attributes import flag_modified
+                setting.value = state
+                flag_modified(setting, "value")
+            session.commit()
+            session.close()
         except Exception as e:
             logger.error(f"Failed to save automation state: {e}")
+
     
     def _load_config(self) -> Dict:
-        """Load automation configuration."""
-        if self.config_file.exists():
-            try:
-                with open(self.config_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                logger.warning(f"Could not load {self.config_file}, creating default config")
+        """Load automation configuration from SQL."""
+        from database.connection import get_session
+        from database.models import SystemSetting
+        try:
+            session = get_session()
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'automation_config').first()
+            if setting and setting.value:
+                return setting.value
+        except Exception as e:
+            logger.error(f"Failed to load automation config: {e}")
+        finally:
+            try: session.close()
+            except: pass
         
         # Default configuration
         default_config = {
             "playlist_update_interval_minutes": 5,
-            "playlist_update_cron": "",  # Empty means use interval. When both are set, cron takes precedence.
-            "enabled_m3u_accounts": [],  # Empty list means all accounts enabled
-            "autostart_automation": False,  # Don't auto-start by default
+            "playlist_update_cron": "",
+            "enabled_m3u_accounts": [],
+            "autostart_automation": False,
             "enabled_features": {
                 "auto_playlist_update": True,
                 "auto_stream_discovery": True,
                 "changelog_tracking": True
             },
-            "validate_existing_streams": False,  # Validate existing streams in channels against regex patterns
-            "verify_stream_assignments": False  # Verify stream assignments by refreshing UDI (adds API overhead)
+            "validate_existing_streams": False,
+            "verify_stream_assignments": False
         }
         
         self._save_config(default_config)
         return default_config
     
     def _save_config(self, config: Dict):
-        """Save configuration to file."""
-        # Ensure parent directory exists
-        self.config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.config_file, 'w') as f:
-            json.dump(config, f, indent=2)
+        """Save configuration to SQL."""
+        from database.connection import get_session
+        from database.models import SystemSetting
+        try:
+            session = get_session()
+            setting = session.query(SystemSetting).filter(SystemSetting.key == 'automation_config').first()
+            if not setting:
+                setting = SystemSetting(key='automation_config', value=config)
+                session.add(setting)
+            else:
+                from sqlalchemy.orm.attributes import flag_modified
+                setting.value = config
+                flag_modified(setting, "value")
+            session.commit()
+        except Exception as e:
+            logger.error(f"Failed to save automation config: {e}")
+            if 'session' in locals():
+                session.rollback()
+        finally:
+            if 'session' in locals():
+                session.close()
     
     def update_config(self, updates: Dict):
         """Update configuration with new values and apply immediately."""
