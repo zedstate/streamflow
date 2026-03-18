@@ -847,6 +847,8 @@ class SchedulingService:
             # Temporarily substitute CHANNEL_NAME with a placeholder for validation
             try:
                 validation_pattern = rule_data['regex_pattern'].replace('CHANNEL_NAME', 'PLACEHOLDER')
+                if re.search(r'\([^)]*[+*][^)]*\)[+*]', validation_pattern):
+                    raise ValueError("Regex pattern contains dangerous nested quantifiers (ReDoS risk)")
                 re.compile(validation_pattern)
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
@@ -1056,6 +1058,8 @@ class SchedulingService:
                 try:
                     # Temporarily substitute CHANNEL_NAME with a placeholder for validation
                     validation_pattern = rule_data['regex_pattern'].replace('CHANNEL_NAME', 'PLACEHOLDER')
+                    if re.search(r'\([^)]*[+*][^)]*\)[+*]', validation_pattern):
+                        raise ValueError("Regex pattern contains dangerous nested quantifiers (ReDoS risk)")
                     re.compile(validation_pattern)
                     rule['regex_pattern'] = rule_data['regex_pattern']
                 except re.error as e:
@@ -1116,6 +1120,8 @@ class SchedulingService:
         # Temporarily substitute CHANNEL_NAME with a placeholder for validation
         try:
             validation_pattern = regex_pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
+            if re.search(r'\([^)]*[+*][^)]*\)[+*]', validation_pattern):
+                raise ValueError("Regex pattern contains dangerous nested quantifiers (ReDoS risk)")
             re.compile(validation_pattern, re.IGNORECASE)
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}")
@@ -1211,6 +1217,9 @@ class SchedulingService:
             try:
                 # Temporarily substitute CHANNEL_NAME with a placeholder for validation
                 validation_pattern = regex_pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
+                if re.search(r'\([^)]*[+*][^)]*\)[+*]', validation_pattern):
+                    logger.error(f"Invalid regex pattern in rule {rule.get('id')}: ReDoS risk")
+                    continue
                 re.compile(validation_pattern, re.IGNORECASE)
             except re.error as e:
                 logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")

@@ -1673,6 +1673,8 @@ def mass_edit_preview():
         # Compile regex if needed
         if use_regex:
             try:
+                if re.search(r'\([^)]*[+*][^)]*\)[+*]', find_pattern):
+                    return jsonify({"error": "Regex pattern contains dangerous nested quantifiers (ReDoS risk)"}), 400
                 find_regex = re.compile(find_pattern)
             except re.error as e:
                 return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
@@ -1787,6 +1789,8 @@ def mass_edit_regex_patterns():
         # Compile regex if needed
         if use_regex:
             try:
+                if re.search(r'\([^)]*[+*][^)]*\)[+*]', find_pattern):
+                    return jsonify({"error": "Regex pattern contains dangerous nested quantifiers (ReDoS risk)"}), 400
                 find_regex = re.compile(find_pattern)
             except re.error as e:
                 return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
@@ -1934,6 +1938,8 @@ def test_regex_pattern():
         search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
         
         try:
+            if re.search(r'\([^)]*[+*][^)]*\)[+*]', search_pattern):
+                return jsonify({"error": "Regex pattern contains dangerous nested quantifiers (ReDoS risk)"}), 400
             match = re.search(search_pattern, search_name)
             return jsonify({
                 "matches": bool(match),
@@ -2039,6 +2045,9 @@ def test_regex_pattern_live():
                     search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                     
                     try:
+                        if re.search(r'\([^)]*[+*][^)]*\)[+*]', search_pattern):
+                            logger.warning(f"Invalid regex pattern '{pattern}': ReDoS risk")
+                            continue
                         if re.search(search_pattern, search_name):
                             matched = True
                             matched_pattern = pattern
@@ -2544,6 +2553,8 @@ def test_match_live():
                         search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                         
                         try:
+                            if re.search(r'\([^)]*[+*][^)]*\)[+*]', search_pattern):
+                                continue
                             if re.search(search_pattern, search_name):
                                 regex_matched = True
                                 if pattern_priority >= best_regex_priority:
