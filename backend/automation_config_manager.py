@@ -114,13 +114,40 @@ class AutomationConfigManager:
 
     # --- Profile Management ---
 
-    def get_all_profiles(self) -> List[Dict]:
+    def get_all_profiles(
+        self,
+        search: str = '',
+        page: Optional[int] = None,
+        per_page: int = 50,
+    ) -> Any:
+        """Return automation profiles.
+
+        When *page* is None returns a plain list (backward compatible).
+        When *page* is provided returns a pagination envelope dict.
+        """
         from database.models import AutomationProfile
         from database.connection import get_session
+        from sqlalchemy import asc as _asc
         session = get_session()
         try:
-            profiles = session.query(AutomationProfile).all()
-            return [self._profile_to_dict(p) for p in profiles]
+            q = session.query(AutomationProfile).order_by(_asc(AutomationProfile.name))
+            if search:
+                q = q.filter(AutomationProfile.name.ilike(f'%{search}%'))
+            if page is None:
+                return [self._profile_to_dict(p) for p in q.all()]
+            total = q.count()
+            offset = (page - 1) * per_page
+            items = q.offset(offset).limit(per_page).all()
+            total_pages = max(1, (total + per_page - 1) // per_page)
+            return {
+                'items': [self._profile_to_dict(p) for p in items],
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': total_pages,
+                'has_next': (offset + per_page) < total,
+                'has_prev': page > 1,
+            }
         finally:
             session.close()
 
@@ -260,12 +287,42 @@ class AutomationConfigManager:
 
     # --- Automation Periods Management ---
 
-    def get_all_periods(self) -> List[Dict]:
+    def get_all_periods(
+        self,
+        search: str = '',
+        page: Optional[int] = None,
+        per_page: int = 50,
+    ) -> Any:
+        """Return automation periods.
+
+        When *page* is None returns a plain list (backward compatible).
+        When *page* is provided returns a pagination envelope dict.
+        """
         from database.models import AutomationPeriod
         from database.connection import get_session
+        from sqlalchemy import asc as _asc
         session = get_session()
-        try: return [self._period_to_dict(p) for p in session.query(AutomationPeriod).all()]
-        finally: session.close()
+        try:
+            q = session.query(AutomationPeriod).order_by(_asc(AutomationPeriod.name))
+            if search:
+                q = q.filter(AutomationPeriod.name.ilike(f'%{search}%'))
+            if page is None:
+                return [self._period_to_dict(p) for p in q.all()]
+            total = q.count()
+            offset = (page - 1) * per_page
+            items = q.offset(offset).limit(per_page).all()
+            total_pages = max(1, (total + per_page - 1) // per_page)
+            return {
+                'items': [self._period_to_dict(p) for p in items],
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': total_pages,
+                'has_next': (offset + per_page) < total,
+                'has_prev': page > 1,
+            }
+        finally:
+            session.close()
 
     def get_period(self, period_id: str) -> Optional[Dict]:
         from database.models import AutomationPeriod

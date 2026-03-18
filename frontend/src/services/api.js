@@ -91,7 +91,17 @@ export const automationAPI = {
 };
 
 export const channelsAPI = {
-  getChannels: () => api.get('/channels'),
+  /**
+   * Fetch channels with optional filtering, sorting, and pagination.
+   *
+   * @param {Object} [params]
+   * @param {string}  [params.search]    - Filter by channel name (case-insensitive substring match).
+   * @param {string}  [params.sort_by]   - Sort field: 'name' (default), 'channel_number', or 'id'.
+   * @param {string}  [params.sort_dir]  - Sort direction: 'asc' (default) or 'desc'.
+   * @param {number}  [params.page]      - Page number (1-based). Omit for full list.
+   * @param {number}  [params.per_page]  - Items per page (default 50, max 500).
+   */
+  getChannels: (params = {}) => api.get('/channels', { params }),
   getGroups: () => api.get('/channels/groups'),
   getChannelStats: (channelId) => api.get(`/channels/${channelId}/stats`),
   getLogo: (logoId) => api.get(`/channels/logos/${logoId}`),
@@ -110,7 +120,16 @@ export const regexAPI = {
   deletePattern: (channelId) => api.delete(`/regex-patterns/${channelId}`),
   testPattern: (data) => api.post('/test-regex', data),
   testPatternLive: (data) => api.post('/test-regex-live', data),
+  /**
+   * Import patterns from a canonical JSON object.
+   * Fully replaces all existing patterns.
+   */
   importPatterns: (patterns) => api.post('/regex-patterns/import', patterns),
+  /**
+   * Export all patterns as a JSON object in the canonical format.
+   * The result can be passed directly to importPatterns for backup/restore.
+   */
+  exportPatterns: () => api.get('/regex-patterns/export'),
   bulkAddPatterns: (data) => api.post('/regex-patterns/bulk', data),
   bulkDeletePatterns: (data) => api.post('/regex-patterns/bulk-delete', data),
   getCommonPatterns: (data) => api.post('/regex-patterns/common', data),
@@ -156,11 +175,31 @@ export const changelogAPI = {
 };
 
 export const deadStreamsAPI = {
-  getDeadStreams: (page = 1, per_page = 20) => {
-    // Ensure page and per_page are primitive numbers to avoid sending objects
+  /**
+   * Fetch dead streams with SQL-native pagination, sorting, and optional search.
+   *
+   * @param {number} [page=1]         - Page number (1-based).
+   * @param {number} [per_page=20]    - Items per page.
+   * @param {Object} [options]
+   * @param {number} [options.page=1]
+   * @param {number} [options.per_page=20]
+   * @param {string} [options.sort_by='marked_dead_at'] - 'marked_dead_at', 'stream_name', 'url', 'reason'
+   * @param {string} [options.sort_dir='desc']          - 'desc' or 'asc'
+   * @param {string} [options.search='']               - case-insensitive substring filter
+   */
+  getDeadStreams: (options = {}) => {
+    const {
+      page = 1,
+      per_page = 20,
+      sort_by = 'marked_dead_at',
+      sort_dir = 'desc',
+      search = '',
+    } = options;
     const safePage = typeof page === 'number' ? page : parseInt(page) || 1;
     const safePerPage = typeof per_page === 'number' ? per_page : parseInt(per_page) || 20;
-    return api.get('/dead-streams', { params: { page: safePage, per_page: safePerPage } });
+    const params = { page: safePage, per_page: safePerPage, sort_by, sort_dir };
+    if (search) params.search = search;
+    return api.get('/dead-streams', { params });
   },
   reviveStream: (streamUrl) => api.post('/dead-streams/revive', { stream_url: streamUrl }),
   clearAllDeadStreams: () => api.post('/dead-streams/clear'),

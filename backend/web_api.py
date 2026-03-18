@@ -36,7 +36,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from dataclasses import asdict
 from flask import Flask, request, jsonify, send_from_directory, send_file, make_response, Response
 from flask_cors import CORS
@@ -103,6 +103,40 @@ THREAD_SHUTDOWN_TIMEOUT_SECONDS = 5  # Timeout for graceful thread shutdown
 static_folder = Path(__file__).parent / 'static'
 app = Flask(__name__, static_folder=None)
 CORS(app)  # Enable CORS for React frontend
+
+
+def _parse_pagination_params(
+    page_param: Optional[str],
+    per_page_param: str,
+    default_per_page: int = 50,
+    max_per_page: int = 500,
+) -> Tuple[Optional[int], int, Optional['Response']]:
+    """Parse and validate pagination query parameters.
+
+    Returns a ``(page, per_page, error_response)`` triple.  When the
+    parameters are valid *error_response* is ``None``; when they are invalid
+    a Flask ``Response`` object with status 400 is returned instead and
+    ``page`` / ``per_page`` are undefined.
+    """
+    page: Optional[int] = None
+    if page_param is not None:
+        try:
+            page = max(1, int(page_param))
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                f"Invalid 'page' query parameter {page_param!r}: {exc}"
+            )
+            return None, default_per_page, (
+                jsonify({"error": "Invalid page parameter: must be an integer"}), 400
+            )
+
+    try:
+        per_page = int(per_page_param)
+    except (ValueError, TypeError):
+        per_page = default_per_page
+    per_page = min(max(per_page, 1), max_per_page)
+
+    return page, per_page, None
 
 # Global instances
 automation_manager = None
@@ -560,14 +594,51 @@ def get_version():
 
 @app.route('/api/channels', methods=['GET'])
 def get_channels():
-    """Get all channels from UDI with custom ordering applied."""
+    """Get all channels from UDI with custom ordering applied.
+
+    Optional query parameters:
+      - page (int): page number for pagination (1-based). If omitted the full list is returned.
+      - per_page (int): items per page (default 50, max 500).
+      - search (str): filter channels whose name contains this string (case-insensitive).
+      - sort_by (str): field to sort by – 'name' (default), 'channel_number', or 'id'.
+      - sort_dir (str): 'asc' (default) or 'desc'.
+    """
     try:
+        search = request.args.get('search', '').strip()
+        sort_by = request.args.get('sort_by', 'name')
+        sort_dir = request.args.get('sort_dir', 'asc')
+        page_param = request.args.get('page', None)
+        per_page_param = request.args.get('per_page', '50')
+
+        page, per_page, err = _parse_pagination_params(page_param, per_page_param)
+        if err:
+            return err
+
+        if sort_dir not in ('asc', 'desc'):
+            sort_dir = 'asc'
+
         udi = get_udi_manager()
         channels = udi.get_channels()
-        
+
         if channels is None:
             return jsonify({"error": "Failed to fetch channels"}), 500
-        
+
+        # Apply search filter (case-insensitive)
+        if search:
+            search_lower = search.lower()
+            channels = [ch for ch in channels if search_lower in ch.get('name', '').lower()]
+
+        # Apply sorting
+        _VALID_SORT_COLS = {'name', 'channel_number', 'id'}
+        if sort_by not in _VALID_SORT_COLS:
+            sort_by = 'name'
+        reverse = sort_dir == 'desc'
+        channels = sorted(
+            channels,
+            key=lambda ch: (ch.get(sort_by) is None, ch.get(sort_by, '')),
+            reverse=reverse,
+        )
+
         # Inject automation profile assignments
         automation_config = get_automation_config_manager()
         channels_with_profiles = []
@@ -581,18 +652,34 @@ def get_channels():
             )
             # Also include explicit assignment for UI logic if needed
             ch_copy['assigned_profile_id'] = automation_config.get_channel_assignment(ch_copy.get('id'))
-            
+
             # Get automation periods count
             periods = automation_config.get_channel_periods(ch_copy.get('id'))
             ch_copy['automation_periods_count'] = len(periods)
-            
+
             channels_with_profiles.append(ch_copy)
-            
-        # Apply custom channel order if configured
-        order_manager = get_channel_order_manager()
-        channels = order_manager.apply_order(channels_with_profiles)
-        
-        return jsonify(channels)
+
+        # Apply custom channel order if configured (only for non-paginated responses)
+        if page is None:
+            order_manager = get_channel_order_manager()
+            channels_with_profiles = order_manager.apply_order(channels_with_profiles)
+            return jsonify(channels_with_profiles)
+
+        # Paginated response
+        total = len(channels_with_profiles)
+        start = (page - 1) * per_page
+        end = start + per_page
+        page_items = channels_with_profiles[start:end]
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        return jsonify({
+            "items": page_items,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+            "has_next": end < total,
+            "has_prev": page > 1,
+        })
     except Exception as e:
         logger.error(f"Error fetching channels: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -1240,7 +1327,27 @@ def get_effective_profile(channel_id):
 
 @app.route('/api/regex-patterns/import', methods=['POST'])
 def import_regex_patterns():
-    """Import regex patterns from JSON file."""
+    """Import regex patterns from JSON.
+
+    Accepts the canonical export format::
+
+        {
+          "patterns": {
+            "<channel_id>": {
+              "name": "...",
+              "enabled": true,
+              "match_by_tvg_id": false,
+              "regex_patterns": [
+                {"pattern": "...", "m3u_accounts": null}
+              ]
+            }
+          },
+          "global_settings": {"case_sensitive": true, "require_exact_match": false}
+        }
+
+    The old ``"regex"`` key is also accepted for backward compatibility.
+    Existing patterns are fully replaced (non-merge mode).
+    """
     try:
         data = request.get_json()
         if not data:
@@ -1256,24 +1363,19 @@ def import_regex_patterns():
         if not isinstance(data['patterns'], dict):
             return jsonify({"error": "Invalid JSON format: 'patterns' must be an object"}), 400
         
-        # Validate each pattern
+        # Validate each pattern before importing
         matcher = get_regex_matcher()
         for channel_id, pattern_data in data['patterns'].items():
             if not isinstance(pattern_data, dict):
                 return jsonify({"error": f"Invalid pattern format for channel {channel_id}"}), 400
             
             # Support both old format (regex), new format (regex_patterns), and legacy hybrid format
-            # Old format: "regex": ["pattern1", "pattern2"]
-            # New format: "regex_patterns": [{"pattern": "p1", "m3u_accounts": [...], "priority": 0}]
-            # Legacy hybrid: "regex_patterns": ["pattern1", "pattern2"] (strings instead of objects)
             regex_patterns_to_validate = []
             
             if 'regex_patterns' in pattern_data:
-                # New format: regex_patterns is array of objects with pattern, m3u_accounts, priority
                 if not isinstance(pattern_data['regex_patterns'], list):
                     return jsonify({"error": f"'regex_patterns' must be a list for channel {channel_id}"}), 400
                 
-                # Extract pattern strings for validation
                 for pattern_obj in pattern_data['regex_patterns']:
                     if isinstance(pattern_obj, dict):
                         pattern = pattern_obj.get('pattern', '')
@@ -1281,32 +1383,35 @@ def import_regex_patterns():
                             return jsonify({"error": f"Pattern object missing or has empty 'pattern' field for channel {channel_id}"}), 400
                         regex_patterns_to_validate.append(pattern)
                     elif isinstance(pattern_obj, str):
-                        # Legacy format within regex_patterns - plain strings
                         regex_patterns_to_validate.append(pattern_obj)
                     else:
-                        # Invalid type (number, null, etc.)
                         return jsonify({"error": f"Pattern in regex_patterns must be a string or object for channel {channel_id}, got {type(pattern_obj).__name__}"}), 400
             elif 'regex' in pattern_data:
-                # Old format: regex is array of strings
                 if not isinstance(pattern_data['regex'], list):
                     return jsonify({"error": f"'regex' must be a list for channel {channel_id}"}), 400
                 regex_patterns_to_validate = pattern_data['regex']
             else:
                 return jsonify({"error": f"Missing 'regex' or 'regex_patterns' field for channel {channel_id}"}), 400
             
-            # Validate that we have at least one pattern
             if not regex_patterns_to_validate:
                 return jsonify({"error": f"No patterns provided for channel {channel_id}"}), 400
             
-            # Validate regex patterns
             is_valid, error_msg = matcher.validate_regex_patterns(regex_patterns_to_validate)
             if not is_valid:
                 return jsonify({"error": f"Invalid regex pattern components for channel {channel_id}"}), 400
         
-        # If validation passes, save the patterns
-        matcher._save_patterns(data)
-        
-        # Reload patterns to ensure they're in sync
+        # Validation passed – persist via DAL and reload in-memory cache
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        imported, errors = db.import_channel_regex_configs_from_json(data, merge=False)
+        if errors:
+            logger.error(f"Errors during import: {errors}")
+            return jsonify({"error": "Import failed", "details": errors}), 500
+
+        # Persist global_settings if provided
+        if 'global_settings' in data and isinstance(data['global_settings'], dict):
+            db.set_system_setting('channel_regex_global_settings', data['global_settings'])
+
         matcher.reload_patterns()
         
         pattern_count = len(data['patterns'])
@@ -1318,6 +1423,23 @@ def import_regex_patterns():
         })
     except Exception as e:
         logger.error(f"Error importing regex patterns: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/regex-patterns/export', methods=['GET'])
+def export_regex_patterns():
+    """Export all regex patterns as a JSON blob (canonical format).
+
+    The returned JSON is compatible with the ``/api/regex-patterns/import``
+    endpoint, making round-trip backup/restore straightforward.
+    """
+    try:
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        export_data = db.export_channel_regex_configs_as_json()
+        return jsonify(export_data)
+    except Exception as e:
+        logger.error(f"Error exporting regex patterns: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/bulk-delete', methods=['POST'])
@@ -2165,65 +2287,44 @@ def get_changelog():
 
 @app.route('/api/dead-streams', methods=['GET'])
 def get_dead_streams():
-    """Get dead streams statistics and list with pagination."""
+    """Get dead streams statistics and list with SQL-native pagination, sorting, and filtering."""
     try:
-        # Get pagination parameters with better error handling
         page_param = request.args.get('page', '1')
         per_page_param = request.args.get('per_page', str(DEAD_STREAMS_DEFAULT_PER_PAGE))
-        
-        try:
-            page = int(page_param)
-        except (ValueError, TypeError) as e:
-            logger.error(f"Invalid page parameter: {page_param} (type: {type(page_param).__name__}) - {str(e)}")
-            return jsonify({"error": f"Invalid page parameter: must be an integer"}), 400
-        
-        try:
-            per_page = int(per_page_param)
-        except (ValueError, TypeError) as e:
-            logger.error(f"Invalid per_page parameter: {per_page_param} (type: {type(per_page_param).__name__}) - {str(e)}")
-            return jsonify({"error": f"Invalid per_page parameter: must be an integer"}), 400
-        
-        # Validate pagination parameters
-        if page < 1:
-            page = 1
-        if per_page < 1 or per_page > DEAD_STREAMS_MAX_PER_PAGE:
-            per_page = DEAD_STREAMS_DEFAULT_PER_PAGE
-        
-        checker = get_stream_checker_service()
-        if not checker or not checker.dead_streams_tracker:
-            return jsonify({"error": "Dead streams tracker not available"}), 503
-        
-        dead_streams = checker.dead_streams_tracker.get_dead_streams()
-        
-        # Transform to a more frontend-friendly format
-        dead_streams_list = []
-        for url, info in dead_streams.items():
-            dead_streams_list.append({
-                'url': url,
-                'stream_id': info.get('stream_id'),
-                'stream_name': info.get('stream_name'),
-                'marked_dead_at': info.get('marked_dead_at')
-            })
-        
-        # Sort by marked_dead_at (newest first)
-        dead_streams_list.sort(key=lambda x: x.get('marked_dead_at', ''), reverse=True)
-        
-        # Calculate pagination
-        total_count = len(dead_streams_list)
-        start_index = (page - 1) * per_page
-        end_index = start_index + per_page
-        paginated_streams = dead_streams_list[start_index:end_index]
-        total_pages = (total_count + per_page - 1) // per_page
-        
+        sort_by = request.args.get('sort_by', 'marked_dead_at')
+        sort_dir = request.args.get('sort_dir', 'desc')
+        search = request.args.get('search', '').strip()
+
+        page, per_page, err = _parse_pagination_params(
+            page_param, per_page_param,
+            default_per_page=DEAD_STREAMS_DEFAULT_PER_PAGE,
+            max_per_page=DEAD_STREAMS_MAX_PER_PAGE,
+        )
+        if err:
+            return err
+
+        if sort_dir not in ('asc', 'desc'):
+            sort_dir = 'desc'
+
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        result = db.get_dead_streams_paginated(
+            page=page,
+            per_page=per_page,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            search=search,
+        )
+
         return jsonify({
-            "total_dead_streams": total_count,
-            "dead_streams": paginated_streams,
+            "total_dead_streams": result['total'],
+            "dead_streams": result['items'],
             "pagination": {
-                "page": page,
-                "per_page": per_page,
-                "total_pages": total_pages,
-                "has_next": end_index < total_count,
-                "has_prev": page > 1
+                "page": result['page'],
+                "per_page": result['per_page'],
+                "total_pages": result['total_pages'],
+                "has_next": result['has_next'],
+                "has_prev": result['has_prev'],
             }
         })
     except Exception as e:
@@ -2239,13 +2340,16 @@ def revive_dead_stream():
         
         if not stream_url:
             return jsonify({"error": "stream_url is required"}), 400
-        
+
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        # Also keep the in-memory tracker in sync when the checker is running
         checker = get_stream_checker_service()
-        if not checker or not checker.dead_streams_tracker:
-            return jsonify({"error": "Dead streams tracker not available"}), 503
-        
-        success = checker.dead_streams_tracker.mark_as_alive(stream_url)
-        
+        if checker and checker.dead_streams_tracker:
+            success = checker.dead_streams_tracker.mark_as_alive(stream_url)
+        else:
+            success = db.remove_dead_stream(stream_url)
+
         if success:
             return jsonify({"success": True, "message": "Stream marked as alive"})
         else:
@@ -2258,13 +2362,16 @@ def revive_dead_stream():
 def clear_all_dead_streams():
     """Clear all dead streams from the tracker."""
     try:
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        dead_count = db.get_dead_streams_paginated(page=1, per_page=1)['total']
+
         checker = get_stream_checker_service()
-        if not checker or not checker.dead_streams_tracker:
-            return jsonify({"error": "Dead streams tracker not available"}), 503
-        
-        dead_count = len(checker.dead_streams_tracker.get_dead_streams())
-        checker.dead_streams_tracker.clear_all_dead_streams()
-        
+        if checker and checker.dead_streams_tracker:
+            checker.dead_streams_tracker.clear_all_dead_streams()
+        else:
+            db.clear_all_dead_streams()
+
         return jsonify({
             "success": True,
             "message": f"Cleared {dead_count} dead stream(s)",
@@ -4037,12 +4144,34 @@ def handle_automation_global_config():
 @app.route('/api/automation/profiles', methods=['GET', 'POST'])
 @log_function_call
 def handle_automation_profiles():
-    """Get all profiles or create a new profile."""
+    """Get all profiles or create a new profile.
+
+    GET supports optional query parameters:
+      - search (str): filter profiles by name (case-insensitive).
+      - page (int): page number (1-based). If omitted, returns full list.
+      - per_page (int): items per page (default 50, max 200).
+    """
     try:
         automation_config = get_automation_config_manager()
         
         if request.method == 'GET':
-            profiles = automation_config.get_all_profiles()
+            search = request.args.get('search', '').strip()
+            page_param = request.args.get('page', None)
+            per_page_param = request.args.get('per_page', '50')
+
+            page: Optional[int] = None
+            if page_param is not None:
+                try:
+                    page = max(1, int(page_param))
+                except (ValueError, TypeError):
+                    return jsonify({"error": "Invalid page parameter: must be an integer"}), 400
+
+            try:
+                per_page = min(max(int(per_page_param), 1), 200)
+            except (ValueError, TypeError):
+                per_page = 50
+
+            profiles = automation_config.get_all_profiles(search=search, page=page, per_page=per_page)
             return jsonify(profiles), 200
             
         elif request.method == 'POST':
@@ -4216,17 +4345,47 @@ def assign_automation_profile_group():
 @app.route('/api/automation/periods', methods=['GET', 'POST'])
 @log_function_call
 def handle_automation_periods():
-    """Get all automation periods or create a new period."""
+    """Get all automation periods or create a new period.
+
+    GET supports optional query parameters:
+      - search (str): filter periods by name (case-insensitive).
+      - page (int): page number (1-based). If omitted, returns full list.
+      - per_page (int): items per page (default 50, max 200).
+    """
     try:
         automation_config = get_automation_config_manager()
         
         if request.method == 'GET':
-            periods = automation_config.get_all_periods()
-            # Add channel count to each period
-            for period in periods:
-                channels = automation_config.get_period_channels(period['id'])
-                period['channel_count'] = len(channels)
-            return jsonify(periods), 200
+            search = request.args.get('search', '').strip()
+            page_param = request.args.get('page', None)
+            per_page_param = request.args.get('per_page', '50')
+
+            page: Optional[int] = None
+            if page_param is not None:
+                try:
+                    page = max(1, int(page_param))
+                except (ValueError, TypeError):
+                    return jsonify({"error": "Invalid page parameter: must be an integer"}), 400
+
+            try:
+                per_page = min(max(int(per_page_param), 1), 200)
+            except (ValueError, TypeError):
+                per_page = 50
+
+            result = automation_config.get_all_periods(search=search, page=page, per_page=per_page)
+
+            if page is None:
+                # Plain list – add channel count to each period (backward compatible)
+                for period in result:
+                    channels = automation_config.get_period_channels(period['id'])
+                    period['channel_count'] = len(channels)
+                return jsonify(result), 200
+            else:
+                # Paginated envelope – add channel count to each item
+                for period in result['items']:
+                    channels = automation_config.get_period_channels(period['id'])
+                    period['channel_count'] = len(channels)
+                return jsonify(result), 200
             
         elif request.method == 'POST':
             data = request.json

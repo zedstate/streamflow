@@ -267,161 +267,149 @@ class ChangelogManager:
 
 
 class RegexChannelMatcher:
-    """Handles regex-based channel matching for stream assignment."""
+    """Handles regex-based channel matching for stream assignment.
+
+    Patterns are stored in the ``channel_regex_configs`` and
+    ``channel_regex_patterns`` SQL tables via the DAL.  The legacy
+    in-memory ``channel_patterns`` dict is kept populated from the DB so
+    that no callers need to change (hot-path matching code reads the dict).
+    """
     
     def __init__(self, config_file=None):
-        if config_file is None:
-            config_file = CONFIG_DIR / "channel_regex_config.json"
-        self.config_file = Path(config_file)
+        # config_file kept for backward compatibility (tests, one-time migration).
+        # If a path is given and the file exists, the patterns are seeded into the
+        # SQL database before loading.  In production the parameter is unused.
         self.lock = threading.RLock()
+        if config_file is not None:
+            config_file = Path(config_file)
+            if config_file.exists():
+                self._seed_from_config_file(config_file)
         self.channel_patterns = self._load_patterns()
-    
-    def _load_patterns(self) -> Dict:
-        """Load regex patterns for channel matching.
-        
-        Handles corrupted JSON and invalid regex patterns gracefully by:
-        - Creating default config if JSON is invalid
-        - Removing patterns with invalid regex on load to prevent persistent errors
-        - Migrating old format (regex array) to new format (regex_patterns array of objects)
+
+    def _seed_from_config_file(self, config_file: Path):
+        """Read a JSON config file and import the patterns into SQL.
+
+        Used for backward-compat test setup and one-time migration paths.
+        Any import errors are logged and silently swallowed so that the
+        matcher still initialises with whatever state is already in the DB.
         """
-        from database.connection import get_session
-        from database.models import SystemSetting
-        loaded_config = None
-        if True:
-            try:
-                session = get_session()
-                setting = session.query(SystemSetting).filter(SystemSetting.key == 'channel_regex_config').first()
-                if setting and setting.value:
-                    loaded_config = setting.value
-                else:
-                    raise FileNotFoundError("No regex config found in DB")
-                
-                # Validate and sanitize patterns - remove any with invalid regex
-                # Also migrate old format to new format
-                if 'patterns' in loaded_config and isinstance(loaded_config['patterns'], dict):
-                    patterns_to_remove = []
-                    needs_migration = False
-                    
-                    for channel_id, pattern_data in loaded_config['patterns'].items():
-                        if not isinstance(pattern_data, dict):
-                            patterns_to_remove.append(channel_id)
-                            continue
-                        
-                        # Check if migration needed (old format uses 'regex', new uses 'regex_patterns')
-                        if 'regex' in pattern_data and 'regex_patterns' not in pattern_data:
-                            needs_migration = True
-                            # Migrate from old format to new format
-                            regex_list = pattern_data.get('regex', [])
-                            channel_m3u_accounts = pattern_data.get('m3u_accounts')  # Channel-level m3u_accounts
-                            
-                            if not isinstance(regex_list, list):
-                                patterns_to_remove.append(channel_id)
-                                continue
-                            
-                            # Convert to new format
-                            regex_patterns = []
-                            for pattern_str in regex_list:
-                                if not pattern_str or not isinstance(pattern_str, str):
-                                    continue
-                                regex_patterns.append({
-                                    "pattern": pattern_str,
-                                    "m3u_accounts": channel_m3u_accounts  # Apply channel-level to all patterns
-                                })
-                            
-                            if regex_patterns:
-                                pattern_data['regex_patterns'] = regex_patterns
-                                # Keep old 'regex' field for backward compatibility temporarily
-                                # Remove old m3u_accounts field as it's now per-pattern
-                                if 'm3u_accounts' in pattern_data:
-                                    del pattern_data['m3u_accounts']
-                        
-                        # Validate patterns (support both old and new format)
-                        regex_patterns = pattern_data.get('regex_patterns', [])
-                        if not regex_patterns:
-                            # Fallback to old format
-                            regex_patterns = [{"pattern": p} for p in pattern_data.get('regex', [])]
-                        
-                        # Check if any regex patterns are invalid
-                        has_invalid = False
-                        for pattern_obj in regex_patterns:
-                            if isinstance(pattern_obj, dict):
-                                pattern = pattern_obj.get('pattern', '')
-                            else:
-                                # Legacy format within regex_patterns
-                                pattern = pattern_obj
-                            
-                            if not pattern or not isinstance(pattern, str):
-                                has_invalid = True
-                                break
-                            try:
-                                # Temporarily substitute CHANNEL_NAME for validation
-                                validation_pattern = pattern.replace('CHANNEL_NAME', _CHANNEL_NAME_PLACEHOLDER)
-                                re.compile(validation_pattern)
-                            except re.error as e:
-                                logger.warning(
-                                    f"Removing channel {channel_id} with invalid regex pattern '{pattern}': {e}. "
-                                    f"Please reconfigure this channel with valid patterns."
-                                )
-                                has_invalid = True
-                                break
-                        
-                        if has_invalid:
-                            patterns_to_remove.append(channel_id)
-                    
-                    # Remove invalid patterns
-                    if patterns_to_remove:
-                        for channel_id in patterns_to_remove:
-                            del loaded_config['patterns'][channel_id]
-                        
-                        logger.info(f"Removed {len(patterns_to_remove)} pattern(s) with invalid regex")
-                    
-                    # Save if we made changes (migration or cleanup)
-                    if patterns_to_remove or needs_migration:
-                        if needs_migration:
-                            logger.info("Migrated regex patterns from old format to new format with per-pattern M3U accounts")
-                        self._save_patterns(loaded_config)
-                
-                return loaded_config
-                
-            except (json.JSONDecodeError, FileNotFoundError) as e:
-                logger.warning(f"Could not load {self.config_file}: {e}. Creating default config")
-        
-        # Create default configuration
-        default_config = {
-            "patterns": {
-                # Example patterns - these should be configured by the user
-                # "1": {"name": "CNN", "regex_patterns": [{"pattern": ".*CNN.*", "m3u_accounts": null}], "enabled": True}
-            },
-            "global_settings": {
-                "case_sensitive": True,
-                "require_exact_match": False
-            }
-        }
-        
-        self._save_patterns(default_config)
-        return default_config
-    
-    def _save_patterns(self, patterns: Dict):
-        """Save patterns to SQL."""
-        from database.connection import get_session
-        from database.models import SystemSetting
-        
-        session = get_session()
+        import json as _json
         try:
-            setting = session.query(SystemSetting).filter(SystemSetting.key == 'channel_regex_config').first()
-            if not setting:
-                setting = SystemSetting(key='channel_regex_config', value=patterns)
-                session.add(setting)
-            else:
-                from sqlalchemy.orm.attributes import flag_modified
-                setting.value = patterns
-                flag_modified(setting, "value")
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Failed to save regex patterns: {e}")
-        finally:
-            session.close()
+            with open(config_file, 'r') as fh:
+                data = _json.load(fh)
+            from database.manager import get_db_manager
+            db = get_db_manager()
+            db.import_channel_regex_configs_from_json(data, merge=False)
+            if isinstance(data.get('global_settings'), dict):
+                db.set_system_setting('channel_regex_global_settings', data['global_settings'])
+        except Exception as exc:
+            logger.warning(
+                f"Could not seed regex config from {config_file}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+    
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_in_memory(self, configs: Dict[str, Any], global_settings: Dict[str, Any]) -> Dict:
+        """Build the canonical in-memory dict from DAL data."""
+        return {
+            'patterns': configs,
+            'global_settings': global_settings,
+        }
+
+    def _load_patterns(self) -> Dict:
+        """Load regex patterns from SQL and build the in-memory cache.
+
+        **Side-effects on the database**: If any stored patterns fail regex
+        compilation they are permanently removed from the database during this
+        call.  Channels whose *entire* pattern list is invalid are deleted.
+        Callers that need explicit control over clean-up should call a
+        dedicated validate method instead.
+
+        Falls back to the legacy ``channel_regex_config`` SystemSetting JSON
+        blob if the new tables are empty, migrating the data transparently.
+        """
+        from database.manager import get_db_manager
+        db = get_db_manager()
+
+        configs = db.get_all_channel_regex_configs()
+        global_settings = db.get_system_setting(
+            'channel_regex_global_settings',
+            {'case_sensitive': True, 'require_exact_match': False},
+        )
+
+        # --- One-time migration from legacy SystemSetting JSON blob ---
+        if not configs:
+            legacy = db.get_system_setting('channel_regex_config')
+            if legacy and isinstance(legacy, dict) and 'patterns' in legacy:
+                logger.info("Migrating regex patterns from SystemSetting JSON blob to dedicated SQL tables")
+                imported, errors = db.import_channel_regex_configs_from_json(legacy)
+                if errors:
+                    logger.warning(f"Migration errors: {errors}")
+                # Preserve global_settings from legacy blob
+                if 'global_settings' in legacy:
+                    global_settings = legacy['global_settings']
+                    db.set_system_setting('channel_regex_global_settings', global_settings)
+                # Clear the old blob to avoid re-migration on next start
+                db.set_system_setting('channel_regex_config', None)
+                configs = db.get_all_channel_regex_configs()
+
+        # Validate and clean up invalid regex patterns
+        configs_to_remove = []
+        for channel_id, cfg in list(configs.items()):
+            valid_patterns = []
+            has_invalid = False
+            for pat_obj in cfg.get('regex_patterns', []):
+                pattern = pat_obj.get('pattern', '')
+                if not pattern:
+                    has_invalid = True
+                    continue
+                try:
+                    validation_pattern = pattern.replace('CHANNEL_NAME', _CHANNEL_NAME_PLACEHOLDER)
+                    re.compile(validation_pattern)
+                    valid_patterns.append(pat_obj)
+                except re.error as e:
+                    logger.warning(f"Removing invalid regex '{pattern}' for channel {channel_id}: {e}")
+                    has_invalid = True
+
+            if has_invalid:
+                if valid_patterns:
+                    cfg['regex_patterns'] = valid_patterns
+                    db.upsert_channel_regex_config(
+                        channel_id=str(channel_id),
+                        name=cfg.get('name', ''),
+                        enabled=cfg.get('enabled', True),
+                        match_by_tvg_id=cfg.get('match_by_tvg_id', False),
+                        regex_patterns=valid_patterns,
+                    )
+                else:
+                    configs_to_remove.append(channel_id)
+
+        for cid in configs_to_remove:
+            del configs[cid]
+            db.delete_channel_regex_config(str(cid))
+
+        return self._build_in_memory(configs, global_settings)
+
+    def _save_patterns(self, patterns: Dict):
+        """Persist patterns dict to SQL (used by import and legacy callers)."""
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        patterns_dict = patterns.get('patterns', {})
+        global_settings = patterns.get('global_settings', {})
+        imported, errors = db.import_channel_regex_configs_from_json(
+            {'patterns': patterns_dict}, merge=False
+        )
+        if errors:
+            logger.error(f"Error saving patterns to SQL: {errors}")
+        if global_settings:
+            db.set_system_setting('channel_regex_global_settings', global_settings)
+        # Keep in-memory cache in sync
+        self.channel_patterns = self._build_in_memory(
+            db.get_all_channel_regex_configs(), global_settings
+        )
     
     def validate_regex_patterns(self, patterns: List[str]) -> Tuple[bool, Optional[str]]:
         """Validate a list of regex patterns.
@@ -471,6 +459,9 @@ class RegexChannelMatcher:
         Raises:
             ValueError: If any regex pattern is invalid
         """
+        from database.manager import get_db_manager
+        db = get_db_manager()
+
         # Normalize regex_patterns to new format
         normalized_patterns = []
         
@@ -499,46 +490,52 @@ class RegexChannelMatcher:
         is_valid, error_msg = self.validate_regex_patterns(pattern_strings)
         if not is_valid:
             raise ValueError(error_msg)
+
+        # Preserve existing match_by_tvg_id flag if already set
+        existing_cfg = self.channel_patterns.get('patterns', {}).get(str(channel_id), {})
+        match_by_tvg_id = existing_cfg.get('match_by_tvg_id', False)
         
-        # Store in new format
-        pattern_data = {
-            "name": name,
-            "regex_patterns": normalized_patterns,  # New field name
-            "enabled": enabled
-        }
+        db.upsert_channel_regex_config(
+            channel_id=str(channel_id),
+            name=name,
+            enabled=enabled,
+            match_by_tvg_id=match_by_tvg_id,
+            regex_patterns=normalized_patterns,
+        )
+
+        # Update in-memory cache
+        with self.lock:
+            self.channel_patterns.setdefault('patterns', {})[str(channel_id)] = {
+                'name': name,
+                'enabled': enabled,
+                'match_by_tvg_id': match_by_tvg_id,
+                'regex_patterns': normalized_patterns,
+            }
         
-        self.channel_patterns["patterns"][str(channel_id)] = pattern_data
-        self._save_patterns(self.channel_patterns)
-        
-        # Log at appropriate level based on silent flag
         if silent:
             logger.debug(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
         else:
             logger.info(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
     
     def delete_channel_pattern(self, channel_id: str):
-        """Delete all regex patterns for a channel.
-        
-        Args:
-            channel_id: Channel ID
-        """
+        """Delete all regex patterns for a channel."""
+        from database.manager import get_db_manager
+        db = get_db_manager()
+
         channel_id = str(channel_id)
         if channel_id in self.channel_patterns.get("patterns", {}):
-            del self.channel_patterns["patterns"][channel_id]
-            self._save_patterns(self.channel_patterns)
+            with self.lock:
+                del self.channel_patterns["patterns"][channel_id]
+            db.delete_channel_regex_config(str(channel_id))
             logger.info(f"Deleted all patterns for channel {channel_id}")
         else:
             logger.warning(f"No patterns found for channel {channel_id}")
     
-    
     def reload_patterns(self):
-        """Reload patterns from the config file.
-        
-        This is useful when patterns have been updated by another process
-        and we need to ensure we're using the latest patterns.
-        """
-        self.channel_patterns = self._load_patterns()
-        logger.debug("Reloaded regex patterns from config file")
+        """Reload patterns from SQL (refreshes the in-memory cache)."""
+        with self.lock:
+            self.channel_patterns = self._load_patterns()
+        logger.debug("Reloaded regex patterns from SQL")
     
     def _substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
         """Substitute channel name variables in a regex pattern.
@@ -798,6 +795,9 @@ class RegexChannelMatcher:
 
     def set_match_by_tvg_id(self, channel_id: Union[str, int], enabled: bool) -> bool:
         """Enable or disable matching by TVG-ID for a channel."""
+        from database.manager import get_db_manager
+        db = get_db_manager()
+
         with self.lock:
             channel_id = str(channel_id)
             if "patterns" not in self.channel_patterns:
@@ -806,13 +806,15 @@ class RegexChannelMatcher:
             if channel_id not in self.channel_patterns["patterns"]:
                 self.channel_patterns["patterns"][channel_id] = {
                     "regex_patterns": [],
-                    "match_by_tvg_id": enabled
+                    "match_by_tvg_id": enabled,
+                    "name": "",
+                    "enabled": True,
                 }
             else:
                 self.channel_patterns["patterns"][channel_id]["match_by_tvg_id"] = enabled
-                
-            self._save_patterns(self.channel_patterns)
-            return True
+
+        db.update_channel_regex_tvg_id(str(channel_id), enabled)
+        return True
 
     def get_match_by_tvg_id(self, channel_id: Union[str, int]) -> bool:
         """Check if matching by TVG-ID is enabled for a channel."""
@@ -824,7 +826,7 @@ class RegexChannelMatcher:
             return False
     
     def get_patterns(self) -> Dict:
-        """Get current patterns configuration."""
+        """Get current patterns configuration (in-memory snapshot)."""
         return self.channel_patterns
     
     def has_regex_patterns(self, channel_id: str) -> bool:
