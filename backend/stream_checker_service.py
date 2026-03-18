@@ -2276,8 +2276,16 @@ class StreamCheckerService:
             return {
                 'dead_streams_count': len(dead_stream_ids),
                 'revived_streams_count': len(revived_stream_ids),
-                'dead_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in dead_stream_ids],
-                'revived_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in revived_stream_ids],
+                'dead_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in dead_stream_ids],
+                'revived_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in revived_stream_ids],
                 'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
                 'checked_streams': stream_stats
             }
@@ -2907,8 +2915,16 @@ class StreamCheckerService:
             return {
                 'dead_streams_count': len(dead_stream_ids),
                 'revived_streams_count': len(revived_stream_ids),
-                'dead_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in dead_stream_ids],
-                'revived_streams': [{'id': s, 'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}')} for s in revived_stream_ids],
+                'dead_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in dead_stream_ids],
+                'revived_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in revived_stream_ids],
                 'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked]
             }
 

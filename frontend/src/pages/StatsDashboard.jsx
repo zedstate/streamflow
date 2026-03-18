@@ -211,9 +211,9 @@ export default function StatsDashboard() {
             <Card className="border-none shadow-md bg-card/50 backdrop-blur-sm">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>{providerMetric === 'quality' ? 'Average Quality Score' : 'Average Resolution'}</CardTitle>
+                  <CardTitle>{providerMetric === 'quality' ? 'Average Quality Score' : 'Resolution Distribution'}</CardTitle>
                   <CardDescription>
-                    {providerMetric === 'quality' ? 'Calculated quality index per provider' : 'Calculated height in pixels'}
+                    {providerMetric === 'quality' ? 'Calculated quality index per provider' : 'Count of streams by resolution class'}
                   </CardDescription>
                 </div>
                 <Tabs value={providerMetric} onValueChange={setProviderMetric} className="w-[180px]">
@@ -236,7 +236,13 @@ export default function StatsDashboard() {
                       {providerMetric === 'quality' ? (
                         <Bar dataKey="avg_quality_score" name="Avg Score" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} animationDuration={1000} />
                       ) : (
-                        <Bar dataKey="avg_res_height" name="Avg Height (p)" fill="#8b5cf6" radius={[0, 4, 4, 0]} barSize={20} animationDuration={1000} />
+                        <>
+                          <Legend />
+                          <Bar dataKey="res_1080p" name="1080p" fill="#4f46e5" stackId="res" />
+                          <Bar dataKey="res_720p" name="720p" fill="#22c55e" stackId="res" />
+                          <Bar dataKey="res_576p" name="576p" fill="#eab308" stackId="res" />
+                          <Bar dataKey="res_SD" name="SD" fill="#ef4444" stackId="res" />
+                        </>
                       )}
                     </BarChart>
                   </ResponsiveContainer>

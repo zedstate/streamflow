@@ -64,10 +64,32 @@ def get_provider_telemetry():
         udi = get_udi_manager()
         accounts = {acc['id']: acc['name'] for acc in udi.get_m3u_accounts()} if udi else {}
         
+        # Second query: Resolution Height Distribution (Stacked Bars)
+        res_stats = session.query(
+            StreamTelemetry.provider_id,
+            StreamTelemetry.resolution_height,
+            func.count(StreamTelemetry.id).label('count')
+        ).join(Run).filter(Run.timestamp >= cutoff, StreamTelemetry.resolution_height.isnot(None)).group_by(
+            StreamTelemetry.provider_id, StreamTelemetry.resolution_height
+        ).all()
+        
+        provider_res_map = {}
+        for pid, height, count in res_stats:
+            if pid not in provider_res_map:
+                provider_res_map[pid] = {"res_1080p": 0, "res_720p": 0, "res_576p": 0, "res_SD": 0}
+            cat = "res_SD"
+            if height >= 2160: cat = "res_2160p"
+            elif height >= 1080: cat = "res_1080p"
+            elif height >= 720: cat = "res_720p"
+            elif height >= 576: cat = "res_576p"
+            provider_res_map[pid][cat] += count
+
         data = []
         for s in stats:
             provider_id = s.provider_id
-            data.append({
+            res_breakdown = provider_res_map.get(provider_id, {"res_1080p": 0, "res_720p": 0, "res_576p": 0, "res_SD": 0})
+            
+            item = {
                 "provider_id": provider_id,
                 "provider_name": accounts.get(provider_id, f"Provider {provider_id}" if provider_id else "Unknown Account"),
                 "total_streams": s.total_streams,
@@ -77,7 +99,9 @@ def get_provider_telemetry():
                 "avg_fps": round(s.avg_fps or 0, 2),
                 "avg_quality_score": round(s.avg_quality_score or 0, 2),
                 "avg_res_height": round(s.avg_res_height or 0, 0)
-            })
+            }
+            item.update(res_breakdown)
+            data.append(item)
             
         return jsonify({"success": True, "data": data})
     except Exception as e:

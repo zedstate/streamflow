@@ -2586,7 +2586,15 @@ class AutomatedStreamManager:
             # Finalize aggregate stats
             run_results['total_streams'] = total_streams_count
             run_results['streams_analyzed'] = streams_analyzed_count
-            run_results['dead_streams'] = dead_streams_count
+            
+            try:
+                from dead_streams_tracker import DeadStreamsTracker
+                tracker = DeadStreamsTracker()
+                run_results['dead_streams'] = len(tracker.get_dead_streams())
+            except Exception as e:
+                logger.warning(f"Failed to fetch absolute dead stream count: {e}")
+                run_results['dead_streams'] = dead_streams_count
+
             run_results['streams_revived'] = revived_streams_count
             run_results['added_streams'] = added_streams_count
             run_results['removed_streams'] = removed_streams_count
