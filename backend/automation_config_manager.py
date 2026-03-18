@@ -91,8 +91,9 @@ class AutomationConfigManager:
             "enabled": p.enabled,
             "parallel_checks": p.parallel_checks
         }
-        if p.extra_settings:
-            res.update(p.extra_settings)
+        extra = self._normalize_extra_settings(p.extra_settings)
+        if extra:
+            res.update(extra)
         return res
 
     def _period_to_dict(self, per) -> dict:
@@ -108,9 +109,29 @@ class AutomationConfigManager:
             "automation_type": per.automation_type,
             "schedule": {"type": "cron", "value": per.cron_schedule}
         }
-        if per.extra_settings:
-            res.update(per.extra_settings)
+        extra = self._normalize_extra_settings(per.extra_settings)
+        if extra:
+            res.update(extra)
         return res
+
+    def _normalize_extra_settings(self, extra_settings: Any) -> Dict[str, Any]:
+        """Normalize persisted extra_settings to a dict for safe API serialization."""
+        if not extra_settings:
+            return {}
+        if isinstance(extra_settings, dict):
+            return extra_settings
+        if isinstance(extra_settings, str):
+            try:
+                parsed = json.loads(extra_settings)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        logger.warning(
+            "Ignoring non-dict extra_settings while serializing automation config: %s",
+            type(extra_settings).__name__,
+        )
+        return {}
 
     # --- Profile Management ---
 

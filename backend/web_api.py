@@ -325,17 +325,9 @@ def check_wizard_complete():
     using the system even if they haven't configured any channel patterns yet.
     """
     try:
-        config_file = CONFIG_DIR / 'automation_config.json'
-        
-        # Check if configuration files exist
-        if not config_file.exists():
-            return False
-        
-        # Check if we can connect to Dispatcharr (optional - use cached result)
-        # For startup, we'll accept the configuration exists as sufficient
-        # The actual connection test will be done by the wizard
-        
-        return True
+        # SQL-backed readiness: require Dispatcharr credentials to be configured.
+        dispatcharr_config = get_dispatcharr_config()
+        return dispatcharr_config.is_configured()
     except Exception as e:
         logger.warning(f"Error checking wizard completion status: {e}")
         return False
@@ -2524,25 +2516,28 @@ def get_m3u_accounts_endpoint():
 def get_setup_wizard_status():
     """Get setup wizard completion status."""
     try:
-        # Check if basic configuration exists
-        config_file = CONFIG_DIR / 'automation_config.json'
-        regex_file = CONFIG_DIR / 'channel_regex_config.json'
+        from database.manager import get_db_manager
+        manager = get_automation_config_manager()
+        db = get_db_manager()
+
+        automation_config_exists = False
+        try:
+            # Accessing settings validates SQL-backed automation config availability.
+            manager.get_global_settings()
+            automation_config_exists = True
+        except Exception:
+            automation_config_exists = False
+
+        regex_global_settings = db.get_system_setting('channel_regex_global_settings', None)
+        regex_configs = db.get_all_channel_regex_configs()
         
         status = {
-            "automation_config_exists": config_file.exists(),
-            "regex_config_exists": regex_file.exists(),
-            "has_patterns": False,
+            "automation_config_exists": automation_config_exists,
+            "regex_config_exists": regex_global_settings is not None,
+            "has_patterns": bool(regex_configs),
             "has_channels": False,
             "dispatcharr_connection": False
         }
-        
-        # Check if we have patterns configured
-        if regex_file.exists():
-            matcher = get_regex_matcher()
-            # Reload patterns from disk to ensure we have the latest configuration
-            matcher.reload_patterns()
-            patterns = matcher.get_patterns()
-            status["has_patterns"] = bool(patterns.get('patterns'))
         
         # Check if we can connect to Dispatcharr
         # For testing purposes, simulate connection if running in test mode
@@ -2741,39 +2736,35 @@ def ensure_wizard_config():
     files exist, even if users skip optional steps like pattern configuration.
     """
     try:
-        # Ensure regex config exists (even if empty)
-        regex_file = CONFIG_DIR / 'channel_regex_config.json'
-        if not regex_file.exists():
-            default_regex_config = {
-                "patterns": {},
-                "global_settings": {
-                    "case_sensitive": False,
-                    "require_exact_match": False
-                }
-            }
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(regex_file, 'w') as f:
-                json.dump(default_regex_config, f, indent=2)
-            logger.info("Created empty regex config file for wizard")
-            
-        # Ensure automation config exists (even if default)
-        auto_file = CONFIG_DIR / 'automation_config.json'
-        if not auto_file.exists():
-            default_auto_config = {
-                "regular_automation_enabled": False,
-                "global_action_enabled": False,
-                "validate_existing_streams": False,
-                "global_schedule": {"type": "interval", "value": 60},
-                "profiles": {},
-                "channel_assignments": {},
-                "group_assignments": {}
-            }
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(auto_file, 'w') as f:
-                json.dump(default_auto_config, f, indent=2)
-            logger.info("Created default automation config file for wizard")
-        
-        return jsonify({"message": "Configuration files ensured"})
+        from database.manager import get_db_manager
+
+        manager = get_automation_config_manager()
+        db = get_db_manager()
+
+        # Ensure automation defaults exist in SQL-backed system settings.
+        automation_defaults = {
+            "regular_automation_enabled": False,
+            "validate_existing_streams": False,
+            "playlist_update_interval_minutes": {"type": "interval", "value": 5},
+            "channel_assignments": {},
+            "group_assignments": {},
+            "channel_period_assignments": {},
+        }
+        for key, value in automation_defaults.items():
+            if db.get_system_setting(key, None) is None:
+                db.set_system_setting(key, value)
+
+        # Touch manager to ensure SQL-backed config path is initialized.
+        manager.get_global_settings()
+
+        # Ensure regex global settings exist in SQL.
+        if db.get_system_setting('channel_regex_global_settings', None) is None:
+            db.set_system_setting('channel_regex_global_settings', {
+                "case_sensitive": False,
+                "require_exact_match": False,
+            })
+
+        return jsonify({"message": "Configuration defaults ensured in SQL"})
     except Exception as e:
         logger.error(f"Error ensuring wizard config: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -2782,19 +2773,28 @@ def ensure_wizard_config():
 def create_sample_patterns():
     """Create sample regex patterns for testing setup completion."""
     try:
-        matcher = get_regex_matcher()
-        
-        # Add some sample patterns
+        from database.manager import get_db_manager
+        db = get_db_manager()
+
+        # Add some sample patterns via SQL-backed regex config storage.
         patterns = {
             "patterns": {
                 "1": {
                     "name": "News Channels",
-                    "regex": [".*News.*", ".*CNN.*", ".*BBC.*"],
+                    "regex_patterns": [
+                        {"pattern": ".*News.*", "priority": 0},
+                        {"pattern": ".*CNN.*", "priority": 1},
+                        {"pattern": ".*BBC.*", "priority": 2},
+                    ],
                     "enabled": True
                 },
                 "2": {
                     "name": "Sports Channels", 
-                    "regex": [".*Sport.*", ".*ESPN.*", ".*Fox Sports.*"],
+                    "regex_patterns": [
+                        {"pattern": ".*Sport.*", "priority": 0},
+                        {"pattern": ".*ESPN.*", "priority": 1},
+                        {"pattern": ".*Fox Sports.*", "priority": 2},
+                    ],
                     "enabled": True
                 }
             },
@@ -2803,12 +2803,18 @@ def create_sample_patterns():
                 "require_exact_match": False
             }
         }
-        
-        # Save the sample patterns
-        with open(CONFIG_DIR / 'channel_regex_config.json', 'w') as f:
-            json.dump(patterns, f, indent=2)
-        
-        return jsonify({"message": "Sample patterns created successfully"})
+
+        imported, errors = db.import_channel_regex_configs_from_json(patterns, merge=False)
+        db.set_system_setting('channel_regex_global_settings', patterns['global_settings'])
+
+        if errors:
+            return jsonify({
+                "message": "Sample patterns created with warnings",
+                "imported": imported,
+                "warnings": errors,
+            }), 200
+
+        return jsonify({"message": "Sample patterns created successfully", "imported": imported})
     except Exception as e:
         logger.error(f"Error creating sample patterns: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
