@@ -76,7 +76,7 @@ def get_provider_telemetry():
         provider_res_map = {}
         for pid, height, count in res_stats:
             if pid not in provider_res_map:
-                provider_res_map[pid] = {"res_1080p": 0, "res_720p": 0, "res_576p": 0, "res_SD": 0}
+                provider_res_map[pid] = {"res_2160p": 0, "res_1080p": 0, "res_720p": 0, "res_576p": 0, "res_SD": 0}
             cat = "res_SD"
             if height >= 2160: cat = "res_2160p"
             elif height >= 1080: cat = "res_1080p"
@@ -87,7 +87,7 @@ def get_provider_telemetry():
         data = []
         for s in stats:
             provider_id = s.provider_id
-            res_breakdown = provider_res_map.get(provider_id, {"res_1080p": 0, "res_720p": 0, "res_576p": 0, "res_SD": 0})
+            res_breakdown = provider_res_map.get(provider_id, {"res_2160p": 0, "res_1080p": 0, "res_720p": 0, "res_576p": 0, "res_SD": 0})
             
             item = {
                 "provider_id": provider_id,

@@ -238,6 +238,7 @@ export default function StatsDashboard() {
                       ) : (
                         <>
                           <Legend />
+                          <Bar dataKey="res_2160p" name="2160p (4K)" fill="#a855f7" stackId="res" />
                           <Bar dataKey="res_1080p" name="1080p" fill="#4f46e5" stackId="res" />
                           <Bar dataKey="res_720p" name="720p" fill="#22c55e" stackId="res" />
                           <Bar dataKey="res_576p" name="576p" fill="#eab308" stackId="res" />
