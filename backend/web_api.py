@@ -5576,6 +5576,7 @@ app.register_blueprint(telemetry_bp, url_prefix='/api/telemetry')
 
 if __name__ == '__main__':
     import argparse
+    from database.connection import init_db
     
     parser = argparse.ArgumentParser(description='StreamFlow for Dispatcharr Web API')
     parser.add_argument('--host', default=os.environ.get('API_HOST', '0.0.0.0'), help='Host to bind to')
@@ -5585,6 +5586,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     logger.info(f"Starting StreamFlow for Dispatcharr Web API on {args.host}:{args.port}")
+
+    try:
+        init_db()
+        logger.info("Database schema initialization completed")
+    except Exception as e:
+        logger.error(f"Failed to initialize database schema: {e}", exc_info=True)
+        raise
     
     # Only start background services in the reloader process (or if not using reloader)
     # WERKZEUG_RUN_MAIN is set to 'true' in the child process spawned by the reloader
