@@ -13,7 +13,7 @@ sys.path.append(os.path.abspath('backend'))
 from unittest.mock import MagicMock
 sys.modules['dotenv'] = MagicMock()
 
-from automated_stream_manager import RegexChannelMatcher
+from apps.automation.automated_stream_manager import RegexChannelMatcher
 
 # Mock config file
 TEST_CONFIG_FILE = 'test_race_config.json'

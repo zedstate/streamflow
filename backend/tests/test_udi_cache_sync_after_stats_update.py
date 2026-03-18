@@ -31,7 +31,7 @@ class TestUDICacheSyncAfterStatsUpdate(unittest.TestCase):
     @patch('stream_checker_service._get_base_url')
     def test_udi_cache_updated_after_stats_patch(self, mock_base_url, mock_patch, mock_get_udi):
         """Test that UDI cache is updated after successful stats PATCH."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Setup base URL
         mock_base_url.return_value = "http://test.com"
@@ -103,7 +103,7 @@ class TestUDICacheSyncAfterStatsUpdate(unittest.TestCase):
     @patch('stream_checker_service._get_base_url')
     def test_udi_cache_not_updated_on_patch_failure(self, mock_base_url, mock_patch, mock_get_udi):
         """Test that UDI cache is not updated if PATCH fails."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Setup base URL
         mock_base_url.return_value = "http://test.com"
@@ -145,7 +145,7 @@ class TestUDICacheSyncAfterStatsUpdate(unittest.TestCase):
     @patch('stream_checker_service._get_base_url')
     def test_udi_cache_handles_json_string_stats(self, mock_base_url, mock_patch, mock_get_udi):
         """Test that UDI cache update works when existing stats are JSON string."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Setup base URL
         mock_base_url.return_value = "http://test.com"

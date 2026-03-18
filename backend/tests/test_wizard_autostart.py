@@ -19,8 +19,8 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
-from stream_checker_service import StreamCheckerService
+from apps.automation.automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
+from apps.stream.stream_checker_service import StreamCheckerService
 
 
 class TestWizardAutostart(unittest.TestCase):

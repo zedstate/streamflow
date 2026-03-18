@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stream_checker_service import StreamCheckerService
+from apps.stream.stream_checker_service import StreamCheckerService
 import tempfile
 from pathlib import Path
 from unittest.mock import patch

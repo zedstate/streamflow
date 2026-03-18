@@ -30,10 +30,10 @@ class TestSessionSync(unittest.TestCase):
         self.session_id = f"session_{self.channel_id}_1234567890"
         
         # Reset simpletons for clean state
-        from stream_session_manager import StreamSessionManager
+        from apps.stream.stream_session_manager import StreamSessionManager
         StreamSessionManager._instance = None
         
-        from stream_monitoring_service import StreamMonitoringService
+        from apps.stream.stream_monitoring_service import StreamMonitoringService
         StreamMonitoringService._instance = None
 
     def tearDown(self):
@@ -45,7 +45,7 @@ class TestSessionSync(unittest.TestCase):
     @patch('stream_session_manager.get_udi_manager')
     def test_exclusive_ownership(self, mock_udi_func):
         """Test that sessions enforce exclusive ownership of channels."""
-        from stream_session_manager import get_session_manager
+        from apps.stream.stream_session_manager import get_session_manager
         
         # Setup mocks
         mock_udi_instance = Mock()
@@ -73,7 +73,7 @@ class TestSessionSync(unittest.TestCase):
         
         # Let's manually register a second session to test the start_session logic
         session2_id = f"session_{self.channel_id}_9999999999"
-        from stream_session_manager import SessionInfo
+        from apps.stream.stream_session_manager import SessionInfo
         session2 = SessionInfo(
             session_id=session2_id,
             channel_id=self.channel_id,
@@ -103,8 +103,8 @@ class TestSessionSync(unittest.TestCase):
 
     def test_sync_enforcement_trigger(self):
         """Test that synchronization check triggers update when interval passes."""
-        from stream_monitoring_service import StreamMonitoringService
-        from stream_session_manager import SessionInfo
+        from apps.stream.stream_monitoring_service import StreamMonitoringService
+        from apps.stream.stream_session_manager import SessionInfo
         
         service = StreamMonitoringService()
         
@@ -136,8 +136,8 @@ class TestSessionSync(unittest.TestCase):
     @patch('stream_monitoring_service.get_udi_manager')
     def test_alien_stream_removal_mocked(self, mock_get_udi, mock_update_streams):
         """Test alien stream removal with correct mocking."""
-        from stream_monitoring_service import StreamMonitoringService
-        from stream_session_manager import StreamInfo
+        from apps.stream.stream_monitoring_service import StreamMonitoringService
+        from apps.stream.stream_session_manager import StreamInfo
         
         service = StreamMonitoringService()
         

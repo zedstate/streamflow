@@ -32,7 +32,7 @@ class TestParallelCheckPipeline(unittest.TestCase):
         
         # Read the source code to verify the fix
         import inspect
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Get the source code of _check_channel_concurrent
         source = inspect.getsource(StreamCheckerService._check_channel_concurrent)
@@ -83,7 +83,7 @@ class TestParallelCheckPipeline(unittest.TestCase):
         AFTER all parallel checks have completed.
         """
         import inspect
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Get the source code of _check_channel_concurrent
         source = inspect.getsource(StreamCheckerService._check_channel_concurrent)

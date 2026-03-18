@@ -26,8 +26,8 @@ os.environ['DISPATCHARR_TOKEN'] = 'test_token'
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import scheduling_service
-from scheduling_service import SchedulingService
+import apps.automation.scheduling_service
+from apps.automation.scheduling_service import SchedulingService
 
 
 class TestRegexMatchingIntegration(unittest.TestCase):

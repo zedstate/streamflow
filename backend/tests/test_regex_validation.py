@@ -9,7 +9,7 @@ import json
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
-from automated_stream_manager import RegexChannelMatcher
+from apps.automation.automated_stream_manager import RegexChannelMatcher
 
 
 class TestRegexValidation(unittest.TestCase):
@@ -174,7 +174,7 @@ class TestRegexValidation(unittest.TestCase):
             pass  # Expected
         
         # Verify the invalid pattern was not saved in the DB
-        from database.manager import get_db_manager
+        from apps.database.manager import get_db_manager
         saved_config = get_db_manager().get_all_channel_regex_configs()
         self.assertNotIn("test_7", saved_config)
     
@@ -203,7 +203,7 @@ class TestRegexValidation(unittest.TestCase):
         )
         
         # Verify only valid pattern was saved in the DB
-        from database.manager import get_db_manager
+        from apps.database.manager import get_db_manager
         saved_config = get_db_manager().get_all_channel_regex_configs()
         self.assertNotIn("test_8", saved_config)
         self.assertIn("test_9", saved_config)

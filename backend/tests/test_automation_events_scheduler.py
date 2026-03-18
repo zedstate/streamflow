@@ -19,8 +19,8 @@ def test_calculate_upcoming_events():
     
     with tempfile.TemporaryDirectory() as tmpdir:
         # Override config paths
-        import automation_config_manager
-        import automation_events_scheduler
+        import apps.automation.automation_config_manager
+        import apps.automation.automation_events_scheduler
         
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
@@ -32,8 +32,8 @@ def test_calculate_upcoming_events():
         automation_events_scheduler.EVENTS_CACHE_FILE = Path(tmpdir) / 'test_events_cache.json'
         
         try:
-            from automation_config_manager import AutomationConfigManager
-            from automation_events_scheduler import AutomationEventsScheduler
+            from apps.automation.automation_config_manager import AutomationConfigManager
+            from apps.automation.automation_events_scheduler import AutomationEventsScheduler
             
             # Create manager and scheduler
             manager = AutomationConfigManager()
@@ -93,8 +93,8 @@ def test_event_caching():
     print("Test: Event caching")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        import automation_config_manager
-        import automation_events_scheduler
+        import apps.automation.automation_config_manager
+        import apps.automation.automation_events_scheduler
         
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
@@ -106,8 +106,8 @@ def test_event_caching():
         automation_events_scheduler.EVENTS_CACHE_FILE = Path(tmpdir) / 'test_events_cache.json'
         
         try:
-            from automation_config_manager import AutomationConfigManager
-            from automation_events_scheduler import AutomationEventsScheduler
+            from apps.automation.automation_config_manager import AutomationConfigManager
+            from apps.automation.automation_events_scheduler import AutomationEventsScheduler
             
             manager = AutomationConfigManager()
             scheduler = AutomationEventsScheduler()
@@ -160,8 +160,8 @@ def test_multiple_periods():
     print("Test: Multiple periods")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        import automation_config_manager
-        import automation_events_scheduler
+        import apps.automation.automation_config_manager
+        import apps.automation.automation_events_scheduler
         
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
@@ -173,9 +173,9 @@ def test_multiple_periods():
         automation_events_scheduler.EVENTS_CACHE_FILE = Path(tmpdir) / 'test_events_cache.json'
         
         try:
-            from automation_config_manager import AutomationConfigManager
-            from automation_events_scheduler import AutomationEventsScheduler
-            import automation_config_manager
+            from apps.automation.automation_config_manager import AutomationConfigManager
+            from apps.automation.automation_events_scheduler import AutomationEventsScheduler
+            import apps.automation.automation_config_manager
             
             # Reset the singleton to ensure it uses our test config
             automation_config_manager._automation_config_manager = None

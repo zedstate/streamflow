@@ -3,7 +3,7 @@ import io
 import time
 import collections
 from PIL import Image
-from sidecar_loop_detector import SidecarLoopDetector
+from apps.stream.sidecar_loop_detector import SidecarLoopDetector
 
 class MockPipe(io.BytesIO):
     def read(self, size):

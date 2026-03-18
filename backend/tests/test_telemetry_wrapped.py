@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import logging
-from telemetry_db import get_session, Run, ChannelHealth, StreamTelemetry
+from apps.telemetry.telemetry_db import get_session, Run, ChannelHealth, StreamTelemetry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -82,7 +82,7 @@ class TestConcurrentLimiterIntegration(unittest.TestCase):
         mock_analyze.side_effect = analyze_side_effect
         
         # Create service and check channel
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         service = StreamCheckerService()
         
         # Enable concurrent checking
@@ -111,7 +111,7 @@ class TestConcurrentLimiterIntegration(unittest.TestCase):
     
     def test_initialization_loads_account_limits(self):
         """Test that account limits are properly initialized from UDI."""
-        from concurrent_stream_limiter import get_account_limiter, initialize_account_limits
+        from apps.stream.concurrent_stream_limiter import get_account_limiter, initialize_account_limits
         
         limiter = get_account_limiter()
         limiter.clear()

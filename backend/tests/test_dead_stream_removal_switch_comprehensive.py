@@ -159,7 +159,7 @@ class TestDeadStreamRemovalSwitchComprehensive(unittest.TestCase):
     
     def test_stream_validation_respects_removal_setting(self):
         """Test that stream validation (regex matching) respects removal setting."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Test with removal disabled
         self._create_stream_checker_config(removal_enabled=False)
@@ -175,7 +175,7 @@ class TestDeadStreamRemovalSwitchComprehensive(unittest.TestCase):
     
     def test_stream_discovery_respects_removal_setting(self):
         """Test that stream discovery respects removal setting when filtering dead streams."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Test with removal disabled - dead streams should NOT be filtered
         self._create_stream_checker_config(removal_enabled=False)
@@ -228,7 +228,7 @@ class TestDeadStreamRemovalSwitchComprehensive(unittest.TestCase):
             config1 = json.load(f)
         
         # Create a new manager and verify it reads the same config
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         manager = AutomatedStreamManager()
         removal_enabled = manager._is_dead_stream_removal_enabled()
         self.assertFalse(removal_enabled)

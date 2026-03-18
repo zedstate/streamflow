@@ -39,7 +39,7 @@ except ImportError:
 # Add backend to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from logging_config import setup_logging
+from apps.core.logging_config import setup_logging
 
 logger = setup_logging(__name__)
 
@@ -480,7 +480,7 @@ class DataFetchTester:
         # Import API utilities for authenticated requests
         # Note: Using internal _get_base_url as there's no public alternative
         try:
-            from api_utils import (
+            from apps.core.api_utils import (
                 fetch_data_from_url, 
                 get_streams, 
                 get_m3u_accounts,

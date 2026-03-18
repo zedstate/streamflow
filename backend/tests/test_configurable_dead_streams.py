@@ -7,7 +7,7 @@ configurable thresholds for resolution, bitrate, and score.
 """
 
 import unittest
-from stream_stats_utils import is_stream_dead
+from apps.core.stream_stats_utils import is_stream_dead
 
 
 class TestConfigurableDeadStreamDetection(unittest.TestCase):

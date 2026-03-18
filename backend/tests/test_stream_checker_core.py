@@ -18,7 +18,7 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stream_checker_service import StreamCheckerService
+from apps.stream.stream_checker_service import StreamCheckerService
 
 
 class TestStreamStatsHandling(unittest.TestCase):

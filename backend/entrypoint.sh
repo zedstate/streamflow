@@ -59,5 +59,7 @@ echo "[INFO] ============================================"
 # Start Flask API directly
 echo "[INFO] Starting Flask API..."
 
+export PYTHONPATH=.
+
 # Use exec to ensure Flask becomes PID 1 and receives signals properly
-exec python3 web_api.py --host "${API_HOST}" --port "${API_PORT}"
+exec python3 apps/api/web_api.py --host "${API_HOST}" --port "${API_PORT}"

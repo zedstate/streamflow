@@ -10,8 +10,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Mock dotenv before importing modules that need it
 sys.modules['dotenv'] = MagicMock()
 
-from stream_monitoring_service import StreamMonitoringService
-from stream_session_manager import SessionInfo, StreamInfo
+from apps.stream.stream_monitoring_service import StreamMonitoringService
+from apps.stream.stream_session_manager import SessionInfo, StreamInfo
 
 class TestDispatcharrVisibility(unittest.TestCase):
     @patch('stream_monitoring_service.get_session_manager')

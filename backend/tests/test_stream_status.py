@@ -14,8 +14,8 @@ import os
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
-import stream_session_manager
-from stream_session_manager import StreamInfo, SessionInfo, StreamSessionManager
+import apps.stream.stream_session_manager
+from apps.stream.stream_session_manager import StreamInfo, SessionInfo, StreamSessionManager
 
 # Patch CONFIG_DIR to avoid mkdir calls
 stream_session_manager.CONFIG_DIR = MagicMock()

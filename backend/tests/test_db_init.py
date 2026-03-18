@@ -12,8 +12,8 @@ sys.path.append(str(backend_dir))
 print(f"PYTHONPATH: {sys.path}")
 
 try:
-    from database.connection import init_db, get_session, DB_PATH
-    from database.models import Channel, Stream, ChannelGroup
+    from apps.database.connection import init_db, get_session, DB_PATH
+    from apps.database.models import Channel, Stream, ChannelGroup
     
     # Delete DB file if exists to ensure repeatable test
     print(f"Cleaning up old DB at {DB_PATH}...")
@@ -53,7 +53,7 @@ try:
 
     # Test DatabaseManager (DAL)
     print("\nTesting DatabaseManager DAL...")
-    from database.manager import get_db_manager
+    from apps.database.manager import get_db_manager
     db_manager = get_db_manager()
     
     channels = db_manager.get_channels(as_dict=True)

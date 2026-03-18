@@ -7,7 +7,7 @@ from unittest.mock import patch
 try:
     from backend.api_utils import fetch_data_from_url, _get_base_url
 except ModuleNotFoundError:
-    from api_utils import fetch_data_from_url, _get_base_url
+    from apps.core.api_utils import fetch_data_from_url, _get_base_url
 
 # List of Dispatcharr API endpoints used in the project
 API_ENDPOINTS = [

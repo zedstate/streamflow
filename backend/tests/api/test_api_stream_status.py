@@ -29,7 +29,7 @@ def mock_decorator(f):
 sys.modules['logging_config'].log_function_call = mock_decorator
 
 from web_api import app
-from stream_session_manager import StreamInfo, SessionInfo
+from apps.stream.stream_session_manager import StreamInfo, SessionInfo
 
 class TestApiStreamStatus(unittest.TestCase):
     def setUp(self):

@@ -25,7 +25,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Test that check_single_channel marks the channel for force checking."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()
@@ -90,7 +90,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Test that check_single_channel refreshes M3U playlists."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()
@@ -154,7 +154,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Test that check_single_channel re-discovers and assigns streams."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()

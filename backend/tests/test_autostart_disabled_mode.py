@@ -20,8 +20,8 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stream_checker_service import StreamCheckerService, StreamCheckConfig
-from automated_stream_manager import AutomatedStreamManager
+from apps.stream.stream_checker_service import StreamCheckerService, StreamCheckConfig
+from apps.automation.automated_stream_manager import AutomatedStreamManager
 
 
 class TestAutostartWithDisabledMode(unittest.TestCase):

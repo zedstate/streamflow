@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 # Add backend to path
 sys.path.insert(0, os.path.join(os.getcwd(), 'backend'))
 
-from ffmpeg_stream_monitor import FFmpegStreamMonitor
+from apps.stream.ffmpeg_stream_monitor import FFmpegStreamMonitor
 
 def test_command_generation():
     url = "http://example.com/stream"

@@ -42,14 +42,14 @@ class TestAutoCreateEndToEnd(unittest.TestCase):
     def test_complete_auto_create_workflow(self):
         """Test the complete workflow from rule creation to event creation."""
         with patch('scheduling_service.CONFIG_DIR', Path(self.temp_dir)):
-            import scheduling_service
+            import apps.automation.scheduling_service
             scheduling_service.CONFIG_DIR = Path(self.temp_dir)
             scheduling_service.SCHEDULING_CONFIG_FILE = scheduling_service.CONFIG_DIR / 'scheduling_config.json'
             scheduling_service.SCHEDULED_EVENTS_FILE = scheduling_service.CONFIG_DIR / 'scheduled_events.json'
             scheduling_service.AUTO_CREATE_RULES_FILE = scheduling_service.CONFIG_DIR / 'auto_create_rules.json'
             scheduling_service._scheduling_service = None
             
-            from scheduling_service import get_scheduling_service
+            from apps.automation.scheduling_service import get_scheduling_service
             
             # Mock UDI
             with patch('scheduling_service.get_udi_manager') as mock_udi_factory:
@@ -152,14 +152,14 @@ class TestAutoCreateEndToEnd(unittest.TestCase):
     def test_no_duplicate_events_on_multiple_refreshes(self):
         """Test that multiple EPG refreshes don't create duplicate events."""
         with patch('scheduling_service.CONFIG_DIR', Path(self.temp_dir)):
-            import scheduling_service
+            import apps.automation.scheduling_service
             scheduling_service.CONFIG_DIR = Path(self.temp_dir)
             scheduling_service.SCHEDULING_CONFIG_FILE = scheduling_service.CONFIG_DIR / 'scheduling_config.json'
             scheduling_service.SCHEDULED_EVENTS_FILE = scheduling_service.CONFIG_DIR / 'scheduled_events.json'
             scheduling_service.AUTO_CREATE_RULES_FILE = scheduling_service.CONFIG_DIR / 'auto_create_rules.json'
             scheduling_service._scheduling_service = None
             
-            from scheduling_service import get_scheduling_service
+            from apps.automation.scheduling_service import get_scheduling_service
             
             with patch('scheduling_service.get_udi_manager') as mock_udi_factory:
                 mock_udi = Mock()

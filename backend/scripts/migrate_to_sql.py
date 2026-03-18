@@ -317,6 +317,26 @@ def main():
         session.commit()
         logger.info("🏆 MIGRATION SUCCESSFUL!")
         
+        # Delete migrated JSON files
+        files_to_delete = [
+            UDI_DIR / 'logos.json',
+            UDI_DIR / 'match_profiles.json',
+            UDI_DIR / 'channel_groups.json',
+            UDI_DIR / 'm3u_accounts.json',
+            UDI_DIR / 'streams.json',
+            UDI_DIR / 'channels.json',
+            CONFIG_DIR / 'dead_streams.json',
+            CONFIG_DIR / 'automation_config.json'
+        ]
+        
+        for fpath in files_to_delete:
+            if fpath.exists():
+                try:
+                    fpath.unlink()
+                    logger.info(f"✓ Deleted migrated file: {fpath.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete {fpath.name}: {e}")
+        
     except Exception as e:
         session.rollback()
         logger.error(f"❌ Migration FAILED: {e}", exc_info=True)

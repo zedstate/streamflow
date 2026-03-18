@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 # Add backend to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from database.connection import get_session, init_db
-from database.models import SystemSetting
-from automated_stream_manager import RegexChannelMatcher, AutomatedStreamManager
-from scheduling_service import SchedulingService
+from apps.database.connection import get_session, init_db
+from apps.database.models import SystemSetting
+from apps.automation.automated_stream_manager import RegexChannelMatcher, AutomatedStreamManager
+from apps.automation.scheduling_service import SchedulingService
 
 class TestServicesSQL(unittest.TestCase):
     

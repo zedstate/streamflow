@@ -93,7 +93,7 @@ class TestDeadStreamRemovalFiltering(unittest.TestCase):
     @patch('automated_stream_manager.add_streams_to_channel')
     def test_automated_manager_respects_removal_disabled(self, mock_add_streams):
         """Test that automated stream manager passes allow_dead_streams=True when removal is disabled."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Create config with removal disabled
         self._create_stream_checker_config(removal_enabled=False)
@@ -112,7 +112,7 @@ class TestDeadStreamRemovalFiltering(unittest.TestCase):
     @patch('automated_stream_manager.add_streams_to_channel')
     def test_automated_manager_respects_removal_enabled(self, mock_add_streams):
         """Test that automated stream manager passes allow_dead_streams=False when removal is enabled."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Create config with removal enabled
         self._create_stream_checker_config(removal_enabled=True)
@@ -130,7 +130,7 @@ class TestDeadStreamRemovalFiltering(unittest.TestCase):
     
     def test_config_reading_default_value(self):
         """Test that missing config defaults to removal enabled (True)."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Don't create any config file
         config_file = self.config_dir / 'stream_checker_config.json'

@@ -13,7 +13,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stream_stats_utils import (
+from apps.core.stream_stats_utils import (
     parse_bitrate_value,
     format_bitrate,
     parse_fps_value,

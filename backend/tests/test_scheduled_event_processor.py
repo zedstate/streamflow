@@ -45,7 +45,7 @@ class TestScheduledEventProcessor(unittest.TestCase):
                     stop_scheduled_event_processor,
                     scheduled_event_processor_wake
                 )
-                from scheduling_service import get_scheduling_service
+                from apps.automation.scheduling_service import get_scheduling_service
                 
                 # Create a mock event that is due now
                 service = get_scheduling_service()
@@ -128,7 +128,7 @@ class TestScheduledEventProcessor(unittest.TestCase):
                     stop_scheduled_event_processor,
                     scheduled_event_processor_wake
                 )
-                from scheduling_service import get_scheduling_service
+                from apps.automation.scheduling_service import get_scheduling_service
                 
                 # Start the processor first
                 success = start_scheduled_event_processor()

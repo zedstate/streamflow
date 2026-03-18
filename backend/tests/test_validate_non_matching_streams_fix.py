@@ -47,8 +47,8 @@ class TestValidateNonMatchingStreamsFix(unittest.TestCase):
         os.environ['CONFIG_DIR'] = self.test_config_dir
         
         # Import after setting CONFIG_DIR
-        from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
-        import automated_stream_manager as asm_module
+        from apps.automation.automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
+        import apps.automation.automated_stream_manager as asm_module
         
         # Reset CONFIG_DIR in the module
         asm_module.CONFIG_DIR = Path(self.test_config_dir)

@@ -36,7 +36,7 @@ class TestUDIRefreshOnPlaylistUpdate(unittest.TestCase):
         mock_get_udi
     ):
         """Test that UDI streams and channels are refreshed after playlist update."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Setup mocks
         mock_udi = Mock()
@@ -93,7 +93,7 @@ class TestUDIRefreshOnPlaylistUpdate(unittest.TestCase):
         mock_get_udi
     ):
         """Test that UDI refresh is called even when stream changes occur."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Setup mocks
         mock_udi = Mock()

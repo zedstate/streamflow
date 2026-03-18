@@ -20,8 +20,8 @@ def clean_test_db(monkeypatch):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    import database.connection as conn
-    import database.manager as mgr
+    import apps.databaseconnection as conn
+    import apps.databasemanager as mgr
 
     # Create a brand-new in-memory engine for this test
     test_engine = create_engine('sqlite:///:memory:', echo=False)
@@ -35,8 +35,8 @@ def clean_test_db(monkeypatch):
     mgr._db_manager = None
 
     # Create all tables
-    from database.connection import Base
-    import database.models  # noqa: F401 – registers all models with Base
+    from apps.database.connection import Base
+    import apps.databasemodels  # noqa: F401 – registers all models with Base
     Base.metadata.create_all(test_engine)
 
     yield test_engine

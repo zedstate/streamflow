@@ -6,9 +6,9 @@ from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.append(str(backend_dir))
 
-from dead_streams_tracker import DeadStreamsTracker
-from database.connection import get_session
-from database.models import DeadStream
+from apps.stream.dead_streams_tracker import DeadStreamsTracker
+from apps.database.connection import get_session
+from apps.database.models import DeadStream
 
 def main():
     print("Initializing DeadStreamsTracker test...")

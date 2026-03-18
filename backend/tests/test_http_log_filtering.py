@@ -14,7 +14,7 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from logging_config import HTTPLogFilter
+from apps.core.logging_config import HTTPLogFilter
 
 
 class TestHTTPLogFilter(unittest.TestCase):

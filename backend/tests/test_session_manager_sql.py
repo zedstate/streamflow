@@ -5,9 +5,9 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import logging
-from database.connection import init_db, get_session
-from database.models import MonitoringSession
-from stream_session_manager import StreamSessionManager, SessionInfo, StreamInfo
+from apps.database.connection import init_db, get_session
+from apps.database.models import MonitoringSession
+from apps.stream.stream_session_manager import StreamSessionManager, SessionInfo, StreamInfo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -5,8 +5,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import logging
-from database.connection import init_db
-from automation_config_manager import get_automation_config_manager
+from apps.database.connection import init_db
+from apps.automation.automation_config_manager import get_automation_config_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

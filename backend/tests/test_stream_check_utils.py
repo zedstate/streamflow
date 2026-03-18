@@ -15,7 +15,7 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stream_check_utils import (
+from apps.stream.stream_check_utils import (
     check_ffmpeg_installed,
     get_stream_info,
     get_stream_bitrate,

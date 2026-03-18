@@ -15,7 +15,7 @@ from pathlib import Path
 # Add backend directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from logging_config import setup_logging, log_function_call
+from apps.core.logging_config import setup_logging, log_function_call
 
 
 class TestLogFunctionCallDecorator(unittest.TestCase):

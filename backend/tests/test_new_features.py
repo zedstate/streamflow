@@ -22,7 +22,7 @@ def test_stream_startup_buffer_config():
         os.environ['CONFIG_DIR'] = tmpdir
         
         # Now import (this will use the CONFIG_DIR)
-        from stream_checker_service import StreamCheckConfig
+        from apps.stream.stream_checker_service import StreamCheckConfig
         
         # Initialize config
         config = StreamCheckConfig(config_file=Path(tmpdir) / 'stream_checker_config.json')
@@ -46,7 +46,7 @@ def test_validate_existing_streams_config():
         os.environ['CONFIG_DIR'] = tmpdir
         config_file = Path(tmpdir) / 'automation_config.json'
         
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Initialize manager
         manager = AutomatedStreamManager(config_file=config_file)
@@ -103,7 +103,7 @@ def test_global_priority_mode_config():
 def test_stream_check_utils_signature():
     """Test that stream check utils functions have the new stream_startup_buffer parameter."""
     import inspect
-    from stream_check_utils import analyze_stream, get_stream_info_and_bitrate
+    from apps.stream.stream_check_utils import analyze_stream, get_stream_info_and_bitrate
     
     # Check analyze_stream signature
     sig = inspect.signature(analyze_stream)

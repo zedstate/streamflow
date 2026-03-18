@@ -10,7 +10,7 @@ import shutil
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
-from automated_stream_manager import RegexChannelMatcher
+from apps.automation.automated_stream_manager import RegexChannelMatcher
 
 
 class TestRegexPatternReload(unittest.TestCase):
@@ -52,7 +52,7 @@ class TestRegexPatternReload(unittest.TestCase):
 
     def _update_db(self, config: dict):
         """Import *config* into the DB (replaces all existing patterns)."""
-        from database.manager import get_db_manager
+        from apps.database.manager import get_db_manager
         get_db_manager().import_channel_regex_configs_from_json(config, merge=False)
         if isinstance(config.get('global_settings'), dict):
             get_db_manager().set_system_setting(
@@ -107,7 +107,7 @@ class TestRegexPatternReload(unittest.TestCase):
     def test_reload_removes_invalid_regex(self):
         """Test that reload automatically removes patterns with invalid regex."""
         # Insert an invalid regex pattern directly via the DAL
-        from database.manager import get_db_manager
+        from apps.database.manager import get_db_manager
         db = get_db_manager()
 
         # Add a valid channel (already seeded as channel 1)
@@ -119,8 +119,8 @@ class TestRegexPatternReload(unittest.TestCase):
             regex_patterns=[{'pattern': '.*VALID.*', 'm3u_accounts': None}],
         )
         # Add a channel with an invalid pattern
-        from database.models import ChannelRegexConfig, ChannelRegexPattern
-        from database.connection import get_session
+        from apps.database.models import ChannelRegexConfig, ChannelRegexPattern
+        from apps.database.connection import get_session
         session = get_session()
         cfg = ChannelRegexConfig(channel_id=2, name='Invalid Channel', enabled=True, match_by_tvg_id=False)
         session.add(cfg)
@@ -147,9 +147,9 @@ class TestRegexPatternReload(unittest.TestCase):
     
     def test_reload_handles_empty_db(self):
         """Test that reload handles an empty DB gracefully."""
-        from database.manager import get_db_manager
-        from database.models import ChannelRegexConfig
-        from database.connection import get_session
+        from apps.database.manager import get_db_manager
+        from apps.database.models import ChannelRegexConfig
+        from apps.database.connection import get_session
 
         # Wipe all configs
         session = get_session()

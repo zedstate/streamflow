@@ -17,7 +17,7 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from automated_stream_manager import AutomatedStreamManager
+from apps.automation.automated_stream_manager import AutomatedStreamManager
 
 
 class TestStreamMatchingM3UFilter(unittest.TestCase):
@@ -37,7 +37,7 @@ class TestStreamMatchingM3UFilter(unittest.TestCase):
         Helper method that mimics the filtering logic from discover_and_assign_streams.
         This allows us to unit test just the filtering logic.
         """
-        from automated_stream_manager import get_m3u_accounts
+        from apps.automation.automated_stream_manager import get_m3u_accounts
         
         # Get all M3U accounts and filter by enabled and active status
         all_accounts = get_m3u_accounts()

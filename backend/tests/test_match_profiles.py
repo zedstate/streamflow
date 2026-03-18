@@ -6,9 +6,9 @@ from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.append(str(backend_dir))
 
-from match_profiles_manager import MatchProfilesManager
-from database.connection import get_session
-from database.models import MatchProfile as DBMatchProfile
+from apps.automation.match_profiles_manager import MatchProfilesManager
+from apps.database.connection import get_session
+from apps.database.models import MatchProfile as DBMatchProfile
 
 def main():
     print("Initializing MatchProfilesManager test...")

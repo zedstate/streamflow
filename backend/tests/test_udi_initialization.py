@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import web_api
 from web_api import app
-from udi import get_udi_manager
+from apps.udi import get_udi_manager
 
 
 class TestUDIInitialization(unittest.TestCase):
@@ -34,7 +34,7 @@ class TestUDIInitialization(unittest.TestCase):
         self.app.testing = True
         
         # Reset UDI Manager singleton
-        import udi.manager
+        import apps.udimanager
         udi.manager._udi_manager = None
     
     def tearDown(self):
@@ -43,7 +43,7 @@ class TestUDIInitialization(unittest.TestCase):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         
         # Reset UDI Manager singleton
-        import udi.manager
+        import apps.udimanager
         udi.manager._udi_manager = None
     
     def test_initialize_udi_requires_credentials(self):

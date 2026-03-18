@@ -33,8 +33,8 @@ class TestDeadStreamRemovalDuringGlobalCheck(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_dead_streams_removed_during_force_check(self):
         """Test that dead streams are removed from channels even during force_check (global checks)."""
-        from stream_checker_service import StreamCheckerService
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.stream_checker_service import StreamCheckerService
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         # Initialize service
         service = StreamCheckerService()
@@ -67,7 +67,7 @@ class TestDeadStreamRemovalDuringGlobalCheck(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_dead_stream_detection_logic(self):
         """Test that the _is_stream_dead method correctly identifies dead streams."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         service = StreamCheckerService()
         
@@ -91,8 +91,8 @@ class TestDeadStreamRemovalDuringGlobalCheck(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_revived_streams_not_removed(self):
         """Test that revived streams (previously dead but now alive) are not removed."""
-        from stream_checker_service import StreamCheckerService
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.stream_checker_service import StreamCheckerService
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         service = StreamCheckerService()
         tracker = DeadStreamsTracker()
@@ -138,7 +138,7 @@ class TestDeadStreamRemovalBehaviorConsistency(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_dead_stream_removal_consistent_across_check_types(self):
         """Test that dead streams are removed regardless of check type (normal or global)."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         service = StreamCheckerService()
         

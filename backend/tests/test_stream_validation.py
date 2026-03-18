@@ -37,7 +37,7 @@ class TestStreamValidation(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_update_channel_streams_filters_invalid_ids(self, mock_get_udi, mock_patch):
         """Test that update_channel_streams filters out non-existent stream IDs."""
-        from api_utils import update_channel_streams
+        from apps.core.api_utils import update_channel_streams
         
         # Mock UDI manager to return valid stream IDs
         mock_udi = MagicMock()
@@ -66,7 +66,7 @@ class TestStreamValidation(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_update_channel_streams_with_all_invalid_ids(self, mock_get_udi, mock_patch):
         """Test update_channel_streams when all stream IDs are invalid."""
-        from api_utils import update_channel_streams
+        from apps.core.api_utils import update_channel_streams
         
         # Mock UDI manager to return valid stream IDs
         mock_udi = MagicMock()
@@ -95,7 +95,7 @@ class TestStreamValidation(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_add_streams_filters_invalid_ids(self, mock_get_udi, mock_patch):
         """Test that add_streams_to_channel filters out non-existent stream IDs."""
-        from api_utils import add_streams_to_channel
+        from apps.core.api_utils import add_streams_to_channel
         
         # Mock UDI manager
         mock_udi = MagicMock()
@@ -127,7 +127,7 @@ class TestStreamValidation(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_add_streams_with_all_invalid_ids(self, mock_get_udi, mock_patch):
         """Test add_streams_to_channel when all new stream IDs are invalid."""
-        from api_utils import add_streams_to_channel
+        from apps.core.api_utils import add_streams_to_channel
         
         # Mock UDI manager
         mock_udi = MagicMock()
@@ -155,7 +155,7 @@ class TestStreamValidation(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_add_streams_handles_removed_current_streams(self, mock_get_udi, mock_patch):
         """Test that current channel streams that no longer exist are filtered out."""
-        from api_utils import add_streams_to_channel
+        from apps.core.api_utils import add_streams_to_channel
         
         # Mock UDI manager - includes a stream that no longer exists in valid IDs
         mock_udi = MagicMock()
@@ -189,7 +189,7 @@ class TestGetValidStreamIds(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_get_valid_stream_ids_success(self, mock_get_udi):
         """Test that get_valid_stream_ids returns correct set of IDs."""
-        from api_utils import get_valid_stream_ids
+        from apps.core.api_utils import get_valid_stream_ids
         
         # Mock UDI manager
         mock_udi = MagicMock()
@@ -203,7 +203,7 @@ class TestGetValidStreamIds(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_get_valid_stream_ids_handles_invalid_data(self, mock_get_udi):
         """Test that get_valid_stream_ids handles data correctly from UDI."""
-        from api_utils import get_valid_stream_ids
+        from apps.core.api_utils import get_valid_stream_ids
         
         # UDI already handles invalid data internally, so just return clean set
         mock_udi = MagicMock()
@@ -218,7 +218,7 @@ class TestGetValidStreamIds(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_get_valid_stream_ids_handles_error(self, mock_get_udi):
         """Test that get_valid_stream_ids returns empty set on error."""
-        from api_utils import get_valid_stream_ids
+        from apps.core.api_utils import get_valid_stream_ids
         
         # UDI returns empty set on error
         mock_udi = MagicMock()
@@ -239,7 +239,7 @@ class TestDeadStreamFiltering(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_update_channel_filters_dead_streams(self, mock_get_udi, mock_patch, mock_dead_urls):
         """Test that update_channel_streams filters out dead streams by default."""
-        from api_utils import update_channel_streams
+        from apps.core.api_utils import update_channel_streams
         
         # Mock UDI manager
         mock_udi = MagicMock()
@@ -276,7 +276,7 @@ class TestDeadStreamFiltering(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_update_channel_allows_dead_streams_in_global_check(self, mock_get_udi, mock_patch, mock_dead_urls):
         """Test that update_channel_streams allows dead streams during global checks."""
-        from api_utils import update_channel_streams
+        from apps.core.api_utils import update_channel_streams
         
         # Mock UDI manager
         mock_udi = MagicMock()
@@ -308,7 +308,7 @@ class TestDeadStreamFiltering(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_add_streams_filters_dead_streams(self, mock_get_udi, mock_patch, mock_dead_urls):
         """Test that add_streams_to_channel filters out dead streams by default."""
-        from api_utils import add_streams_to_channel
+        from apps.core.api_utils import add_streams_to_channel
         
         # Mock UDI manager
         mock_udi = MagicMock()

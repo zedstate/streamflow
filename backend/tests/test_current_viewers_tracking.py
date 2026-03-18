@@ -16,8 +16,8 @@ from unittest.mock import Mock, patch, MagicMock
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from udi.manager import UDIManager
-from concurrent_stream_limiter import AccountStreamLimiter
+from apps.udi.manager import UDIManager
+from apps.stream.concurrent_stream_limiter import AccountStreamLimiter
 
 
 class TestCurrentViewersTracking(unittest.TestCase):
@@ -259,7 +259,7 @@ class TestStreamLimiterWithCurrentViewers(unittest.TestCase):
     
     def test_cached_stats_returned_when_quota_consumed(self):
         """Test that cached stats are returned when quota is consumed by active viewers."""
-        from concurrent_stream_limiter import SmartStreamScheduler
+        from apps.stream.concurrent_stream_limiter import SmartStreamScheduler
         
         # Create a fresh UDI for this test with mock
         mock_udi = Mock()

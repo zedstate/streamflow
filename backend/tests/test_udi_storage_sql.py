@@ -4,8 +4,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import logging
-from database.connection import init_db
-from udi.storage import UDIStorage
+from apps.database.connection import init_db
+from apps.udi.storage import UDIStorage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

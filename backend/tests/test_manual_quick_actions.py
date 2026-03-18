@@ -9,7 +9,7 @@ import unittest
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
-from automated_stream_manager import AutomatedStreamManager
+from apps.automation.automated_stream_manager import AutomatedStreamManager
 
 
 class TestManualQuickActions(unittest.TestCase):

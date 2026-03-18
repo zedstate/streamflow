@@ -19,7 +19,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the function we're testing from the new module
-from stream_check_utils import get_stream_bitrate
+from apps.stream.stream_check_utils import get_stream_bitrate
 
 
 class TestBitrateDetection(unittest.TestCase):

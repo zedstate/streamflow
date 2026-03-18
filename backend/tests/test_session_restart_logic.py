@@ -25,7 +25,7 @@ def mock_decorator(f):
     return f
 sys.modules['logging_config'].log_function_call = mock_decorator
 
-from stream_session_manager import StreamSessionManager, SessionInfo, StreamInfo, REVIEW_DURATION
+from apps.stream.stream_session_manager import StreamSessionManager, SessionInfo, StreamInfo, REVIEW_DURATION
 
 class TestSessionRestartLogic(unittest.TestCase):
     @patch('stream_session_manager.CONFIG_DIR')

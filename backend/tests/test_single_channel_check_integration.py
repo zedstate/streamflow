@@ -29,7 +29,7 @@ class TestSingleChannelCheckIntegration(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Full integration test showing the fix works end-to-end."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()

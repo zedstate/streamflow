@@ -29,8 +29,8 @@ os.environ['DISPATCHARR_TOKEN'] = 'test_token'
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the module but we'll reset the singleton in each test
-import scheduling_service
-from scheduling_service import SchedulingService
+import apps.automation.scheduling_service
+from apps.automation.scheduling_service import SchedulingService
 
 
 class TestSchedulingService(unittest.TestCase):

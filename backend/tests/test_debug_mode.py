@@ -15,7 +15,7 @@ from pathlib import Path
 # Add backend directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_api_request, log_api_response, log_state_change
+from apps.core.logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_api_request, log_api_response, log_state_change
 
 
 class TestDebugMode(unittest.TestCase):
