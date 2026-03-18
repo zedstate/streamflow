@@ -2110,43 +2110,55 @@ def test_regex_pattern_live():
 
 @app.route('/api/changelog', methods=['GET'])
 def get_changelog():
-    """Get recent changelog entries from both automation and stream checker."""
+    """Get recent changelog entries from the new telemetry database."""
     try:
         days = request.args.get('days', 7, type=int)
         page = request.args.get('page', 1, type=int)
         limit = request.args.get('limit', 10, type=int)
         
-        # Get automation changelog entries
-        manager = get_automation_manager()
-        automation_changelog = manager.changelog.get_recent_entries(days)
+        from telemetry_db import get_session, Run
+        from datetime import datetime, timedelta
+        import json
         
-        # Get stream checker changelog entries
-        stream_checker_changelog = []
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        session = get_session()
+        
         try:
-            checker = get_stream_checker_service()
-            if checker.changelog:
-                stream_checker_changelog = checker.changelog.get_recent_entries(days)
-        except Exception as e:
-            logger.warning(f"Could not get stream checker changelog: {e}")
-        
-        # Merge and sort by timestamp (newest first)
-        merged_changelog = automation_changelog + stream_checker_changelog
-        merged_changelog.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        
-        # Apply pagination
-        total = len(merged_changelog)
-        total_pages = (total + limit - 1) // limit if limit > 0 else 0
-        start_idx = (page - 1) * limit
-        end_idx = start_idx + limit
-        paginated_data = merged_changelog[start_idx:end_idx] if limit > 0 else merged_changelog
-        
-        return jsonify({
-            'data': paginated_data,
-            'page': page,
-            'limit': limit,
-            'total': total,
-            'total_pages': total_pages
-        })
+            # Query the required runs
+            runs = session.query(Run).filter(Run.timestamp >= cutoff).order_by(Run.timestamp.desc()).all()
+            
+            merged_changelog = []
+            for r in runs:
+                details = {}
+                if r.raw_details:
+                    details = json.loads(r.raw_details)
+                subentries = []
+                if r.raw_subentries:
+                    subentries = json.loads(r.raw_subentries)
+                    
+                merged_changelog.append({
+                    "timestamp": r.timestamp.isoformat(),
+                    "action": r.run_type,
+                    "details": details,
+                    "subentries": subentries
+                })
+                
+            # Apply pagination
+            total = len(merged_changelog)
+            total_pages = (total + limit - 1) // limit if limit > 0 else 0
+            start_idx = (page - 1) * limit
+            end_idx = start_idx + limit
+            paginated_data = merged_changelog[start_idx:end_idx] if limit > 0 else merged_changelog
+            
+            return jsonify({
+                'data': paginated_data,
+                'page': page,
+                'limit': limit,
+                'total': total,
+                'total_pages': total_pages
+            })
+        finally:
+            session.close()
     except Exception as e:
         logger.error(f"Error getting changelog: {e}")
         return jsonify({"error": "Internal Server Error"}), 500

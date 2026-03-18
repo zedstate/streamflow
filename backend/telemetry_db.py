@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 from pathlib import Path
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Index
@@ -23,6 +24,8 @@ class Run(Base):
     global_dead_count = Column(Integer, nullable=False, default=0)
     global_revived_count = Column(Integer, nullable=False, default=0)
     run_type = Column(String(50), nullable=False, default='automation_run') # 'automation_run', 'playlist_refresh', 'single_channel_check', etc.
+    raw_details = Column(String, nullable=True) # Used by legacy UI
+    raw_subentries = Column(String, nullable=True) # Used by legacy UI
 
     channel_healths = relationship("ChannelHealth", back_populates="run", cascade="all, delete-orphan")
     stream_telemetries = relationship("StreamTelemetry", back_populates="run", cascade="all, delete-orphan")
@@ -152,22 +155,33 @@ def save_automation_run_telemetry(action, details, subentries=None, timestamp=No
                 pass
 
         # Create Run record
-        duration = details.get('duration_seconds', 0.0)
+        duration = details.get('duration_seconds', details.get('duration', 0.0))
+        if isinstance(duration, str):
+            try: duration = float(duration)
+            except: duration = 0.0
+            
         global_stats = details.get('global_stats', {})
+        total_channels = details.get('total_channels_processed') or details.get('total_channels') or global_stats.get('total_channels_processed', 0)
+        dead_count = details.get('total_dead_streams') or details.get('dead_streams') or global_stats.get('total_dead_streams', 0)
+        revived_count = details.get('total_revived_streams') or details.get('streams_revived') or global_stats.get('total_revived_streams', 0)
+
         run = Run(
             timestamp=run_ts,
             duration_seconds=duration,
-            total_channels=global_stats.get('total_channels_processed', 0),
-            global_dead_count=global_stats.get('total_dead_streams', 0),
-            global_revived_count=global_stats.get('total_revived_streams', 0),
-            run_type=action
+            total_channels=total_channels,
+            global_dead_count=dead_count,
+            global_revived_count=revived_count,
+            run_type=action,
+            raw_details=json.dumps(details) if details else None,
+            raw_subentries=json.dumps(subentries) if subentries else None
         )
         session.add(run)
         session.flush() # Get run.id
 
         # Process automation_run structure
-        summary = details.get('summary', {})
-        periods = summary.get('periods', [])
+        periods = details.get('periods', [])
+        if not periods and 'summary' in details:
+            periods = details.get('summary', {}).get('periods', [])
         
         for p in periods:
             for c in p.get('channels', []):
@@ -252,7 +266,9 @@ def save_generic_telemetry(action, details, subentries=None, timestamp=None):
             total_channels=details.get('total_channels', 0) or details.get('total_channels_processed', 0),
             global_dead_count=details.get('total_dead_streams', 0) or details.get('dead_streams', 0),
             global_revived_count=details.get('total_revived_streams', 0),
-            run_type=action
+            run_type=action,
+            raw_details=json.dumps(details) if details else None,
+            raw_subentries=json.dumps(subentries) if subentries else None
         )
         session.add(run)
         session.flush()
@@ -273,6 +289,29 @@ def save_generic_telemetry(action, details, subentries=None, timestamp=None):
                             dead_streams=stats.get('dead_streams', 0)
                         )
                         session.add(ch)
+                        session.flush()
+
+                        # Save individual stream stats if present in generic item
+                        stream_details = stats.get('stream_details', [])
+                        for s_det in stream_details:
+                            width, height = _sanitize_resolution(s_det.get('resolution'))
+                            provider_ident = s_det.get('m3u_account')
+                            dtel = StreamTelemetry(
+                                run_id=run.id,
+                                channel_id=cid,
+                                stream_id=s_det.get('stream_id', 0),
+                                provider_id=_get_provider_id(provider_ident, session),
+                                bitrate_kbps=_sanitize_bitrate(s_det.get('bitrate')),
+                                resolution_width=width,
+                                resolution_height=height,
+                                fps=_sanitize_fps(s_det.get('fps')),
+                                codec=s_det.get('video_codec'),
+                                audio_codec=s_det.get('audio_codec'),
+                                quality_score=s_det.get('score'),
+                                is_dead=(s_det.get('status') == 'dead'),
+                                is_hdr=bool(s_det.get('hdr_format') or s_det.get('is_hdr'))
+                            )
+                            session.add(dtel)
 
         session.commit()
     except Exception as e:
