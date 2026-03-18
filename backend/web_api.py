@@ -11,6 +11,25 @@ import logging
 import os
 import queue
 import re
+
+def is_dangerous_regex(pattern: str) -> bool:
+    """Return True if the regex pattern contains nested quantifiers (ReDoS risk)."""
+    inside_parens = False
+    has_inner_quantifier = False
+    for i, char in enumerate(pattern):
+        if i > 0 and pattern[i-1] == '\\':
+            continue
+        if char == '(':
+            inside_parens = True
+            has_inner_quantifier = False
+        elif char == ')':
+            if inside_parens and has_inner_quantifier:
+                if i + 1 < len(pattern) and pattern[i+1] in '+*':
+                    return True
+            inside_parens = False
+        elif inside_parens and char in '+*':
+            has_inner_quantifier = True
+    return False
 import requests
 import socket
 import threading
@@ -851,7 +870,7 @@ def add_regex_pattern():
     except ValueError as e:
         # Validation errors (e.g., invalid regex) should return 400
         logger.warning(f"Validation error adding regex pattern: {e}")
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error adding regex pattern: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -1027,7 +1046,7 @@ def add_bulk_regex_patterns():
         return jsonify(response_data)
     except ValueError as e:
         logger.warning(f"Validation error in bulk regex pattern addition: {e}")
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error adding bulk regex patterns: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -1544,7 +1563,7 @@ def bulk_edit_regex_pattern():
         return jsonify(response_data)
     except ValueError as e:
         logger.warning(f"Validation error in bulk pattern edit: {e}")
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error bulk editing regex pattern: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -1673,11 +1692,11 @@ def mass_edit_preview():
         # Compile regex if needed
         if use_regex:
             try:
-                if re.search(r'\([^)]*[+*][^)]*\)[+*]', find_pattern):
+                if is_dangerous_regex(find_pattern):
                     return jsonify({"error": "Regex pattern contains dangerous nested quantifiers (ReDoS risk)"}), 400
                 find_regex = re.compile(find_pattern)
             except re.error as e:
-                return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
+                return jsonify({"error": "Invalid regex pattern"}), 400
         
         affected_channels = []
         total_patterns_affected = 0
@@ -1721,7 +1740,7 @@ def mass_edit_preview():
                             new_pattern = pattern.replace(find_pattern, replace_pattern)
                     except re.error as e:
                         # Invalid replacement pattern (e.g., bad backreference)
-                        return jsonify({"error": f"Invalid replacement pattern: {str(e)}"}), 400
+                        return jsonify({"error": "Invalid replacement pattern"}), 400
                     
                     # Only include if the pattern actually changes
                     if new_pattern != pattern:
@@ -1789,11 +1808,11 @@ def mass_edit_regex_patterns():
         # Compile regex if needed
         if use_regex:
             try:
-                if re.search(r'\([^)]*[+*][^)]*\)[+*]', find_pattern):
+                if is_dangerous_regex(find_pattern):
                     return jsonify({"error": "Regex pattern contains dangerous nested quantifiers (ReDoS risk)"}), 400
                 find_regex = re.compile(find_pattern)
             except re.error as e:
-                return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
+                return jsonify({"error": "Invalid regex pattern"}), 400
         
         success_count = 0
         failed_channels = []
@@ -1938,7 +1957,7 @@ def test_regex_pattern():
         search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
         
         try:
-            if re.search(r'\([^)]*[+*][^)]*\)[+*]', search_pattern):
+            if is_dangerous_regex(search_pattern):
                 return jsonify({"error": "Regex pattern contains dangerous nested quantifiers (ReDoS risk)"}), 400
             match = re.search(search_pattern, search_name)
             return jsonify({
@@ -1953,7 +1972,7 @@ def test_regex_pattern():
                 }
             })
         except re.error as e:
-            return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
+            return jsonify({"error": "Invalid regex pattern"}), 400
     except Exception as e:
         logger.error(f"Error testing regex pattern: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -2045,7 +2064,7 @@ def test_regex_pattern_live():
                     search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                     
                     try:
-                        if re.search(r'\([^)]*[+*][^)]*\)[+*]', search_pattern):
+                        if is_dangerous_regex(search_pattern):
                             logger.warning(f"Invalid regex pattern '{pattern}': ReDoS risk")
                             continue
                         if re.search(search_pattern, search_name):
@@ -2553,7 +2572,7 @@ def test_match_live():
                         search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                         
                         try:
-                            if re.search(r'\([^)]*[+*][^)]*\)[+*]', search_pattern):
+                            if is_dangerous_regex(search_pattern):
                                 continue
                             if re.search(search_pattern, search_name):
                                 regex_matched = True
@@ -3352,7 +3371,7 @@ def create_scheduled_event():
         return jsonify(event), 201
     
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error creating scheduled event: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -3444,7 +3463,7 @@ def create_auto_create_rule():
         return jsonify(rule), 201
     
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error creating auto-create rule: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -3519,7 +3538,7 @@ def update_auto_create_rule(rule_id):
             return jsonify({"error": "Rule not found"}), 404
     
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error updating auto-create rule: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -3561,7 +3580,7 @@ def test_auto_create_rule():
         })
     
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error testing auto-create rule: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -3625,7 +3644,7 @@ def import_auto_create_rules():
         return jsonify(result), 200
     
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error importing auto-create rules: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -4714,7 +4733,7 @@ def create_stream_session():
         return jsonify({"session_id": session_id, "message": "Session created successfully"}), 201
         
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "Invalid value or request parameters"}), 400
     except Exception as e:
         logger.error(f"Error creating stream session: {e}", exc_info=True)
         return jsonify({"error": "Internal Server Error"}), 500
