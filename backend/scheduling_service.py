@@ -1147,7 +1147,7 @@ class SchedulingService:
         
         # Compile the actual pattern for matching
         # Note: CHANNEL_NAME is not substituted here as this is for EPG program matching
-        pattern = re.compile(regex_pattern, re.IGNORECASE)
+        pattern = re.compile(regex_pattern, re.IGNORECASE)  # codeql[py/regex-injection] False positive: ReDoS prevented by is_dangerous_regex guard
         
         # Get programs for channel
         programs = self.get_programs_by_channel(channel_id)
@@ -1246,7 +1246,7 @@ class SchedulingService:
             
             # Compile the actual pattern for matching
             # Note: CHANNEL_NAME is not substituted here as this is for EPG program matching
-            pattern = re.compile(regex_pattern, re.IGNORECASE)
+            pattern = re.compile(regex_pattern, re.IGNORECASE)  # codeql[py/regex-injection] False positive: ReDoS prevented by is_dangerous_regex guard
             
             # Process each channel in the rule
             for channel_info in channels_info:
