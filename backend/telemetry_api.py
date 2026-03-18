@@ -86,6 +86,20 @@ def get_provider_telemetry():
     finally:
         session.close()
 
+@telemetry_bp.route('/channels/list', methods=['GET'])
+def list_channels_for_telemetry():
+    """Get a distinct list of channels that have telemetry data."""
+    session = get_session()
+    try:
+        results = session.query(ChannelHealth.channel_id, ChannelHealth.channel_name).distinct().all()
+        data = [{"id": r.channel_id, "name": r.channel_name or f"Channel {r.channel_id}"} for r in results]
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        logger.error(f"Error fetching channel list for telemetry: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        session.close()
+
 @telemetry_bp.route('/channels/<int:channel_id>', methods=['GET'])
 def get_channel_telemetry(channel_id):
     """Get history for a specific channel."""

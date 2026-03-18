@@ -16,6 +16,10 @@ export default function StatsDashboard() {
   const [days, setDays] = useState('7')
   const [useMaximums, setUseMaximums] = useState(false)
   const [providerMetric, setProviderMetric] = useState('quality')
+  const [channelsList, setChannelsList] = useState([])
+  const [selectedChannel, setSelectedChannel] = useState('')
+  const [channelHistory, setChannelHistory] = useState([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -42,6 +46,11 @@ export default function StatsDashboard() {
       if (providerRes.data.success) {
         setProviderData(providerRes.data.data)
       }
+
+      const channelsRes = await api.get('/telemetry/channels/list')
+      if (channelsRes.data.success) {
+        setChannelsList(channelsRes.data.data)
+      }
     } catch (err) {
       console.error(err)
       toast({
@@ -51,6 +60,29 @@ export default function StatsDashboard() {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (selectedChannel) {
+      fetchChannelHistory()
+    }
+  }, [selectedChannel, days])
+
+  const fetchChannelHistory = async () => {
+    setLoadingHistory(true)
+    try {
+      const res = await api.get(`/telemetry/channels/${selectedChannel}?days=${days}`)
+      if (res.data.success) {
+        setChannelHistory(res.data.data.map(d => ({
+          ...d,
+          timeLabel: new Date(d.timestamp).toLocaleDateString() + ' ' + new Date(d.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+        })))
+      }
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingHistory(false)
     }
   }
 
@@ -238,20 +270,77 @@ export default function StatsDashboard() {
 
         <TabsContent value="channels" className="mt-6">
           <Card className="border-none shadow-md bg-card/50 backdrop-blur-sm">
-            <CardHeader>
-              <CardTitle>Channel History Matrix</CardTitle>
-              <CardDescription>Track specific channel health over the past runs.</CardDescription>
+            <CardHeader className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <CardTitle>Channel History Matrix</CardTitle>
+                <CardDescription>Track specific channel health over past runs.</CardDescription>
+              </div>
+              <Select value={selectedChannel} onValueChange={setSelectedChannel}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Select Channel" />
+                </SelectTrigger>
+                <SelectContent>
+                  {channelsList.map(c => (
+                    <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-center py-12 text-muted-foreground bg-muted/20 rounded-lg">
-                <div className="text-center">
-                  <div className="inline-block p-4 bg-background rounded-full mb-4 shadow-sm border">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide text-primary"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m3 15 2 2 4-4"/></svg>
+              {!selectedChannel ? (
+                <div className="flex items-center justify-center py-12 text-muted-foreground bg-muted/20 rounded-lg">
+                  <div className="text-center">
+                    <div className="inline-block p-4 bg-background rounded-full mb-4 shadow-sm border">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide text-primary"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m3 15 2 2 4-4"/></svg>
+                    </div>
+                    <h3 className="text-lg font-medium text-foreground">Specify a Channel ID</h3>
+                    <p className="mt-1 text-sm">Select a channel from the list to view detailed history matrices.</p>
                   </div>
-                  <h3 className="text-lg font-medium text-foreground">Specify a Channel ID</h3>
-                  <p className="mt-1 text-sm">Select a channel from configuration to view detailed history matrices.</p>
                 </div>
-              </div>
+              ) : loadingHistory ? (
+                <div className="h-[300px] flex items-center justify-center">Loading channel history...</div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={channelHistory}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                        <XAxis dataKey="timeLabel" tick={{fontSize: 12}} />
+                        <YAxis />
+                        <RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none'}} />
+                        <Legend />
+                        <Line type="monotone" dataKey="available_streams" name="Healthy Streams" stroke="#10b981" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="dead_streams" name="Dead Streams" stroke="#ef4444" strokeWidth={2} dot={false} strokeDasharray="5 5" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-muted/20 p-4 rounded-lg">
+                    {channelHistory.slice(-1).map((h, i) => (
+                      <React.Fragment key={i}>
+                        <div className="text-center">
+                          <div className="text-sm text-muted-foreground">Status</div>
+                          <div className={`text-xl font-bold ${h.offline ? 'text-red-500' : 'text-green-500'}`}>
+                            {h.offline ? 'Offline' : 'Online'}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-sm text-muted-foreground">Healthy Streams</div>
+                          <div className="text-xl font-bold">{h.available_streams}</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-sm text-muted-foreground">Dead Streams</div>
+                          <div className="text-xl font-bold text-red-500">{h.dead_streams}</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-sm text-muted-foreground">Last Seen</div>
+                          <div className="text-xl font-bold text-xs">{h.timeLabel}</div>
+                        </div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
