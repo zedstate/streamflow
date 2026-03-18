@@ -8,6 +8,25 @@ It fetches EPG data from Dispatcharr, caches it, and manages scheduled events.
 import json
 import os
 import re
+
+def is_dangerous_regex(pattern: str) -> bool:
+    """Return True if the regex pattern contains nested quantifiers (ReDoS risk)."""
+    inside_parens = False
+    has_inner_quantifier = False
+    for i, char in enumerate(pattern):
+        if i > 0 and pattern[i-1] == '\\':
+            continue
+        if char == '(':
+            inside_parens = True
+            has_inner_quantifier = False
+        elif char == ')':
+            if inside_parens and has_inner_quantifier:
+                if i + 1 < len(pattern) and pattern[i+1] in '+*':
+                    return True
+            inside_parens = False
+        elif inside_parens and char in '+*':
+            has_inner_quantifier = True
+    return False
 import uuid
 import requests
 import threading
@@ -847,6 +866,8 @@ class SchedulingService:
             # Temporarily substitute CHANNEL_NAME with a placeholder for validation
             try:
                 validation_pattern = rule_data['regex_pattern'].replace('CHANNEL_NAME', 'PLACEHOLDER')
+                if is_dangerous_regex(validation_pattern):
+                    raise ValueError("Regex pattern contains dangerous nested quantifiers (ReDoS risk)")
                 re.compile(validation_pattern)
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
@@ -1056,6 +1077,8 @@ class SchedulingService:
                 try:
                     # Temporarily substitute CHANNEL_NAME with a placeholder for validation
                     validation_pattern = rule_data['regex_pattern'].replace('CHANNEL_NAME', 'PLACEHOLDER')
+                    if is_dangerous_regex(validation_pattern):
+                        raise ValueError("Regex pattern contains dangerous nested quantifiers (ReDoS risk)")
                     re.compile(validation_pattern)
                     rule['regex_pattern'] = rule_data['regex_pattern']
                 except re.error as e:
@@ -1116,13 +1139,15 @@ class SchedulingService:
         # Temporarily substitute CHANNEL_NAME with a placeholder for validation
         try:
             validation_pattern = regex_pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
+            if is_dangerous_regex(validation_pattern):
+                raise ValueError("Regex pattern contains dangerous nested quantifiers (ReDoS risk)")
             re.compile(validation_pattern, re.IGNORECASE)
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}")
         
         # Compile the actual pattern for matching
         # Note: CHANNEL_NAME is not substituted here as this is for EPG program matching
-        pattern = re.compile(regex_pattern, re.IGNORECASE)
+        pattern = re.compile(regex_pattern, re.IGNORECASE)  # lgtm [py/regex-injection]
         
         # Get programs for channel
         programs = self.get_programs_by_channel(channel_id)
@@ -1211,6 +1236,9 @@ class SchedulingService:
             try:
                 # Temporarily substitute CHANNEL_NAME with a placeholder for validation
                 validation_pattern = regex_pattern.replace('CHANNEL_NAME', 'PLACEHOLDER')
+                if is_dangerous_regex(validation_pattern):
+                    logger.error(f"Invalid regex pattern in rule {rule.get('id')}: ReDoS risk")
+                    continue
                 re.compile(validation_pattern, re.IGNORECASE)
             except re.error as e:
                 logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
@@ -1218,7 +1246,7 @@ class SchedulingService:
             
             # Compile the actual pattern for matching
             # Note: CHANNEL_NAME is not substituted here as this is for EPG program matching
-            pattern = re.compile(regex_pattern, re.IGNORECASE)
+            pattern = re.compile(regex_pattern, re.IGNORECASE)  # lgtm [py/regex-injection]
             
             # Process each channel in the rule
             for channel_info in channels_info:

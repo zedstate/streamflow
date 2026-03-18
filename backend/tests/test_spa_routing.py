@@ -202,6 +202,20 @@ class TestSPARoutingIntegration(unittest.TestCase):
                     self.assertIn('Frontend not found', data['error'])
 
 
+    def test_catch_all_blocks_path_traversal(self):
+        """Test that path traversal attempts are blocked with 400."""
+        # Request with path traversal
+        response = self.client.get('/../../secret.txt')
+        
+        # It should return 400 Bad Request
+        self.assertEqual(response.status_code, 400)
+        
+        import json
+        data = json.loads(response.data)
+        self.assertIn('error', data)
+        self.assertEqual(data['error'], 'Invalid path')
+
+
 if __name__ == '__main__':
     # Run tests with verbose output
     unittest.main(verbosity=2)
