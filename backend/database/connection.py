@@ -35,7 +35,8 @@ def init_db():
         channel_streams, group_accounts,
         MatchProfile, MatchProfileStep,
         AutomationProfile, AutomationPeriod,
-        MonitoringSession, DeadStream
+        MonitoringSession, DeadStream,
+        ChannelRegexConfig, ChannelRegexPattern,
     )
     
     Base.metadata.create_all(engine)

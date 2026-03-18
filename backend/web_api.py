@@ -36,7 +36,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from dataclasses import asdict
 from flask import Flask, request, jsonify, send_from_directory, send_file, make_response, Response
 from flask_cors import CORS
@@ -103,6 +103,40 @@ THREAD_SHUTDOWN_TIMEOUT_SECONDS = 5  # Timeout for graceful thread shutdown
 static_folder = Path(__file__).parent / 'static'
 app = Flask(__name__, static_folder=None)
 CORS(app)  # Enable CORS for React frontend
+
+
+def _parse_pagination_params(
+    page_param: Optional[str],
+    per_page_param: str,
+    default_per_page: int = 50,
+    max_per_page: int = 500,
+) -> Tuple[Optional[int], int, Optional['Response']]:
+    """Parse and validate pagination query parameters.
+
+    Returns a ``(page, per_page, error_response)`` triple.  When the
+    parameters are valid *error_response* is ``None``; when they are invalid
+    a Flask ``Response`` object with status 400 is returned instead and
+    ``page`` / ``per_page`` are undefined.
+    """
+    page: Optional[int] = None
+    if page_param is not None:
+        try:
+            page = max(1, int(page_param))
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                f"Invalid 'page' query parameter {page_param!r}: {exc}"
+            )
+            return None, default_per_page, (
+                jsonify({"error": "Invalid page parameter: must be an integer"}), 400
+            )
+
+    try:
+        per_page = int(per_page_param)
+    except (ValueError, TypeError):
+        per_page = default_per_page
+    per_page = min(max(per_page, 1), max_per_page)
+
+    return page, per_page, None
 
 # Global instances
 automation_manager = None
@@ -576,18 +610,9 @@ def get_channels():
         page_param = request.args.get('page', None)
         per_page_param = request.args.get('per_page', '50')
 
-        page: Optional[int] = None
-        if page_param is not None:
-            try:
-                page = max(1, int(page_param))
-            except (ValueError, TypeError):
-                return jsonify({"error": "Invalid page parameter: must be an integer"}), 400
-
-        try:
-            per_page = int(per_page_param)
-        except (ValueError, TypeError):
-            per_page = 50
-        per_page = min(max(per_page, 1), 500)
+        page, per_page, err = _parse_pagination_params(page_param, per_page_param)
+        if err:
+            return err
 
         if sort_dir not in ('asc', 'desc'):
             sort_dir = 'asc'
@@ -1302,7 +1327,27 @@ def get_effective_profile(channel_id):
 
 @app.route('/api/regex-patterns/import', methods=['POST'])
 def import_regex_patterns():
-    """Import regex patterns from JSON file."""
+    """Import regex patterns from JSON.
+
+    Accepts the canonical export format::
+
+        {
+          "patterns": {
+            "<channel_id>": {
+              "name": "...",
+              "enabled": true,
+              "match_by_tvg_id": false,
+              "regex_patterns": [
+                {"pattern": "...", "m3u_accounts": null}
+              ]
+            }
+          },
+          "global_settings": {"case_sensitive": true, "require_exact_match": false}
+        }
+
+    The old ``"regex"`` key is also accepted for backward compatibility.
+    Existing patterns are fully replaced (non-merge mode).
+    """
     try:
         data = request.get_json()
         if not data:
@@ -1318,24 +1363,19 @@ def import_regex_patterns():
         if not isinstance(data['patterns'], dict):
             return jsonify({"error": "Invalid JSON format: 'patterns' must be an object"}), 400
         
-        # Validate each pattern
+        # Validate each pattern before importing
         matcher = get_regex_matcher()
         for channel_id, pattern_data in data['patterns'].items():
             if not isinstance(pattern_data, dict):
                 return jsonify({"error": f"Invalid pattern format for channel {channel_id}"}), 400
             
             # Support both old format (regex), new format (regex_patterns), and legacy hybrid format
-            # Old format: "regex": ["pattern1", "pattern2"]
-            # New format: "regex_patterns": [{"pattern": "p1", "m3u_accounts": [...], "priority": 0}]
-            # Legacy hybrid: "regex_patterns": ["pattern1", "pattern2"] (strings instead of objects)
             regex_patterns_to_validate = []
             
             if 'regex_patterns' in pattern_data:
-                # New format: regex_patterns is array of objects with pattern, m3u_accounts, priority
                 if not isinstance(pattern_data['regex_patterns'], list):
                     return jsonify({"error": f"'regex_patterns' must be a list for channel {channel_id}"}), 400
                 
-                # Extract pattern strings for validation
                 for pattern_obj in pattern_data['regex_patterns']:
                     if isinstance(pattern_obj, dict):
                         pattern = pattern_obj.get('pattern', '')
@@ -1343,32 +1383,35 @@ def import_regex_patterns():
                             return jsonify({"error": f"Pattern object missing or has empty 'pattern' field for channel {channel_id}"}), 400
                         regex_patterns_to_validate.append(pattern)
                     elif isinstance(pattern_obj, str):
-                        # Legacy format within regex_patterns - plain strings
                         regex_patterns_to_validate.append(pattern_obj)
                     else:
-                        # Invalid type (number, null, etc.)
                         return jsonify({"error": f"Pattern in regex_patterns must be a string or object for channel {channel_id}, got {type(pattern_obj).__name__}"}), 400
             elif 'regex' in pattern_data:
-                # Old format: regex is array of strings
                 if not isinstance(pattern_data['regex'], list):
                     return jsonify({"error": f"'regex' must be a list for channel {channel_id}"}), 400
                 regex_patterns_to_validate = pattern_data['regex']
             else:
                 return jsonify({"error": f"Missing 'regex' or 'regex_patterns' field for channel {channel_id}"}), 400
             
-            # Validate that we have at least one pattern
             if not regex_patterns_to_validate:
                 return jsonify({"error": f"No patterns provided for channel {channel_id}"}), 400
             
-            # Validate regex patterns
             is_valid, error_msg = matcher.validate_regex_patterns(regex_patterns_to_validate)
             if not is_valid:
                 return jsonify({"error": f"Invalid regex pattern components for channel {channel_id}"}), 400
         
-        # If validation passes, save the patterns
-        matcher._save_patterns(data)
-        
-        # Reload patterns to ensure they're in sync
+        # Validation passed – persist via DAL and reload in-memory cache
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        imported, errors = db.import_channel_regex_configs_from_json(data, merge=False)
+        if errors:
+            logger.error(f"Errors during import: {errors}")
+            return jsonify({"error": "Import failed", "details": errors}), 500
+
+        # Persist global_settings if provided
+        if 'global_settings' in data and isinstance(data['global_settings'], dict):
+            db.set_system_setting('channel_regex_global_settings', data['global_settings'])
+
         matcher.reload_patterns()
         
         pattern_count = len(data['patterns'])
@@ -1380,6 +1423,23 @@ def import_regex_patterns():
         })
     except Exception as e:
         logger.error(f"Error importing regex patterns: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/regex-patterns/export', methods=['GET'])
+def export_regex_patterns():
+    """Export all regex patterns as a JSON blob (canonical format).
+
+    The returned JSON is compatible with the ``/api/regex-patterns/import``
+    endpoint, making round-trip backup/restore straightforward.
+    """
+    try:
+        from database.manager import get_db_manager
+        db = get_db_manager()
+        export_data = db.export_channel_regex_configs_as_json()
+        return jsonify(export_data)
+    except Exception as e:
+        logger.error(f"Error exporting regex patterns: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/bulk-delete', methods=['POST'])
@@ -2229,30 +2289,20 @@ def get_changelog():
 def get_dead_streams():
     """Get dead streams statistics and list with SQL-native pagination, sorting, and filtering."""
     try:
-        # Get pagination parameters with better error handling
         page_param = request.args.get('page', '1')
         per_page_param = request.args.get('per_page', str(DEAD_STREAMS_DEFAULT_PER_PAGE))
         sort_by = request.args.get('sort_by', 'marked_dead_at')
         sort_dir = request.args.get('sort_dir', 'desc')
         search = request.args.get('search', '').strip()
 
-        try:
-            page = int(page_param)
-        except (ValueError, TypeError) as e:
-            logger.error(f"Invalid page parameter: {page_param} (type: {type(page_param).__name__}) - {str(e)}")
-            return jsonify({"error": "Invalid page parameter: must be an integer"}), 400
+        page, per_page, err = _parse_pagination_params(
+            page_param, per_page_param,
+            default_per_page=DEAD_STREAMS_DEFAULT_PER_PAGE,
+            max_per_page=DEAD_STREAMS_MAX_PER_PAGE,
+        )
+        if err:
+            return err
 
-        try:
-            per_page = int(per_page_param)
-        except (ValueError, TypeError) as e:
-            logger.error(f"Invalid per_page parameter: {per_page_param} (type: {type(per_page_param).__name__}) - {str(e)}")
-            return jsonify({"error": "Invalid per_page parameter: must be an integer"}), 400
-
-        # Validate pagination parameters
-        if page < 1:
-            page = 1
-        if per_page < 1 or per_page > DEAD_STREAMS_MAX_PER_PAGE:
-            per_page = DEAD_STREAMS_DEFAULT_PER_PAGE
         if sort_dir not in ('asc', 'desc'):
             sort_dir = 'desc'
 

@@ -260,6 +260,7 @@ class DatabaseManager:
             q = q.order_by(desc(col) if sort_dir == 'desc' else asc(col))
             total = q.count()
             offset = (page - 1) * per_page
+            end = offset + per_page
             items = q.offset(offset).limit(per_page).all()
             total_pages = max(1, (total + per_page - 1) // per_page)
             return {
@@ -268,7 +269,7 @@ class DatabaseManager:
                 'page': page,
                 'per_page': per_page,
                 'total_pages': total_pages,
-                'has_next': (offset + per_page) < total,
+                'has_next': end < total,
                 'has_prev': page > 1,
             }
         finally:
@@ -312,6 +313,7 @@ class DatabaseManager:
 
             total = q.count()
             offset = (page - 1) * per_page
+            end = offset + per_page
             channels = q.offset(offset).limit(per_page).all()
             result = []
             for ch in channels:
@@ -325,7 +327,7 @@ class DatabaseManager:
                 'page': page,
                 'per_page': per_page,
                 'total_pages': total_pages,
-                'has_next': (offset + per_page) < total,
+                'has_next': end < total,
                 'has_prev': page > 1,
             }
         finally:
@@ -389,7 +391,320 @@ class DatabaseManager:
         finally:
             session.close()
 
-# Singleton Instance
+    # === Channel Regex Configs ===
+
+    def _regex_config_to_dict(self, cfg) -> Dict[str, Any]:
+        """Convert a ChannelRegexConfig + its ChannelRegexPattern rows to a legacy-compat dict."""
+        return {
+            'name': cfg.name,
+            'enabled': cfg.enabled,
+            'match_by_tvg_id': cfg.match_by_tvg_id,
+            'regex_patterns': [
+                {
+                    'pattern': p.pattern,
+                    'm3u_accounts': p.m3u_accounts,
+                    # step_order doubles as priority for round-trip fidelity
+                    'priority': p.step_order,
+                }
+                for p in cfg.patterns
+            ],
+        }
+
+    def get_channel_regex_config(self, channel_id: int) -> Optional[Dict[str, Any]]:
+        """Return the regex config dict for a single channel, or None."""
+        from database.models import ChannelRegexConfig
+        session = self._get_session()
+        try:
+            cfg = session.query(ChannelRegexConfig).filter(
+                ChannelRegexConfig.channel_id == str(channel_id)
+            ).first()
+            if cfg is None:
+                return None
+            # Eagerly load patterns in same session
+            _ = cfg.patterns  # touch to load
+            return self._regex_config_to_dict(cfg)
+        finally:
+            session.close()
+
+    def get_all_channel_regex_configs(self) -> Dict[str, Dict[str, Any]]:
+        """Return all channel regex configs as a dict keyed by str(channel_id)."""
+        from database.models import ChannelRegexConfig
+        session = self._get_session()
+        try:
+            configs = session.query(ChannelRegexConfig).all()
+            result = {}
+            for cfg in configs:
+                _ = cfg.patterns  # eagerly load
+                result[str(cfg.channel_id)] = self._regex_config_to_dict(cfg)
+            return result
+        finally:
+            session.close()
+
+    def upsert_channel_regex_config(
+        self,
+        channel_id: int,
+        name: str,
+        enabled: bool,
+        match_by_tvg_id: bool,
+        regex_patterns: List[Dict[str, Any]],
+    ) -> bool:
+        """Insert or replace the regex config for a channel (atomic)."""
+        from database.models import ChannelRegexConfig, ChannelRegexPattern
+        session = self._get_session()
+        try:
+            cfg = session.query(ChannelRegexConfig).filter(
+                ChannelRegexConfig.channel_id == str(channel_id)
+            ).first()
+            if cfg is None:
+                cfg = ChannelRegexConfig(
+                    channel_id=str(channel_id),
+                    name=name,
+                    enabled=enabled,
+                    match_by_tvg_id=match_by_tvg_id,
+                )
+                session.add(cfg)
+            else:
+                cfg.name = name
+                cfg.enabled = enabled
+                cfg.match_by_tvg_id = match_by_tvg_id
+                # Remove old patterns – new ones will be added below
+                for p in list(cfg.patterns):
+                    session.delete(p)
+
+            session.flush()  # ensure cfg.channel_id is available
+
+            for idx, pat in enumerate(regex_patterns):
+                # If the caller supplied an explicit 'priority', use it as
+                # step_order for round-trip fidelity (otherwise use idx).
+                order = pat.get('priority', idx) if isinstance(pat, dict) else idx
+                rp = ChannelRegexPattern(
+                    channel_id=str(channel_id),
+                    pattern=pat['pattern'],
+                    m3u_accounts=pat.get('m3u_accounts'),
+                    step_order=order,
+                )
+                session.add(rp)
+
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error upserting regex config for channel {channel_id}: {e}")
+            return False
+        finally:
+            session.close()
+
+    def delete_channel_regex_config(self, channel_id: int) -> bool:
+        """Delete the regex config (and patterns) for a channel."""
+        from database.models import ChannelRegexConfig
+        session = self._get_session()
+        try:
+            cfg = session.query(ChannelRegexConfig).filter(
+                ChannelRegexConfig.channel_id == str(channel_id)
+            ).first()
+            if cfg:
+                session.delete(cfg)
+                session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error deleting regex config for channel {channel_id}: {e}")
+            return False
+        finally:
+            session.close()
+
+    def update_channel_regex_tvg_id(self, channel_id: int, match_by_tvg_id: bool) -> bool:
+        """Toggle the match_by_tvg_id flag without touching patterns."""
+        from database.models import ChannelRegexConfig
+        session = self._get_session()
+        try:
+            cfg = session.query(ChannelRegexConfig).filter(
+                ChannelRegexConfig.channel_id == str(channel_id)
+            ).first()
+            if cfg is None:
+                cfg = ChannelRegexConfig(
+                    channel_id=str(channel_id),
+                    name='',
+                    enabled=True,
+                    match_by_tvg_id=match_by_tvg_id,
+                )
+                session.add(cfg)
+            else:
+                cfg.match_by_tvg_id = match_by_tvg_id
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating tvg_id flag for channel {channel_id}: {e}")
+            return False
+        finally:
+            session.close()
+
+    def import_channel_regex_configs_from_json(
+        self, data: Dict[str, Any], merge: bool = False
+    ) -> Tuple[int, List[str]]:
+        """Import channel regex configs from the canonical JSON export format.
+
+        Args:
+            data: dict with ``patterns`` key (and optional ``global_settings``).
+            merge: If False (default) existing configs are replaced entirely.
+                   If True existing configs are preserved for channels not in *data*.
+
+        Returns:
+            (imported_count, error_list)
+        """
+        from database.models import ChannelRegexConfig, ChannelRegexPattern
+        errors: List[str] = []
+        imported = 0
+
+        patterns_dict = data.get('patterns', {})
+
+        session = self._get_session()
+        try:
+            if not merge:
+                # Wipe all existing configs
+                session.query(ChannelRegexConfig).delete()
+                session.flush()
+
+            for channel_id_str, cfg_data in patterns_dict.items():
+                channel_id = str(channel_id_str).strip()
+                if not channel_id:
+                    errors.append("Empty channel_id – skipped")
+                    continue
+
+                if not isinstance(cfg_data, dict):
+                    errors.append(f"Channel {channel_id_str}: config must be a dict")
+                    continue
+
+                # Normalise patterns from old or new format
+                raw = cfg_data.get('regex_patterns') or [
+                    {'pattern': p, 'm3u_accounts': cfg_data.get('m3u_accounts')}
+                    for p in cfg_data.get('regex', [])
+                ]
+                norm_patterns = []
+                for item in raw:
+                    if isinstance(item, str):
+                        norm_patterns.append({'pattern': item, 'm3u_accounts': None, 'priority': 0})
+                    elif isinstance(item, dict) and item.get('pattern'):
+                        norm_patterns.append({
+                            'pattern': item['pattern'],
+                            'm3u_accounts': item.get('m3u_accounts'),
+                            'priority': item.get('priority', 0),
+                        })
+
+                if merge:
+                    existing = session.query(ChannelRegexConfig).filter(
+                        ChannelRegexConfig.channel_id == channel_id
+                    ).first()
+                    if existing:
+                        existing.name = cfg_data.get('name', existing.name)
+                        existing.enabled = cfg_data.get('enabled', existing.enabled)
+                        existing.match_by_tvg_id = cfg_data.get('match_by_tvg_id', existing.match_by_tvg_id)
+                        for p in list(existing.patterns):
+                            session.delete(p)
+                        session.flush()
+                        cfg = existing
+                    else:
+                        cfg = ChannelRegexConfig(
+                            channel_id=channel_id,
+                            name=cfg_data.get('name', ''),
+                            enabled=cfg_data.get('enabled', True),
+                            match_by_tvg_id=cfg_data.get('match_by_tvg_id', False),
+                        )
+                        session.add(cfg)
+                        session.flush()
+                else:
+                    cfg = ChannelRegexConfig(
+                        channel_id=channel_id,
+                        name=cfg_data.get('name', ''),
+                        enabled=cfg_data.get('enabled', True),
+                        match_by_tvg_id=cfg_data.get('match_by_tvg_id', False),
+                    )
+                    session.add(cfg)
+                    session.flush()
+
+                for idx, pat in enumerate(norm_patterns):
+                    session.add(ChannelRegexPattern(
+                        channel_id=channel_id,
+                        pattern=pat['pattern'],
+                        m3u_accounts=pat.get('m3u_accounts'),
+                        step_order=pat.get('priority', idx),
+                    ))
+
+                imported += 1
+
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error importing regex configs: {e}")
+            errors.append(str(e))
+        finally:
+            session.close()
+
+        return imported, errors
+
+    def export_channel_regex_configs_as_json(self) -> Dict[str, Any]:
+        """Export all channel regex configs in the canonical JSON format."""
+        configs = self.get_all_channel_regex_configs()
+        # Also fetch global settings from SystemSetting if present
+        global_settings = self.get_system_setting('channel_regex_global_settings', {
+            'case_sensitive': True,
+            'require_exact_match': False,
+        })
+        return {
+            'patterns': configs,
+            'global_settings': global_settings,
+        }
+
+    def get_channel_regex_configs_paginated(
+        self,
+        page: Optional[int] = None,
+        per_page: int = 50,
+        search: str = '',
+        sort_by: str = 'channel_id',
+        sort_dir: str = 'asc',
+    ) -> Any:
+        """Return channel regex configs with optional SQL pagination and search."""
+        from database.models import ChannelRegexConfig
+        _VALID_SORT_COLS = {'channel_id', 'name', 'enabled'}
+        if sort_by not in _VALID_SORT_COLS:
+            sort_by = 'channel_id'
+
+        session = self._get_session()
+        try:
+            q = session.query(ChannelRegexConfig)
+            if search:
+                q = q.filter(ChannelRegexConfig.name.ilike(f'%{search}%'))
+            col = getattr(ChannelRegexConfig, sort_by, ChannelRegexConfig.channel_id)
+            q = q.order_by(desc(col) if sort_dir == 'desc' else asc(col))
+
+            if page is None:
+                configs = q.all()
+                result = {}
+                for cfg in configs:
+                    _ = cfg.patterns
+                    result[str(cfg.channel_id)] = self._regex_config_to_dict(cfg)
+                return result
+
+            total = q.count()
+            offset = (page - 1) * per_page
+            configs = q.offset(offset).limit(per_page).all()
+            items = {}
+            for cfg in configs:
+                _ = cfg.patterns
+                items[str(cfg.channel_id)] = self._regex_config_to_dict(cfg)
+            total_pages = max(1, (total + per_page - 1) // per_page)
+            return {
+                'items': items,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': total_pages,
+                'has_next': (offset + per_page) < total,
+                'has_prev': page > 1,
+            }
+        finally:
+            session.close()
 _db_manager = None
 
 def get_db_manager():

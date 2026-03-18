@@ -255,6 +255,55 @@ class SystemSetting(Base):
 
 
 # ==========================================
+# Per-Channel Regex Matching Configuration
+# ==========================================
+
+class ChannelRegexConfig(Base):
+    """Per-channel regex matching configuration.
+
+    Replaces the ``channel_regex_config`` JSON blob previously stored in
+    ``system_settings``.  One row per channel that has patterns configured.
+    """
+    __tablename__ = 'channel_regex_configs'
+
+    # String type to support both integer IDs (from Dispatcharr) and string
+    # identifiers used in tests and future integrations.
+    channel_id = Column(String(50), primary_key=True)
+    name = Column(String(255), nullable=False, default='')
+    enabled = Column(Boolean, default=True, nullable=False)
+    match_by_tvg_id = Column(Boolean, default=False, nullable=False)
+
+    # Ordered list of regex patterns for this channel
+    patterns = relationship(
+        "ChannelRegexPattern",
+        back_populates="config",
+        cascade="all, delete-orphan",
+        order_by="ChannelRegexPattern.step_order",
+    )
+
+
+class ChannelRegexPattern(Base):
+    """A single regex pattern belonging to a :class:`ChannelRegexConfig`."""
+    __tablename__ = 'channel_regex_patterns'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(
+        String(50),
+        ForeignKey('channel_regex_configs.channel_id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    pattern = Column(String(512), nullable=False)
+    # NULL → applies to all M3U accounts; list of ints → account-specific
+    m3u_accounts = Column(JSON, nullable=True)
+    # ``step_order`` stores the physical ordering and doubles as ``priority``
+    # so that round-trip import/export preserves the priority value.
+    step_order = Column(Integer, default=0, nullable=False)
+
+    config = relationship("ChannelRegexConfig", back_populates="patterns")
+
+
+# ==========================================
 # Telemetry historical reporting Models
 # ==========================================
 
