@@ -239,3 +239,4 @@ package-lock.json
 package.json
 dev.sh
 docker-compose.dev.yml
+.agent

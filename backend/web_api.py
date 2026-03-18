@@ -576,7 +576,7 @@ def get_channels():
         return jsonify(channels)
     except Exception as e:
         logger.error(f"Error fetching channels: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channels/<channel_id>/stats', methods=['GET'])
 def get_channel_stats(channel_id):
@@ -663,7 +663,7 @@ def get_channel_stats(channel_id):
         })
     except Exception as e:
         logger.error(f"Error fetching channel stats: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channels/groups', methods=['GET'])
 def get_channel_groups():
@@ -678,7 +678,7 @@ def get_channel_groups():
         return jsonify(groups)
     except Exception as e:
         logger.error(f"Error fetching channel groups: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channels/logos/<logo_id>', methods=['GET'])
 def get_channel_logo(logo_id):
@@ -693,7 +693,7 @@ def get_channel_logo(logo_id):
         return jsonify(logo)
     except Exception as e:
         logger.error(f"Error fetching logo: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channels/logos/<logo_id>/cache', methods=['GET'])
 def get_channel_logo_cached(logo_id):
@@ -809,7 +809,7 @@ def get_channel_logo_cached(logo_id):
         return jsonify({"error": f"Failed to download logo: {str(e)}"}), 500
     except Exception as e:
         logger.error(f"Error caching logo {logo_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns', methods=['GET'])
 def get_regex_patterns():
@@ -823,7 +823,7 @@ def get_regex_patterns():
         return jsonify(patterns)
     except Exception as e:
         logger.error(f"Error getting regex patterns: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns', methods=['POST'])
 def add_regex_pattern():
@@ -854,7 +854,7 @@ def add_regex_pattern():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error adding regex pattern: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/<channel_id>', methods=['DELETE'])
 def delete_regex_pattern(channel_id):
@@ -873,7 +873,7 @@ def delete_regex_pattern(channel_id):
             return jsonify({"error": "Pattern not found"}), 404
     except Exception as e:
         logger.error(f"Error deleting regex pattern: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channels/<channel_id>/match-settings', methods=['POST'])
 def update_channel_match_settings(channel_id):
@@ -892,7 +892,7 @@ def update_channel_match_settings(channel_id):
         return jsonify({"message": "Match settings updated successfully"})
     except Exception as e:
         logger.error(f"Error updating match settings for channel {channel_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/bulk', methods=['POST'])
 def add_bulk_regex_patterns():
@@ -1030,7 +1030,7 @@ def add_bulk_regex_patterns():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error adding bulk regex patterns: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 # ==========================================
 # Automation Profiles & Settings Endpoints
@@ -1044,7 +1044,7 @@ def get_global_automation_settings():
         return jsonify(manager.get_global_settings())
     except Exception as e:
         logger.error(f"Error getting global automation settings: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation', methods=['POST'])
 def update_global_automation_settings():
@@ -1065,7 +1065,7 @@ def update_global_automation_settings():
             return jsonify({"error": "Failed to update settings"}), 500
     except Exception as e:
         logger.error(f"Error updating global automation settings: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/profiles', methods=['GET'])
 def get_automation_profiles():
@@ -1075,7 +1075,7 @@ def get_automation_profiles():
         return jsonify(manager.get_all_profiles())
     except Exception as e:
         logger.error(f"Error getting automation profiles: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/profiles', methods=['POST'])
 def create_automation_profile():
@@ -1094,7 +1094,7 @@ def create_automation_profile():
             return jsonify({"error": "Failed to create profile"}), 500
     except Exception as e:
         logger.error(f"Error creating automation profile: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/profiles/<profile_id>', methods=['GET'])
 def get_automation_profile(profile_id):
@@ -1108,7 +1108,7 @@ def get_automation_profile(profile_id):
             return jsonify({"error": "Profile not found"}), 404
     except Exception as e:
         logger.error(f"Error getting automation profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/profiles/<profile_id>', methods=['PUT'])
 def update_automation_profile(profile_id):
@@ -1127,7 +1127,7 @@ def update_automation_profile(profile_id):
             return jsonify({"error": "Failed to update profile (not found or save error)"}), 404
     except Exception as e:
         logger.error(f"Error updating automation profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/profiles/<profile_id>', methods=['DELETE'])
 def delete_automation_profile(profile_id):
@@ -1142,7 +1142,7 @@ def delete_automation_profile(profile_id):
             return jsonify({"error": "Failed to delete profile (not found or save error)"}), 404
     except Exception as e:
         logger.error(f"Error deleting automation profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/assign/channel', methods=['POST'])
 def assign_profile_to_channel():
@@ -1164,7 +1164,7 @@ def assign_profile_to_channel():
             return jsonify({"error": "Failed to update assignment"}), 500
     except Exception as e:
         logger.error(f"Error assigning profile to channel: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/assign/group', methods=['POST'])
 def assign_profile_to_group():
@@ -1186,7 +1186,7 @@ def assign_profile_to_group():
             return jsonify({"error": "Failed to update assignment"}), 500
     except Exception as e:
         logger.error(f"Error assigning profile to group: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/effective/<int:channel_id>', methods=['GET'])
 def get_effective_profile(channel_id):
@@ -1217,7 +1217,7 @@ def get_effective_profile(channel_id):
         })
     except Exception as e:
         logger.error(f"Error getting effective profile for channel {channel_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/import', methods=['POST'])
 def import_regex_patterns():
@@ -1299,7 +1299,7 @@ def import_regex_patterns():
         })
     except Exception as e:
         logger.error(f"Error importing regex patterns: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/bulk-delete', methods=['POST'])
 def bulk_delete_regex_patterns():
@@ -1344,7 +1344,7 @@ def bulk_delete_regex_patterns():
         return jsonify(response_data)
     except Exception as e:
         logger.error(f"Error bulk deleting regex patterns: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/common', methods=['POST'])
 def get_common_regex_patterns():
@@ -1410,7 +1410,7 @@ def get_common_regex_patterns():
         })
     except Exception as e:
         logger.error(f"Error getting common regex patterns: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/bulk-edit', methods=['POST'])
 def bulk_edit_regex_pattern():
@@ -1547,7 +1547,7 @@ def bulk_edit_regex_pattern():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error bulk editing regex pattern: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/bulk-settings', methods=['POST'])
 def bulk_update_match_settings():
@@ -1591,7 +1591,7 @@ def bulk_update_match_settings():
         })
     except Exception as e:
         logger.error(f"Error bulk updating match settings: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/settings/automation/global', methods=['GET', 'PUT'])
 def handle_global_automation_settings():
@@ -1604,7 +1604,7 @@ def handle_global_automation_settings():
             return jsonify(settings)
         except Exception as e:
             logger.error(f"Error getting global automation settings: {e}")
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal Server Error"}), 500
             
     elif request.method == 'PUT':
         try:
@@ -1641,7 +1641,7 @@ def handle_global_automation_settings():
                 return jsonify({"error": "Failed to update global settings"}), 500
         except Exception as e:
             logger.error(f"Error updating global automation settings: {e}")
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/mass-edit-preview', methods=['POST'])
 def mass_edit_preview():
@@ -1754,7 +1754,7 @@ def mass_edit_preview():
     
     except Exception as e:
         logger.error(f"Error previewing mass edit: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/mass-edit', methods=['POST'])
 def mass_edit_regex_patterns():
@@ -1908,7 +1908,7 @@ def mass_edit_regex_patterns():
     
     except Exception as e:
         logger.error(f"Error in mass edit: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/test-regex', methods=['POST'])
 def test_regex_pattern():
@@ -1950,7 +1950,7 @@ def test_regex_pattern():
             return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
     except Exception as e:
         logger.error(f"Error testing regex pattern: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/test-regex-live', methods=['POST'])
 def test_regex_pattern_live():
@@ -2075,7 +2075,7 @@ def test_regex_pattern_live():
         
     except Exception as e:
         logger.error(f"Error testing regex patterns live: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 
@@ -2121,7 +2121,7 @@ def get_changelog():
         })
     except Exception as e:
         logger.error(f"Error getting changelog: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dead-streams', methods=['GET'])
 def get_dead_streams():
@@ -2188,7 +2188,7 @@ def get_dead_streams():
         })
     except Exception as e:
         logger.error(f"Error getting dead streams: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dead-streams/revive', methods=['POST'])
 def revive_dead_stream():
@@ -2212,7 +2212,7 @@ def revive_dead_stream():
             return jsonify({"error": "Failed to mark stream as alive"}), 500
     except Exception as e:
         logger.error(f"Error reviving dead stream: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dead-streams/clear', methods=['POST'])
 def clear_all_dead_streams():
@@ -2232,7 +2232,7 @@ def clear_all_dead_streams():
         })
     except Exception as e:
         logger.error(f"Error clearing dead streams: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 
@@ -2247,7 +2247,7 @@ def get_channel_order():
         return jsonify({"order": order})
     except Exception as e:
         logger.error(f"Error getting channel order: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channel-order', methods=['PUT'])
 def set_channel_order():
@@ -2277,7 +2277,7 @@ def set_channel_order():
             return jsonify({"error": "Failed to update channel order"}), 500
     except Exception as e:
         logger.error(f"Error updating channel order: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channel-order', methods=['DELETE'])
 def clear_channel_order():
@@ -2292,7 +2292,7 @@ def clear_channel_order():
             return jsonify({"error": "Failed to clear channel order"}), 500
     except Exception as e:
         logger.error(f"Error clearing channel order: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/discover-streams', methods=['POST'])
 def discover_streams():
@@ -2308,7 +2308,7 @@ def discover_streams():
         })
     except Exception as e:
         logger.error(f"Error discovering streams: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/refresh-playlist', methods=['POST'])
 def refresh_playlist():
@@ -2327,7 +2327,7 @@ def refresh_playlist():
             return jsonify({"error": "Playlist refresh failed"}), 500
     except Exception as e:
         logger.error(f"Error refreshing playlist: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/m3u-accounts', methods=['GET'])
 def get_m3u_accounts_endpoint():
@@ -2367,7 +2367,7 @@ def get_m3u_accounts_endpoint():
         })
     except Exception as e:
         logger.error(f"Error fetching M3U accounts: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 
@@ -2428,7 +2428,7 @@ def get_setup_wizard_status():
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting setup wizard status: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/test-match-live', methods=['POST'])
 def test_match_live():
@@ -2582,7 +2582,7 @@ def test_match_live():
         
     except Exception as e:
         logger.error(f"Error testing match live: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/setup-wizard/ensure-config', methods=['POST'])
 def ensure_wizard_config():
@@ -2627,7 +2627,7 @@ def ensure_wizard_config():
         return jsonify({"message": "Configuration files ensured"})
     except Exception as e:
         logger.error(f"Error ensuring wizard config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/setup-wizard/create-sample-patterns', methods=['POST'])
 def create_sample_patterns():
@@ -2662,7 +2662,7 @@ def create_sample_patterns():
         return jsonify({"message": "Sample patterns created successfully"})
     except Exception as e:
         logger.error(f"Error creating sample patterns: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dispatcharr/config', methods=['GET'])
 def get_dispatcharr_config_endpoint():
@@ -2673,7 +2673,7 @@ def get_dispatcharr_config_endpoint():
         return jsonify(config)
     except Exception as e:
         logger.error(f"Error getting Dispatcharr config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dispatcharr/config', methods=['PUT'])
 def update_dispatcharr_config_endpoint():
@@ -2730,7 +2730,7 @@ def update_dispatcharr_config_endpoint():
         return jsonify({"message": "Dispatcharr configuration updated successfully"})
     except Exception as e:
         logger.error(f"Error updating Dispatcharr config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dispatcharr/test-connection', methods=['POST'])
 def test_dispatcharr_connection():
@@ -2821,7 +2821,7 @@ def test_dispatcharr_connection():
             
     except Exception as e:
         logger.error(f"Error testing Dispatcharr connection: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dispatcharr/initialization-status', methods=['GET'])
 def get_udi_initialization_status():
@@ -2832,7 +2832,7 @@ def get_udi_initialization_status():
         return jsonify(progress)
     except Exception as e:
         logger.error(f"Error getting UDI initialization status: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/dispatcharr/initialize-udi', methods=['POST'])
 def initialize_udi():
@@ -2912,7 +2912,7 @@ def get_stream_checker_status():
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting stream checker status: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/start', methods=['POST'])
 def start_stream_checker():
@@ -2923,7 +2923,7 @@ def start_stream_checker():
         return jsonify({"message": "Stream checker started successfully", "status": "running"})
     except Exception as e:
         logger.error(f"Error starting stream checker: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/stop', methods=['POST'])
 def stop_stream_checker():
@@ -2934,7 +2934,7 @@ def stop_stream_checker():
         return jsonify({"message": "Stream checker stopped successfully", "status": "stopped"})
     except Exception as e:
         logger.error(f"Error stopping stream checker: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/queue', methods=['GET'])
 def get_stream_checker_queue():
@@ -2945,7 +2945,7 @@ def get_stream_checker_queue():
         return jsonify(status.get('queue', {}))
     except Exception as e:
         logger.error(f"Error getting stream checker queue: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/queue/add', methods=['POST'])
 def add_to_stream_checker_queue():
@@ -2979,7 +2979,7 @@ def add_to_stream_checker_queue():
     
     except Exception as e:
         logger.error(f"Error adding to stream checker queue: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/queue/clear', methods=['POST'])
 def clear_stream_checker_queue():
@@ -2990,7 +2990,7 @@ def clear_stream_checker_queue():
         return jsonify({"message": "Queue cleared successfully"})
     except Exception as e:
         logger.error(f"Error clearing stream checker queue: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/config', methods=['GET'])
 def get_stream_checker_config():
@@ -3000,7 +3000,7 @@ def get_stream_checker_config():
         return jsonify(service.config.config)
     except Exception as e:
         logger.error(f"Error getting stream checker config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/config', methods=['PUT'])
 def update_stream_checker_config():
@@ -3084,7 +3084,7 @@ def update_stream_checker_config():
         return jsonify({"message": "Configuration updated successfully", "config": service.config.config})
     except Exception as e:
         logger.error(f"Error updating stream checker config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/progress', methods=['GET'])
 def get_stream_checker_progress():
@@ -3095,7 +3095,7 @@ def get_stream_checker_progress():
         return jsonify(status.get('progress', {}))
     except Exception as e:
         logger.error(f"Error getting stream checker progress: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/check-channel', methods=['POST'])
 def check_specific_channel():
@@ -3117,7 +3117,7 @@ def check_specific_channel():
     
     except Exception as e:
         logger.error(f"Error checking specific channel: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/check-single-channel', methods=['POST'])
 def check_single_channel_now():
@@ -3140,7 +3140,7 @@ def check_single_channel_now():
     
     except Exception as e:
         logger.error(f"Error checking single channel: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/mark-updated', methods=['POST'])
 def mark_channels_updated():
@@ -3167,7 +3167,7 @@ def mark_channels_updated():
     
     except Exception as e:
         logger.error(f"Error marking channels updated: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/stream-checker/queue-all', methods=['POST'])
 def queue_all_channels():
@@ -3199,7 +3199,7 @@ def queue_all_channels():
     
     except Exception as e:
         logger.error(f"Error queueing all channels: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 # ============================================================================
@@ -3217,7 +3217,7 @@ def get_scheduling_config():
         return jsonify(config)
     except Exception as e:
         logger.error(f"Error getting scheduling config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/scheduling/config', methods=['PUT'])
 @log_function_call
@@ -3247,7 +3247,7 @@ def update_scheduling_config():
     
     except Exception as e:
         logger.error(f"Error updating scheduling config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/scheduling/epg/grid', methods=['GET'])
 @log_function_call
@@ -3267,7 +3267,7 @@ def get_epg_grid():
     
     except Exception as e:
         logger.error(f"Error fetching EPG grid: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/scheduling/epg/channel/<int:channel_id>', methods=['GET'])
 @log_function_call
@@ -3289,7 +3289,7 @@ def get_channel_programs(channel_id):
     
     except Exception as e:
         logger.error(f"Error fetching programs for channel {channel_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/scheduling/events', methods=['GET'])
 @log_function_call
@@ -3302,7 +3302,7 @@ def get_scheduled_events():
         return jsonify(events)
     except Exception as e:
         logger.error(f"Error getting scheduled events: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/scheduling/events', methods=['POST'])
 @log_function_call
@@ -3344,7 +3344,7 @@ def create_scheduled_event():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error creating scheduled event: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/scheduling/events/<event_id>', methods=['DELETE'])
 @log_function_call
@@ -3367,7 +3367,7 @@ def delete_scheduled_event(event_id):
     
     except Exception as e:
         logger.error(f"Error deleting scheduled event: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/auto-create-rules', methods=['GET'])
@@ -3381,7 +3381,7 @@ def get_auto_create_rules():
         return jsonify(rules)
     except Exception as e:
         logger.error(f"Error getting auto-create rules: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/auto-create-rules', methods=['POST'])
@@ -3436,7 +3436,7 @@ def create_auto_create_rule():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error creating auto-create rule: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/auto-create-rules/<rule_id>', methods=['DELETE'])
@@ -3460,7 +3460,7 @@ def delete_auto_create_rule(rule_id):
     
     except Exception as e:
         logger.error(f"Error deleting auto-create rule: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/auto-create-rules/<rule_id>', methods=['PUT', 'PATCH'])
@@ -3511,7 +3511,7 @@ def update_auto_create_rule(rule_id):
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error updating auto-create rule: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/auto-create-rules/test', methods=['POST'])
@@ -3553,7 +3553,7 @@ def test_auto_create_rule():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error testing auto-create rule: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/auto-create-rules/export', methods=['GET'])
@@ -3571,7 +3571,7 @@ def export_auto_create_rules():
         return jsonify(rules), 200
     except Exception as e:
         logger.error(f"Error exporting auto-create rules: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/auto-create-rules/import', methods=['POST'])
@@ -3617,7 +3617,7 @@ def import_auto_create_rules():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error importing auto-create rules: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/process-due-events', methods=['POST'])
@@ -3672,7 +3672,7 @@ def process_due_scheduled_events():
     
     except Exception as e:
         logger.error(f"Error processing due scheduled events: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/processor/status', methods=['GET'])
@@ -3696,7 +3696,7 @@ def get_scheduled_event_processor_status():
     
     except Exception as e:
         logger.error(f"Error getting scheduled event processor status: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/processor/start', methods=['POST'])
@@ -3717,7 +3717,7 @@ def start_scheduled_event_processor_api():
     
     except Exception as e:
         logger.error(f"Error starting scheduled event processor: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/processor/stop', methods=['POST'])
@@ -3738,7 +3738,7 @@ def stop_scheduled_event_processor_api():
     
     except Exception as e:
         logger.error(f"Error stopping scheduled event processor: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/epg-refresh/status', methods=['GET'])
@@ -3762,7 +3762,7 @@ def get_epg_refresh_processor_status():
     
     except Exception as e:
         logger.error(f"Error getting EPG refresh processor status: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/epg-refresh/start', methods=['POST'])
@@ -3783,7 +3783,7 @@ def start_epg_refresh_processor_api():
     
     except Exception as e:
         logger.error(f"Error starting EPG refresh processor: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/epg-refresh/stop', methods=['POST'])
@@ -3804,7 +3804,7 @@ def stop_epg_refresh_processor_api():
     
     except Exception as e:
         logger.error(f"Error stopping EPG refresh processor: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/scheduling/epg-refresh/trigger', methods=['POST'])
@@ -3827,7 +3827,7 @@ def trigger_epg_refresh():
     
     except Exception as e:
         logger.error(f"Error triggering EPG refresh: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 # ==================== Automation Service API ====================
 
@@ -3865,7 +3865,7 @@ def get_automation_status():
     
     except Exception as e:
         logger.error(f"Error getting automation status: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/start', methods=['POST'])
@@ -3887,7 +3887,7 @@ def start_automation_service_api():
     
     except Exception as e:
         logger.error(f"Error starting automation service: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/stop', methods=['POST'])
@@ -3905,7 +3905,7 @@ def stop_automation_service_api():
     
     except Exception as e:
         logger.error(f"Error stopping automation service: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/trigger', methods=['POST'])
@@ -3941,7 +3941,7 @@ def trigger_automation_cycle():
     
     except Exception as e:
         logger.error(f"Error triggering automation cycle: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/config', methods=['GET', 'PUT'])
@@ -3989,7 +3989,7 @@ def handle_automation_global_config():
                 
     except Exception as e:
         logger.error(f"Error handling automation global config: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/profiles', methods=['GET', 'POST'])
@@ -4020,7 +4020,7 @@ def handle_automation_profiles():
                 
     except Exception as e:
         logger.error(f"Error handling automation profiles: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/profiles/bulk-delete', methods=['POST'])
@@ -4057,7 +4057,7 @@ def bulk_delete_automation_profiles():
         
     except Exception as e:
         logger.error(f"Error bulk deleting automation profiles: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/profiles/<profile_id>', methods=['GET', 'PUT', 'DELETE'])
@@ -4093,7 +4093,7 @@ def handle_automation_profile(profile_id):
                 
     except Exception as e:
         logger.error(f"Error handling automation profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/assign/channel', methods=['POST'])
@@ -4117,7 +4117,7 @@ def assign_automation_profile_channel():
             
     except Exception as e:
         logger.error(f"Error assigning profile to channel: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/assign/channels', methods=['POST'])
@@ -4141,7 +4141,7 @@ def assign_automation_profile_channels():
             
     except Exception as e:
         logger.error(f"Error assigning profile to channels: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/assign/group', methods=['POST'])
@@ -4165,7 +4165,7 @@ def assign_automation_profile_group():
             
     except Exception as e:
         logger.error(f"Error assigning profile to group: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 # ==================== Automation Periods API ====================
@@ -4213,7 +4213,7 @@ def handle_automation_periods():
                 
     except Exception as e:
         logger.error(f"Error handling automation periods: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/periods/<period_id>', methods=['GET', 'PUT', 'DELETE'])
@@ -4260,7 +4260,7 @@ def handle_automation_period(period_id):
                 
     except Exception as e:
         logger.error(f"Error handling automation period {period_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/periods/<period_id>/assign-channels', methods=['POST'])
@@ -4290,7 +4290,7 @@ def assign_period_to_channels(period_id):
             
     except Exception as e:
         logger.error(f"Error assigning period to channels: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/periods/<period_id>/remove-channels', methods=['POST'])
@@ -4315,7 +4315,7 @@ def remove_period_from_channels(period_id):
             
     except Exception as e:
         logger.error(f"Error removing period from channels: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/periods/<period_id>/channels', methods=['GET'])
@@ -4352,7 +4352,7 @@ def get_period_channels(period_id):
             
     except Exception as e:
         logger.error(f"Error getting channels for period {period_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/channels/batch/period-usage', methods=['POST'])
@@ -4421,7 +4421,7 @@ def get_batch_period_usage():
         }), 200
     except Exception as e:
         logger.error(f"Error getting batch period usage: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/channels/<int:channel_id>/automation-periods', methods=['GET'])
 @log_function_call
@@ -4448,7 +4448,7 @@ def get_channel_automation_periods(channel_id):
         
     except Exception as e:
         logger.error(f"Error getting automation periods for channel {channel_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/channels/batch/assign-periods', methods=['POST'])
@@ -4499,7 +4499,7 @@ def batch_assign_periods_to_channels():
         
     except Exception as e:
         logger.error(f"Error batch assigning periods: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 # ==================== Automation Events API ====================
@@ -4553,7 +4553,7 @@ def get_upcoming_automation_events():
         
     except Exception as e:
         logger.error(f"Error getting upcoming automation events: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/automation/events/invalidate-cache', methods=['POST'])
@@ -4571,7 +4571,7 @@ def invalidate_automation_events_cache():
         
     except Exception as e:
         logger.error(f"Error invalidating cache: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 # ==================== Stream Monitoring Session API ====================
@@ -4636,7 +4636,7 @@ def get_stream_sessions():
         
     except Exception as e:
         logger.error(f"Error getting stream sessions: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions', methods=['POST'])
@@ -4706,7 +4706,7 @@ def create_stream_session():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error creating stream session: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/group/start', methods=['POST'])
@@ -4805,7 +4805,7 @@ def create_group_stream_sessions():
         
     except Exception as e:
         logger.error(f"Error creating group stream sessions: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/<session_id>', methods=['GET'])
@@ -4932,7 +4932,7 @@ def get_stream_session(session_id):
         
     except Exception as e:
         logger.error(f"Error getting stream session {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/quarantine', methods=['POST'])
@@ -4948,7 +4948,7 @@ def quarantine_stream(session_id, stream_id):
         
     except Exception as e:
         logger.error(f"Error quarantining stream {stream_id} in {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/revive', methods=['POST'])
@@ -4964,7 +4964,7 @@ def revive_stream(session_id, stream_id):
         
     except Exception as e:
         logger.error(f"Error reviving stream {stream_id} in {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/<session_id>/start', methods=['POST'])
@@ -4985,7 +4985,7 @@ def start_stream_session(session_id):
         
     except Exception as e:
         logger.error(f"Error starting stream session {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/<session_id>/stop', methods=['POST'])
@@ -5001,7 +5001,7 @@ def stop_stream_session(session_id):
         
     except Exception as e:
         logger.error(f"Error stopping stream session {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/<session_id>', methods=['DELETE'])
@@ -5017,7 +5017,7 @@ def delete_stream_session(session_id):
         
     except Exception as e:
         logger.error(f"Error deleting stream session {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/batch/stop', methods=['POST'])
@@ -5051,7 +5051,7 @@ def batch_stop_sessions():
         
     except Exception as e:
         logger.error(f"Error in batch stop sessions: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/batch/delete', methods=['POST'])
@@ -5085,7 +5085,7 @@ def batch_delete_sessions():
         
     except Exception as e:
         logger.error(f"Error in batch delete sessions: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-sessions/<session_id>/streams/<int:stream_id>/metrics', methods=['GET'])
@@ -5125,7 +5125,7 @@ def get_stream_metrics(session_id, stream_id):
         
     except Exception as e:
         logger.error(f"Error getting stream metrics: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 # Serve screenshots
@@ -5183,7 +5183,7 @@ def get_alive_screenshots(session_id):
         
     except Exception as e:
         logger.error(f"Error getting alive screenshots for session {session_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 
@@ -5200,7 +5200,7 @@ def get_proxy_status():
         
     except Exception as e:
         logger.error(f"Error getting proxy status: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/proxy/playing-streams', methods=['GET'])
@@ -5217,7 +5217,7 @@ def get_playing_streams():
         
     except Exception as e:
         logger.error(f"Error getting playing streams: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 @app.route('/api/stream-viewer/<int:stream_id>', methods=['GET'])
@@ -5245,7 +5245,7 @@ def get_stream_viewer_url(stream_id):
         })
     except Exception as e:
         logger.error(f"Error getting stream viewer URL: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 
@@ -5296,23 +5296,12 @@ def create_session_from_event(event_id):
         
     except Exception as e:
         logger.error(f"Error creating session from event {event_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
 
 
 
 # Serve React app for all frontend routes (catch-all - must be last!)
-@app.route('/<path:path>')
-def serve_frontend(path):
-    """Serve React frontend files or return index.html for client-side routing."""
-    file_path = static_folder / path
-    if file_path.exists() and file_path.is_file():
-        return send_from_directory(static_folder, path)
-    else:
-        # Return index.html for client-side routing (React Router)
-        try:
-            return send_file(static_folder / 'index.html')
-        except FileNotFoundError:
-            return jsonify({"error": "Frontend not found"}), 404
+
 
 # ==================== Settings API ====================
 
@@ -5357,7 +5346,30 @@ def handle_session_settings():
             
     except Exception as e:
         logger.error(f"Error handling session settings: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+# Serve React app for all frontend routes (catch-all - must be last!)
+@app.route('/<path:path>')
+def serve_frontend(path):
+    """Serve React frontend files or return index.html for client-side routing."""
+    try:
+        # Resolve to absolute path to handle '..'
+        resolved_path = (static_folder / path).resolve()
+        # Verify it is inside the static_folder
+        if not str(resolved_path).startswith(str(static_folder.resolve())):
+            return jsonify({"error": "Invalid path"}), 400
+    except (ValueError, OSError):
+        return jsonify({"error": "Invalid path"}), 400
+
+    if resolved_path.exists() and resolved_path.is_file():
+        return send_from_directory(static_folder, path)
+    else:
+        # Return index.html for client-side routing (React Router)
+        try:
+            return send_file(static_folder / 'index.html')
+        except FileNotFoundError:
+            return jsonify({"error": "Frontend not found"}), 404
 
 
 if __name__ == '__main__':
@@ -5461,7 +5473,7 @@ if __name__ == '__main__':
     
     if args.debug:
         logger.info(f"Starting development server on {args.host}:{args.port}")
-        app.run(host=args.host, port=args.port, debug=True)
+        app.run(host=args.host, port=args.port, debug=args.debug)
     else:
         logger.info(f"Starting production WSGI server on {args.host}:{args.port}")
         try:
