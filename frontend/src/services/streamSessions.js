@@ -19,8 +19,9 @@ export const streamSessionsAPI = {
    * @param {string} sessionId - Session ID
    * @returns {Promise} Session details including streams
    */
-  getSession: (sessionId) => {
-    return api.get(`/stream-sessions/${sessionId}`);
+  getSession: (sessionId, sinceTimestamp = null) => {
+    const params = sinceTimestamp ? { since_timestamp: sinceTimestamp } : {};
+    return api.get(`/stream-sessions/${sessionId}`, { params });
   },
 
   /**

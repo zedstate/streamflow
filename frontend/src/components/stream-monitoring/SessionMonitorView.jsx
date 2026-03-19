@@ -31,6 +31,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [showTimeline, setShowTimeline] = useState(true);
   const [expandedStreamId, setExpandedStreamId] = useState(null);
   const { toast } = useToast();
+  const latestTimestampRef = useRef(null);
 
   // Helper to find the metric closest to the cursor time
   const getSnapshotAtTime = (stream, time) => {
@@ -143,24 +144,46 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
   const loadSession = async () => {
     try {
-      const response = await streamSessionsAPI.getSession(sessionId);
-      // Always update to ensure stream stats are refreshed
-      // The component uses React.memo and other optimizations to prevent unnecessary re-renders
-      setSession(response.data);
+      const response = await streamSessionsAPI.getSession(sessionId, latestTimestampRef.current);
+      
+      // Update ref with latest timestamp from response
+      let maxTime = latestTimestampRef.current || response.data.created_at || 0;
+      if (response.data.streams) {
+        response.data.streams.forEach(s => {
+          if (s.metrics_history && s.metrics_history.length > 0) {
+            const last = s.metrics_history[s.metrics_history.length - 1];
+            if (last.timestamp > maxTime) maxTime = last.timestamp;
+          }
+        });
+      }
+      latestTimestampRef.current = maxTime;
+
+      setSession(currentSession => {
+        if (!currentSession) return response.data;
+
+        // Merge streams and their metrics
+        const mergedStreams = response.data.streams.map(newStream => {
+          const prevStream = currentSession.streams.find(s => s.stream_id === newStream.stream_id);
+          if (prevStream) {
+            const existingTimestamps = new Set(prevStream.metrics_history?.map(m => m.timestamp) || []);
+            const newMetrics = (newStream.metrics_history || []).filter(m => !existingTimestamps.has(m.timestamp));
+            return {
+              ...newStream,
+              metrics_history: [...(prevStream.metrics_history || []), ...newMetrics].slice(-3600)
+            };
+          }
+          return newStream;
+        });
+
+        return {
+          ...response.data,
+          streams: mergedStreams
+        };
+      });
 
       // Handle inactive sessions
       if (!response.data.is_active) {
         setIsLive(false);
-        // Find latest timestamp to set as cursor
-        let maxTime = response.data.created_at || 0;
-        if (response.data.streams) {
-          response.data.streams.forEach(s => {
-            if (s.metrics_history && s.metrics_history.length > 0) {
-              const last = s.metrics_history[s.metrics_history.length - 1];
-              if (last.timestamp > maxTime) maxTime = last.timestamp;
-            }
-          });
-        }
         // Only update cursor if we haven't set it yet or if we were live
         if (isLiveRef.current || cursorTime === null) {
           setCursorTime(maxTime);

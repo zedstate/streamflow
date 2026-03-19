@@ -5031,6 +5031,8 @@ def get_stream_session(session_id):
         session_manager = get_session_manager()
         session = session_manager.get_session(session_id)
         
+        since_timestamp = request.args.get('since_timestamp', type=float)
+        
         if not session:
             return jsonify({"error": "Session not found"}), 404
         
@@ -5067,7 +5069,7 @@ def get_stream_session(session_id):
                     'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}" if stream_info.screenshot_path else None,
                     'last_screenshot_time': stream_info.last_screenshot_time,
                     'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0,
-                    'metrics_history': [asdict(m) for m in stream_info.metrics_history] if stream_info.metrics_history else []
+                    'metrics_history': [asdict(m) for m in stream_info.metrics_history if since_timestamp is None or m.timestamp > since_timestamp] if stream_info.metrics_history else []
                 }
                 
                 # Calculate review time remaining
