@@ -760,27 +760,14 @@ class StreamCheckQueue:
 class StreamCheckerProgress:
     """Manages progress tracking for stream checker operations."""
     
-    def __init__(self, progress_file=None):
-        if progress_file is None:
-            progress_file = CONFIG_DIR / 'stream_checker_progress.json'
-        self.progress_file = Path(progress_file)
+    def __init__(self):
         self.lock = threading.Lock()
     
     def update(self, channel_id: int, channel_name: str, current: int, total: int,
                current_stream: str = '', status: str = 'checking', step: str = '', step_detail: str = '',
                streams_detail: Optional[Dict] = None):
-        """Update progress information.
-        
-        Args:
-            channel_id: The ID of the channel being checked
-            channel_name: The name of the channel
-            current: Current stream number being processed
-            total: Total number of streams
-            current_stream: Name of the current stream
-            status: Overall status (checking, analyzing, updating, etc.)
-            step: Current step in the process (e.g., "Fetching streams", "Analyzing", "Scoring", "Reordering")
-            step_detail: Additional detail about the current step
-        """
+        """Update progress information."""
+        from apps.database.manager import get_db_manager
         with self.lock:
             progress_data = {
                 'channel_id': channel_id,
@@ -796,34 +783,32 @@ class StreamCheckerProgress:
             if streams_detail is not None:
                 progress_data['streams_detail'] = streams_detail
             
-            self.progress_file.parent.mkdir(parents=True, exist_ok=True)
             try:
-                with open(self.progress_file, 'w') as f:
-                    json.dump(progress_data, f)
-                    f.flush()
-                    os.fsync(f.fileno())
+                db = get_db_manager()
+                db.set_system_setting('stream_checker_progress', progress_data)
             except Exception as e:
-                logger.warning(f"Failed to write progress file: {e}")
+                logger.warning(f"Failed to write progress to database: {e}")
     
     def clear(self):
         """Clear progress tracking."""
+        from apps.database.manager import get_db_manager
         with self.lock:
-            if self.progress_file.exists():
-                try:
-                    self.progress_file.unlink()
-                except Exception as e:
-                    logger.warning(f"Failed to delete progress file: {e}")
+            try:
+                db = get_db_manager()
+                db.set_system_setting('stream_checker_progress', {})
+            except Exception as e:
+                logger.warning(f"Failed to clear progress in database: {e}")
     
     def get(self) -> Optional[Dict]:
         """Get current progress."""
+        from apps.database.manager import get_db_manager
         with self.lock:
-            if self.progress_file.exists():
-                try:
-                    with open(self.progress_file, 'r') as f:
-                        return json.load(f)
-                except (json.JSONDecodeError, FileNotFoundError):
-                    pass
-        return None
+            try:
+                db = get_db_manager()
+                data = db.get_system_setting('stream_checker_progress', {})
+                return data if data else None
+            except Exception:
+                return None
 
 
 class StreamCheckerService:
@@ -871,6 +856,7 @@ class StreamCheckerService:
         self.worker_thread = None
         self.scheduler_thread = None
         self.lock = threading.Lock()
+        self._cancel_queueing = False
         
         self.sync_batch_state = {
             'active': False,
@@ -1042,6 +1028,7 @@ class StreamCheckerService:
         Args:
             force_check: If True, marks channels for force checking which bypasses 2-hour immunity
         """
+        self._cancel_queueing = False
         try:
             udi = get_udi_manager()
             channels = udi.get_channels()
@@ -1096,6 +1083,9 @@ class StreamCheckerService:
                 # Queue in batches with higher priority for global checks
                 total_added = 0
                 for i in range(0, len(filtered_channel_ids), max_channels):
+                    if getattr(self, '_cancel_queueing', False):
+                        logger.info("Aborting channel queueing loop due to cancel flag")
+                        break
                     batch = filtered_channel_ids[i:i+max_channels]
                     added = self.check_queue.add_channels(batch, priority=5)
                     total_added += added
@@ -3699,6 +3689,7 @@ class StreamCheckerService:
         """Clear the checking queue."""
         self.check_queue.clear()
         self.abort_current_check.set()
+        self._cancel_queueing = True
         logger.info("Checking queue cleared and current check aborted")
     
     def trigger_check_updated_channels(self):

@@ -4761,11 +4761,6 @@ def get_upcoming_automation_events():
         # Inject the enabled status into the payload
         result['automation_enabled'] = automation_enabled
         
-        if not automation_enabled:
-            # If globally disabled, don't return any events
-            result['events'] = []
-            return jsonify(result), 200
-        
         # Filter by period if requested
         if period_id_filter:
             result['events'] = [e for e in result['events'] if e.get('period_id') == period_id_filter]

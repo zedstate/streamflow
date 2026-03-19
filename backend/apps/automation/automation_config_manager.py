@@ -98,16 +98,18 @@ class AutomationConfigManager:
 
     def _period_to_dict(self, per) -> dict:
         if not per: return None
+        cron_val = per.cron_schedule or ""
+        sched_type = "interval" if cron_val.isdigit() else "cron"
         res = {
             "id": str(per.id),
             "name": per.name,
-            "cron_schedule": per.cron_schedule,
+            "cron_schedule": cron_val,
             "enabled": per.enabled,
             "channel_regex": per.channel_regex,
             "exclude_regex": per.exclude_regex,
             "matching_type": per.matching_type,
             "automation_type": per.automation_type,
-            "schedule": {"type": "cron", "value": per.cron_schedule}
+            "schedule": {"type": sched_type, "value": cron_val}
         }
         extra = self._normalize_extra_settings(per.extra_settings)
         if extra:
@@ -390,6 +392,20 @@ class AutomationConfigManager:
             if "name" in period_data: p.name = period_data["name"]
             if "enabled" in period_data: p.enabled = period_data["enabled"]
             if "profile_id" in period_data: p.profile_id = int(period_data["profile_id"])
+            if "channel_regex" in period_data: p.channel_regex = period_data["channel_regex"]
+            if "exclude_regex" in period_data: p.exclude_regex = period_data["exclude_regex"]
+            if "matching_type" in period_data: p.matching_type = period_data["matching_type"]
+            if "automation_type" in period_data: p.automation_type = period_data["automation_type"]
+            if "extra_settings" in period_data: p.extra_settings = period_data["extra_settings"]
+            
+            # Map schedule dictionary back to cron_schedule column
+            if "schedule" in period_data:
+                sched = period_data["schedule"]
+                if isinstance(sched, dict) and "value" in sched:
+                    p.cron_schedule = str(sched["value"])
+            elif "cron_schedule" in period_data:
+                p.cron_schedule = str(period_data["cron_schedule"])
+
             session.commit(); return True
         except: session.rollback(); return False
         finally: session.close()

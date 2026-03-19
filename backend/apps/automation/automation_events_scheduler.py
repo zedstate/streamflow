@@ -30,9 +30,7 @@ except ImportError:
     CRONITER_AVAILABLE = False
     logger.warning("croniter not available - cron schedules will not be calculated")
 
-# Configuration directory
-CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
-EVENTS_CACHE_FILE = CONFIG_DIR / 'automation_events_cache.json'
+# Configuration directory - removed file constants for database migration
 
 
 class AutomationEventsScheduler:
@@ -79,6 +77,14 @@ class AutomationEventsScheduler:
                 }
                 
             elif schedule_type == 'cron' and CRONITER_AVAILABLE:
+                # Add validation to prevent croniter exceptions for non-cron strings (e.g., '60')
+                if not schedule_value or len(str(schedule_value).split()) < 5:
+                    logger.warning(
+                        f"Period {period.get('id')} has 'cron' schedule type, but value '{schedule_value}' "
+                        f"is not a valid cron expression. Did you mean 'interval'?"
+                    )
+                    return None
+                    
                 # Cron expression
                 try:
                     cron = croniter(schedule_value, current_time)
@@ -192,6 +198,14 @@ class AutomationEventsScheduler:
                             })
                 
                 elif schedule_type == 'cron' and CRONITER_AVAILABLE:
+                    # Add validation to prevent croniter exceptions for non-cron strings (e.g., '60')
+                    if not schedule_value or len(str(schedule_value).split()) < 5:
+                        logger.warning(
+                            f"Period {period_id} has 'cron' schedule type, but value '{schedule_value}' "
+                            f"is not a valid cron expression. Skipping cron calculation."
+                        )
+                        continue
+                        
                     try:
                         cron = croniter(schedule_value, base_time)
                         while temp_time < end_time and len(period_events) < 50:
@@ -279,60 +293,60 @@ class AutomationEventsScheduler:
             logger.info("Invalidating automation events cache")
             self._cache = None
             self._cache_timestamp = None
-            # Delete cache file
+            # Clear database setting
             try:
-                if EVENTS_CACHE_FILE.exists():
-                    EVENTS_CACHE_FILE.unlink()
+                from apps.database.manager import get_db_manager
+                db = get_db_manager()
+                db.set_system_setting('automation_events_cache', {})
             except Exception as e:
-                logger.error(f"Failed to delete cache file: {e}")
+                logger.error(f"Failed to clear cache in database: {e}")
     
     def _save_cache(self):
-        """Save cache to disk for persistence across restarts."""
+        """Save cache to database for persistence across restarts."""
+        from apps.database.manager import get_db_manager
         with self._lock:
             try:
                 if self._cache is None:
                     return
                 
-                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
                 cache_data = {
                     'events': self._cache,
                     'timestamp': self._cache_timestamp.isoformat() if self._cache_timestamp else None
                 }
                 
-                with open(EVENTS_CACHE_FILE, 'w') as f:
-                    json.dump(cache_data, f, indent=2)
-                    
-                logger.debug("Saved automation events cache to disk")
-                
+                db = get_db_manager()
+                success = db.set_system_setting('automation_events_cache', cache_data)
+                if success:
+                    logger.debug("Saved automation events cache to database")
+                else:
+                    logger.error("Failed to save automation events cache to database")
             except Exception as e:
-                logger.error(f"Failed to save cache to disk: {e}")
+                logger.error(f"Failed to save cache to database: {e}")
     
     def _load_cache(self):
-        """Load cache from disk if available."""
+        """Load cache from database if available."""
+        from apps.database.manager import get_db_manager
         with self._lock:
             try:
-                if not EVENTS_CACHE_FILE.exists():
+                db = get_db_manager()
+                cache_data = db.get_system_setting('automation_events_cache', {})
+                if not cache_data:
                     return
-                
-                with open(EVENTS_CACHE_FILE, 'r') as f:
-                    cache_data = json.load(f)
                 
                 self._cache = cache_data.get('events')
                 timestamp_str = cache_data.get('timestamp')
                 
                 if timestamp_str:
                     self._cache_timestamp = datetime.fromisoformat(timestamp_str)
-                    
-                    # Check if cache is still valid (less than CACHE_STALENESS_THRESHOLD_SECONDS old)
                     age_seconds = (datetime.now() - self._cache_timestamp).total_seconds()
                     if age_seconds > CACHE_STALENESS_THRESHOLD_SECONDS:
                         logger.info("Cached events are stale, invalidating")
                         self.invalidate_cache()
                     else:
-                        logger.info(f"Loaded {len(self._cache)} events from cache ({age_seconds:.0f}s old)")
+                        logger.info(f"Loaded {len(self._cache)} events from database ({age_seconds:.0f}s old)")
                 
             except Exception as e:
-                logger.error(f"Failed to load cache from disk: {e}")
+                logger.error(f"Failed to load cache from database: {e}")
                 self.invalidate_cache()
 
 
