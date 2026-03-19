@@ -5734,6 +5734,23 @@ if __name__ == '__main__':
             logger.info("Stream monitoring service auto-started")
         except Exception as e:
             logger.error(f"Failed to auto-start stream monitoring service: {e}")
+            
+        # Force a full UDI Refresh on startup in the background if wizard is complete
+        try:
+            if check_wizard_complete():
+                def startup_udi_refresh():
+                    logger.info("Initializing UDI Manager with fresh data from Dispatcharr on startup...")
+                    try:
+                        from apps.core.api_utils import get_udi_manager
+                        udi = get_udi_manager()
+                        udi.initialize(force_refresh=True)
+                    except Exception as e:
+                        logger.error(f"Background startup UDI refresh failed: {e}")
+                        
+                import threading
+                threading.Thread(target=startup_udi_refresh, name="Startup-UDI-Refresh", daemon=True).start()
+        except Exception as e:
+             logger.error(f"Failed to start UDI background refresh thread: {e}")
     else:
         logger.info("Skipping background service startup in reloader parent process")
     
