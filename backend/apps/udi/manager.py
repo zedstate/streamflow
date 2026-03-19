@@ -132,13 +132,13 @@ class UDIManager:
                 logger.debug("Loading existing data from storage...")
                 self._load_from_storage()
                 
-                # Check if we actually loaded any data to prevent initializing with empty cache
-                if len(self._channels_cache) > 0:
+                # Check if we actually loaded complete data to prevent initializing with missing accounts/streams
+                if len(self._channels_cache) > 0 and len(self._m3u_accounts_cache) > 0:
                     self._initialized = True
-                    logger.info(f"UDI initialized from storage: {len(self._channels_cache)} channels, {len(self._streams_cache)} streams")
+                    logger.info(f"UDI initialized from storage: {len(self._channels_cache)} channels, {len(self._m3u_accounts_cache)} accounts")
                     return True
                 else:
-                    logger.info("UDI storage loaded but empty (0 channels). Falling back to API fetch...")
+                    logger.info(f"UDI storage loaded but incomplete ({len(self._channels_cache)} channels, {len(self._m3u_accounts_cache)} accounts). Falling back to API fetch...")
             
             # Check if Dispatcharr is configured before fetching from API
             config = get_dispatcharr_config()
