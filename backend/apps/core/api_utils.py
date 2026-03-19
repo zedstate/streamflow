@@ -698,7 +698,7 @@ def get_m3u_accounts() -> Optional[List[Dict[str, Any]]]:
     logger.debug("get_m3u_accounts() called - fetching from UDI cache")
     udi = get_udi_manager()
     accounts = udi.get_m3u_accounts()
-    return accounts if accounts else None
+    return accounts
 
 def get_streams(log_result: bool = True) -> List[Dict[str, Any]]:
     """

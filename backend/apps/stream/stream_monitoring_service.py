@@ -159,6 +159,14 @@ class StreamMonitoringService:
         
         self.monitors.clear()
         
+        # Save session states to ensure metrics/scores are fully flushed to DB
+        try:
+            if hasattr(self, 'session_manager'):
+                self.session_manager._save_sessions()
+                logger.info("Saved stream monitoring sessions state")
+        except Exception as e:
+            logger.error(f"Failed to save sessions during stop: {e}")
+            
         logger.info("StreamMonitoringService stopped")
     
     def stop_session_monitors(self, session_id: str):

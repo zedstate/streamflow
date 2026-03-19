@@ -5640,6 +5640,47 @@ if __name__ == '__main__':
                     logger.info("Stream checker service is disabled in configuration")
         except Exception as e:
             logger.error(f"Failed to auto-start stream checker service: {e}")
+            
+        # Register signal handlers for graceful shutdown (SIGTERM/SIGINT)
+        try:
+            import signal
+            import sys
+            
+            def graceful_shutdown(signum, frame):
+                logger.info(f"Received signal {signum}. Starting graceful shutdown...")
+                
+                try:
+                    from apps.stream.stream_monitoring_service import get_monitoring_service
+                    monitor = get_monitoring_service()
+                    if monitor:
+                        logger.info("Stopping Stream Monitoring Service...")
+                        monitor.stop()
+                except Exception as e:
+                    logger.error(f"Error stopping monitoring service: {e}")
+                    
+                try:
+                    from apps.stream.stream_checker_service import get_stream_checker_service
+                    checker = get_stream_checker_service()
+                    if checker:
+                        logger.info("Stopping Stream Checker Service...")
+                        checker.stop()
+                except Exception as e:
+                    logger.error(f"Error stopping stream checker service: {e}")
+                    
+                try:
+                    stop_scheduled_event_processor()
+                    stop_epg_refresh_processor()
+                except Exception:
+                    pass
+                    
+                logger.info("Graceful shutdown complete. Exiting.")
+                sys.exit(0)
+
+            signal.signal(signal.SIGTERM, graceful_shutdown)
+            signal.signal(signal.SIGINT, graceful_shutdown)
+            logger.info("Signal handlers registered for SIGTERM and SIGINT")
+        except Exception as e:
+            logger.error(f"Failed to register signal handlers: {e}")
         
         # Auto-start automation service if automation is configured AND wizard is complete
         try:
