@@ -2558,11 +2558,17 @@ def get_setup_wizard_status():
             if dispatcharr_config.is_configured():
                 try:
                     udi = get_udi_manager()
-                    channels = udi.get_channels()
-                    status["dispatcharr_connection"] = channels is not None
-                    status["has_channels"] = bool(channels)
-                except:
-                    pass
+                    # Test connection with short timeout to prevent setup wizard timeouts
+                    status["dispatcharr_connection"] = udi.fetcher.test_connection()
+                    if status["dispatcharr_connection"]:
+                        # Trigger background fetch if not initialized yet to allow async sync
+                        if not udi.is_initialized():
+                            import threading
+                            threading.Thread(target=udi.initialize, kwargs={"force_refresh": False}, daemon=True).start()
+                        # Avoid calling get_channels() synchronously here as it blocks
+                        status["has_channels"] = bool(getattr(udi, '_channels_cache', []))
+                except Exception as e:
+                    logger.warning(f"Error checking Dispatcharr connection: {e}")
         
         # Setup is complete if configurations exist and Dispatcharr is reachable
         status["setup_complete"] = all([

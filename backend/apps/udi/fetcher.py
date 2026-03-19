@@ -233,6 +233,23 @@ class UDIFetcher:
     def __init__(self):
         """Initialize the UDI fetcher."""
         self.base_url = _get_base_url()
+        
+    def test_connection(self) -> bool:
+        """Test connection to Dispatcharr API with short timeout.
+        
+        Returns:
+            True if connection and auth successful
+        """
+        if not self.base_url:
+            return False
+            
+        try:
+            # Uses 5 second timeout in _validate_token
+            headers = _get_auth_headers()
+            token = headers.get("Authorization", "").replace("Bearer ", "")
+            return _validate_token(token)
+        except Exception:
+            return False
     
     def _fetch_url(self, url: str) -> Optional[Any]:
         """Fetch data from a URL with authentication and retry logic.
