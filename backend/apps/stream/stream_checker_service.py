@@ -2266,7 +2266,6 @@ class StreamCheckerService:
         
         finally:
             self.checking = False
-            self.progress.clear()
             log_function_return(logger, "_check_channel_concurrent")
 
     
@@ -2904,7 +2903,6 @@ class StreamCheckerService:
         
         finally:
             self.checking = False
-            self.progress.clear()
     
     def _calculate_stream_score(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute', scoring_weights: Dict = None) -> float:
         """Calculate a quality score for a stream based on analysis.

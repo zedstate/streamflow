@@ -2257,7 +2257,10 @@ class AutomatedStreamManager:
         """Check if a specific period is due to run based on its schedule."""
         last_run = self.period_last_run.get(period_id)
         if not last_run:
-            return True
+            # If no previous run, initialize to now() so it waits for the first interval/cron schedule block
+            self.period_last_run[period_id] = datetime.now()
+            logger.info(f"Initialized last_run for period {period_id} to now() to wait for next schedule run")
+            return False
             
         schedule = period_info.get("schedule", {})
         schedule_type = schedule.get("type", "interval")
@@ -2296,7 +2299,20 @@ class AutomatedStreamManager:
         automation_config = get_automation_config_manager()
         global_settings = automation_config.get_global_settings()
         
-        if not forced and not global_settings.get('regular_automation_enabled', False):
+        current_enabled = global_settings.get('regular_automation_enabled', False)
+        
+        # Initialize flag if missing
+        if not hasattr(self, '_was_automation_enabled'):
+            self._was_automation_enabled = current_enabled
+            
+        # If just enabled, reset period timers to wait for the next scheduled block
+        if current_enabled and not self._was_automation_enabled:
+            logger.info("Automation system just enabled, resetting period last run states to wait")
+            self.period_last_run.clear()
+            
+        self._was_automation_enabled = current_enabled
+        
+        if not forced and not current_enabled:
             logger.debug("Regular automation is disabled globally. Skipping cycle.")
             return
 
