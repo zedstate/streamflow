@@ -131,9 +131,14 @@ class UDIManager:
             if not force_refresh and self.storage.is_initialized():
                 logger.debug("Loading existing data from storage...")
                 self._load_from_storage()
-                self._initialized = True
-                logger.info(f"UDI initialized from storage: {len(self._channels_cache)} channels, {len(self._streams_cache)} streams")
-                return True
+                
+                # Check if we actually loaded any data to prevent initializing with empty cache
+                if len(self._channels_cache) > 0:
+                    self._initialized = True
+                    logger.info(f"UDI initialized from storage: {len(self._channels_cache)} channels, {len(self._streams_cache)} streams")
+                    return True
+                else:
+                    logger.info("UDI storage loaded but empty (0 channels). Falling back to API fetch...")
             
             # Check if Dispatcharr is configured before fetching from API
             config = get_dispatcharr_config()
