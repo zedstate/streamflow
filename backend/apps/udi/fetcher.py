@@ -197,11 +197,11 @@ def _get_auth_headers() -> Dict[str, str]:
             load_dotenv(dotenv_path=env_path, override=True)
         current_token = os.getenv("DISPATCHARR_TOKEN")
         if not current_token:
-            logger.error("Login succeeded, but token not found. Aborting.")
-            sys.exit(1)
+            logger.error("Login succeeded, but token not found.")
+            raise Exception("Login succeeded but token not found")
     else:
-        logger.error("Login failed. Check credentials. Aborting.")
-        sys.exit(1)
+        logger.error("Login failed. Check credentials.")
+        raise Exception("Login failed")
 
     return {
         "Authorization": f"Bearer {current_token}",
