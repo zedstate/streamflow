@@ -56,11 +56,10 @@ class UDIManager:
     """
     
     def __init__(self):
-        """Initialize the UDI Manager with file-based storage."""
-        # Use file-based storage only
+        """Initialize the UDI Manager with SQL backend storage."""
         from apps.udi.storage import UDIStorage
         self.storage = UDIStorage()
-        logger.info("Using file storage for UDI")
+        logger.info("Using SQL backend storage for UDI")
         
         self.fetcher = UDIFetcher()
         self.cache = UDICache()
@@ -116,9 +115,14 @@ class UDIManager:
         Returns:
             True if initialization successful
         """
+        # 1. State check with lock
         with self._lock:
             if self._initialized and not force_refresh:
                 logger.debug("UDI Manager already initialized")
+                return True
+                
+            if getattr(self, '_refresh_running', False):
+                logger.debug("UDI Manager refresh already running in another thread")
                 return True
             
             logger.debug("Initializing UDI Manager...")
@@ -139,20 +143,24 @@ class UDIManager:
                 self._initialized = True
                 return False
             
-            # Fetch fresh data from API
-            logger.debug("Fetching fresh data from API...")
-            try:
-                success = self.refresh_all()
+            # Mark as refreshing to prevent re-entrancy
+            self._refresh_running = True
+            
+        # 2. Fetch fresh data from API (OUTSIDE Lock)
+        logger.debug("Fetching fresh data from API...")
+        try:
+            success = self.refresh_all()
+            with self._lock:
                 if success:
                     self._initialized = True
                     # Success message logged in refresh_all()
-                    return True
-                else:
-                    logger.error("Failed to initialize UDI Manager")
-                    return False
-            except Exception as e:
-                logger.error(f"Error initializing UDI Manager: {e}")
-                return False
+                return success
+        except Exception as e:
+            logger.error(f"Error initializing UDI Manager: {e}")
+            return False
+        finally:
+            with self._lock:
+                self._refresh_running = False
     
     def _load_from_storage(self) -> None:
         """Load all data from storage into memory caches."""
@@ -531,30 +539,30 @@ class UDIManager:
         try:
             # Step 1: Channels
             self._update_init_progress(percentage=5, message='Fetching channels...', current_step='channels')
-            self._channels_cache = self.fetcher.fetch_channels()
+            channels = self.fetcher.fetch_channels()
             
             # Step 2: Streams
             self._update_init_progress(percentage=20, message='Fetching streams...', current_step='streams')
-            self._streams_cache = self.fetcher.fetch_streams()
+            streams = self.fetcher.fetch_streams()
             
             # Step 3: Channel Groups
             self._update_init_progress(percentage=40, message='Fetching groups...', current_step='groups')
-            self._channel_groups_cache = self.fetcher.fetch_channel_groups()
+            channel_groups = self.fetcher.fetch_channel_groups()
             
             # Step 4: Logos
             self._update_init_progress(percentage=50, message='Fetching logos...', current_step='logos')
-            self._logos_cache = self.fetcher.fetch_logos()
+            logos = self.fetcher.fetch_logos()
             
             # Step 5: M3U Accounts
             self._update_init_progress(percentage=60, message='Fetching M3U accounts...', current_step='m3u_accounts')
-            self._m3u_accounts_cache = self.fetcher.fetch_m3u_accounts()
+            m3u_accounts = self.fetcher.fetch_m3u_accounts()
             
             # Step 6: Channel Profiles
             self._update_init_progress(percentage=70, message='Fetching profiles...', current_step='profiles')
-            self._channel_profiles_cache = self.fetcher.fetch_channel_profiles()
+            channel_profiles = self.fetcher.fetch_channel_profiles()
             
             # Step 7: Profile Channels
-            profile_ids = [p.get('id') for p in self._channel_profiles_cache if p.get('id')]
+            profile_ids = [p.get('id') for p in channel_profiles if p.get('id')]
             if profile_ids:
                 logger.debug(f"Fetching channel data for {len(profile_ids)} profiles...")
                 
@@ -563,14 +571,23 @@ class UDIManager:
                     percentage = 80 + int((i / total) * 10)
                     self._update_init_progress(percentage=percentage, message=msg)
                 
-                self._profile_channels_cache = self.fetcher.fetch_profile_channels(profile_ids, progress_callback=profile_progress)
+                profile_channels = self.fetcher.fetch_profile_channels(profile_ids, progress_callback=profile_progress)
             else:
-                self._profile_channels_cache = {}
+                profile_channels = {}
             
             self._update_init_progress(percentage=90, message='Building indexes and saving...', current_step='finalize')
             
-            # Build index caches
-            self._build_indexes()
+            with self._lock:
+                self._channels_cache = channels
+                self._streams_cache = streams
+                self._channel_groups_cache = channel_groups
+                self._logos_cache = logos
+                self._m3u_accounts_cache = m3u_accounts
+                self._channel_profiles_cache = channel_profiles
+                self._profile_channels_cache = profile_channels
+                
+                # Build index caches
+                self._build_indexes()
             
             # Save to storage
             self.storage.save_channels(self._channels_cache)

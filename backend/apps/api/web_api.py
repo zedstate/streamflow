@@ -2905,9 +2905,12 @@ def test_dispatcharr_connection():
         data = request.get_json() or {}
         
         # Temporarily use provided credentials if available, otherwise use existing
-        test_base_url = data.get('base_url', os.getenv("DISPATCHARR_BASE_URL"))
-        test_username = data.get('username', os.getenv("DISPATCHARR_USER"))
-        test_password = data.get('password', os.getenv("DISPATCHARR_PASS"))
+        from apps.config.dispatcharr_config import get_dispatcharr_config
+        config_manager = get_dispatcharr_config()
+        
+        test_base_url = data.get('base_url') or config_manager.get_base_url()
+        test_username = data.get('username') or config_manager.get_username()
+        test_password = data.get('password') or config_manager.get_password()
         
         if not all([test_base_url, test_username, test_password]):
             return jsonify({

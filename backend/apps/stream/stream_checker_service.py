@@ -153,106 +153,62 @@ class StreamCheckConfig:
     def __init__(self, config_file: Optional[str] = None) -> None:
         """
         Initialize the StreamCheckConfig.
-        
-        Parameters:
-            config_file (Optional[str]): Path to config file. Defaults
-                to CONFIG_DIR/stream_checker_config.json.
         """
-        if config_file is None:
-            config_file = CONFIG_DIR / 'stream_checker_config.json'
-        self.config_file = Path(config_file)
+        from apps.database.manager import get_db_manager
+        self.db = get_db_manager()
         self.config = self._load_config()
     
     def _load_config(self) -> Dict[str, Any]:
         """
-        Load configuration from file or create default.
+        Load configuration from database or create default.
         
         Merges loaded config with DEFAULT_CONFIG to ensure all
-        required keys exist even if config file is incomplete.
+        required keys exist even if config in DB is incomplete.
         
         Returns:
             Dict[str, Any]: The configuration dictionary.
         """
         import copy
-        log_function_call(logger, "_load_config", config_file=str(self.config_file))
+        log_function_call(logger, "_load_config")
         
-        if self.config_file.exists():
-            logger.debug(f"Config file exists: {self.config_file}")
-            try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    loaded = json.load(f)
-                    logger.debug(f"Loaded config with {len(loaded)} top-level keys")
-                    # Deep copy defaults to avoid mutating DEFAULT_CONFIG
-                    config = copy.deepcopy(self.DEFAULT_CONFIG)
-                    config.update(loaded)
-                    
-                    # Auto-migrate legacy pipeline mode to automation_controls
-                    pipeline_mode = config.get('pipeline_mode', '')
-                    if pipeline_mode and pipeline_mode != 'disabled':
-                        logger.info(f"Migrating legacy pipeline mode '{pipeline_mode}' to automation_controls")
-                        
-                        # Map pipeline modes to automation controls
-                        if pipeline_mode == 'pipeline_1':
-                            config['automation_controls'] = {
-                                'auto_m3u_updates': True,
-                                'auto_stream_matching': True,
-                                'auto_quality_checking': True
-                            }
-                        elif pipeline_mode == 'pipeline_1_5':
-                            config['automation_controls'] = {
-                                'auto_m3u_updates': True,
-                                'auto_stream_matching': True,
-                                'auto_quality_checking': True,
-                            }
-                        elif pipeline_mode == 'pipeline_2':
-                            config['automation_controls'] = {
-                                'auto_m3u_updates': True,
-                                'auto_stream_matching': True,
-                                'auto_quality_checking': False,
-                            }
-                        elif pipeline_mode == 'pipeline_2_5':
-                            config['automation_controls'] = {
-                                'auto_m3u_updates': True,
-                                'auto_stream_matching': True,
-                                'auto_quality_checking': False,
-                            }
-                        elif pipeline_mode == 'pipeline_3':
-                            config['automation_controls'] = {
-                                'auto_m3u_updates': False,
-                                'auto_stream_matching': False,
-                                'auto_quality_checking': False,
-                            }
-                        
-                        # Remove pipeline_mode key
-                        config.pop('pipeline_mode', None)
-                        
-                        # Save migrated config
-                        self._save_config(config)
-                        logger.info(f"Successfully migrated to automation_controls: {config['automation_controls']}")
-                    
-                    logger.debug(f"Merged config: automation_controls={config.get('automation_controls')}, enabled={config.get('enabled')}")
-                    log_function_return(logger, "_load_config", f"<config with {len(config)} keys>")
-                    return config
-            except (json.JSONDecodeError, FileNotFoundError) as e:
-                log_exception(logger, e, f"loading config from {self.config_file}")
-                logger.warning(
-                    f"Could not load config from "
-                    f"{self.config_file}: {e}, using defaults"
-                )
-        else:
-            logger.debug(f"Config file does not exist: {self.config_file}")
+        loaded = self.db.get_system_setting('stream_checker_config', {})
+        if loaded:
+            logger.debug(f"Loaded config from DB with {len(loaded)} top-level keys")
+            # Deep copy defaults to avoid mutating DEFAULT_CONFIG
+            config = copy.deepcopy(self.DEFAULT_CONFIG)
+            config.update(loaded)
+            
+            # Auto-migrate legacy pipeline mode to automation_controls
+            pipeline_mode = config.get('pipeline_mode', '')
+            if pipeline_mode and pipeline_mode != 'disabled':
+                logger.info(f"Migrating legacy pipeline mode '{pipeline_mode}' to automation_controls")
+                
+                if pipeline_mode == 'pipeline_1':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': True}
+                elif pipeline_mode == 'pipeline_1_5':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': True}
+                elif pipeline_mode == 'pipeline_2':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': False}
+                elif pipeline_mode == 'pipeline_2_5':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': False}
+                elif pipeline_mode == 'pipeline_3':
+                    config['automation_controls'] = {'auto_m3u_updates': False, 'auto_stream_matching': False, 'auto_quality_checking': False}
+                
+                config.pop('pipeline_mode', None)
+                self._save_config(config)
+            
+            return config
         
-        # Create default config - use deep copy to avoid mutation
-        logger.debug("Creating default config")
-        self._save_config(copy.deepcopy(self.DEFAULT_CONFIG))
-        log_function_return(logger, "_load_config", "<default config>")
-        return copy.deepcopy(self.DEFAULT_CONFIG)
+        logger.debug("No config in DB, creating default")
+        config = copy.deepcopy(self.DEFAULT_CONFIG)
+        self._save_config(config)
+        return config
     
     def _save_config(
         self, config: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        Save configuration to file.
+        Save configuration to database.
         
         Parameters:
             config (Optional[Dict[str, Any]]): Config to save.
@@ -261,9 +217,7 @@ class StreamCheckConfig:
         if config is None:
             config = self.config
         
-        self.config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.config_file, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2)
+        self.db.set_system_setting('stream_checker_config', config)
     
     def update(self, updates: Dict[str, Any]) -> None:
         """
@@ -329,30 +283,24 @@ class ChannelUpdateTracker:
     """Tracks which channels have received M3U updates."""
     
     def __init__(self, tracker_file=None):
-        if tracker_file is None:
-            tracker_file = CONFIG_DIR / 'channel_updates.json'
-        self.tracker_file = Path(tracker_file)
+        """Initialize tracker using Database backend."""
+        from apps.database.manager import get_db_manager
+        self.db = get_db_manager()
         self.updates = self._load_updates()
         self.lock = threading.Lock()
-        # Ensure the file is created on initialization
         self._save_updates()
     
     def _load_updates(self) -> Dict:
-        """Load update tracking data."""
-        if self.tracker_file.exists():
-            try:
-                with open(self.tracker_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                logger.warning(f"Could not load updates from {self.tracker_file}, creating new")
+        """Load update tracking data from Database."""
+        loaded = self.db.get_system_setting('channel_updates', {})
+        if loaded:
+            return loaded
         return {'channels': {}, 'last_global_check': None}
     
     def _save_updates(self):
-        """Save update tracking data."""
+        """Save update tracking data to Database."""
         try:
-            self.tracker_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.tracker_file, 'w') as f:
-                json.dump(self.updates, f, indent=2)
+            self.db.set_system_setting('channel_updates', self.updates)
         except Exception as e:
             logger.error(f"Failed to save channel updates: {e}")
     

@@ -33,7 +33,7 @@ class DispatcharrConfig:
     
     def __init__(self):
         """Initialize the configuration manager."""
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._config: Dict[str, str] = {}
         self._load_config()
         logger.info("Dispatcharr configuration manager initialized")
@@ -102,52 +102,31 @@ class DispatcharrConfig:
             return False
     
     def get_base_url(self) -> Optional[str]:
-        """Get Dispatcharr base URL.
-        
-        Priority: Environment variable > Database
+        """Get Dispatcharr base URL from database.
         
         Returns:
             Base URL or None if not configured
         """
-        # Environment variable takes priority
-        env_url = os.getenv("DISPATCHARR_BASE_URL")
-        if env_url:
-            return env_url
-        
         from apps.database.manager import get_db_manager
         db_config = get_db_manager().get_system_setting('dispatcharr_config', {})
         return db_config.get('base_url')
     
     def get_username(self) -> Optional[str]:
-        """Get Dispatcharr username.
-        
-        Priority: Environment variable > Database
+        """Get Dispatcharr username from database.
         
         Returns:
             Username or None if not configured
         """
-        # Environment variable takes priority
-        env_user = os.getenv("DISPATCHARR_USER")
-        if env_user:
-            return env_user
-        
         from apps.database.manager import get_db_manager
         db_config = get_db_manager().get_system_setting('dispatcharr_config', {})
         return db_config.get('username')
     
     def get_password(self) -> Optional[str]:
-        """Get Dispatcharr password.
-        
-        Priority: Environment variable > Database
+        """Get Dispatcharr password from database.
         
         Returns:
             Password or None if not configured
         """
-        # Environment variable takes priority
-        env_pass = os.getenv("DISPATCHARR_PASS")
-        if env_pass:
-            return env_pass
-        
         from apps.database.manager import get_db_manager
         db_config = get_db_manager().get_system_setting('dispatcharr_config', {})
         return db_config.get('password')

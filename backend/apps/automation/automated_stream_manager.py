@@ -1133,7 +1133,7 @@ class AutomatedStreamManager:
     def _is_dead_stream_removal_enabled(self) -> bool:
         """Check if dead stream removal is enabled in stream checker config.
         
-        Uses a 60-second cache to avoid repeated file I/O operations.
+        Uses a 60-second cache to avoid repeated DB queries.
         
         Returns:
             True if dead stream removal is enabled, False otherwise
@@ -1147,15 +1147,12 @@ class AutomatedStreamManager:
             self._dead_stream_removal_enabled_cache is not None):
             return self._dead_stream_removal_enabled_cache
         
-        # Cache expired or not set, read from file
         try:
-            stream_checker_config_file = CONFIG_DIR / 'stream_checker_config.json'
-            if stream_checker_config_file.exists():
-                with open(stream_checker_config_file, 'r') as f:
-                    config = json.load(f)
-                    enabled = config.get('dead_stream_handling', {}).get('enabled', True)
+            from apps.database.manager import get_db_manager
+            config = get_db_manager().get_system_setting('stream_checker_config', {})
+            if config:
+                enabled = config.get('dead_stream_handling', {}).get('enabled', True)
             else:
-                # Default to True if config doesn't exist
                 enabled = True
             
             # Update cache
@@ -1163,9 +1160,7 @@ class AutomatedStreamManager:
             self._dead_stream_removal_cache_time = current_time
             return enabled
         except Exception as e:
-            logger.error(f"Error reading stream checker config: {e}")
-            # Default to True on error (conservative approach)
-            # Don't cache errors, try again next time
+            logger.error(f"Error reading stream checker config from DB: {e}")
             return True
     
     def _filter_channels_by_profile(self, all_channels: List[Dict], action_description: str) -> List[Dict]:
