@@ -2880,10 +2880,11 @@ def update_dispatcharr_config_endpoint():
         # This ensures data is fetched immediately after saving credentials
         if config_manager.is_configured():
             try:
-                logger.info("Dispatcharr credentials updated, initializing UDI Manager...")
+                logger.info("Dispatcharr credentials updated, triggering background UDI Manager initialize...")
                 udi = get_udi_manager()
-                udi.initialize(force_refresh=True)
-                logger.info("UDI Manager initialized successfully with new credentials")
+                import threading
+                threading.Thread(target=udi.initialize, kwargs={"force_refresh": True}, daemon=True).start()
+                logger.info("UDI Manager initialization started in background")
             except Exception as e:
                 logger.warning(
                     f"Failed to initialize UDI Manager after config update: {e}. "
