@@ -10,13 +10,35 @@ DB_PATH = CONFIG_DIR / 'streamflow.db'
 # Single declarative base for the entire application
 Base = declarative_base()
 
+_engine = None
+
 def get_engine():
     """Returns the SQLAlchemy engine, creating the directory if it doesn't exist."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    # Using SQLite for now (as used in telemetry_db.py)
-    # echo=False in production, can be enabled for debugging
-    engine = create_engine(f'sqlite:///{DB_PATH}', echo=False)
-    return engine
+    global _engine
+    if _engine is None:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        from sqlalchemy import create_engine, event
+        
+        # For SQLite in multi-threaded environment, check_same_thread=False is mandatory
+        _engine = create_engine(
+            f'sqlite:///{DB_PATH}', 
+            echo=False,
+            connect_args={'check_same_thread': False, 'timeout': 30}
+        )
+        
+        # Enable WAL (Write-Ahead Logging) mode to allow concurrent readers during writes
+        @event.listens_for(_engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
+            finally:
+                cursor.close()
+                
+    return _engine
 
 def get_session():
     """Returns a new SQLAlchemy session."""
