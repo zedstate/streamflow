@@ -5036,10 +5036,51 @@ def get_stream_session(session_id):
         if not session:
             return jsonify({"error": "Session not found"}), 404
         
+        # Fetch historical telemetry for ALL streams in this channel since session creation
+        # (Fallback for inactive sessions or loaded from database with empty in-memory history)
+        from apps.database.connection import get_session as get_db_session
+        from apps.database.models import StreamTelemetry, Run
+        
+        db_metrics_by_stream = {}
+        db_session = get_db_session()
+        try:
+            telemetry_rows = db_session.query(StreamTelemetry, Run.timestamp).join(Run).filter(
+                StreamTelemetry.channel_id == session.channel_id,
+                Run.timestamp >= datetime.fromtimestamp(session.created_at)
+            ).order_by(Run.timestamp.asc()).all()
+            
+            for row, ts in telemetry_rows:
+                from apps.stream.stream_session_manager import StreamMetrics
+                m = StreamMetrics(
+                    timestamp=ts.timestamp(),
+                    speed=0.0 if row.is_dead else 1.0,
+                    bitrate=row.bitrate_kbps or 0,
+                    fps=row.fps or 0.0,
+                    is_alive=not row.is_dead,
+                    buffering=False,
+                    reliability_score=row.quality_score or 50.0,
+                    status='stable' if not row.is_dead else 'quarantined',
+                    status_reason=None,
+                    rank=None,
+                    loop_duration=None,
+                    display_logo_status='SUCCESS' if not row.is_dead else 'PENDING'
+                )
+                if row.stream_id not in db_metrics_by_stream:
+                    db_metrics_by_stream[row.stream_id] = []
+                db_metrics_by_stream[row.stream_id].append(m)
+        except Exception as e:
+            logger.error(f"Error loading historical telemetry for session {session_id}: {e}")
+        finally:
+            db_session.close()
+
         # Build detailed session data
         streams_data = []
         if session.streams:
             for stream_id, stream_info in session.streams.items():
+                db_metrics = db_metrics_by_stream.get(stream_id, [])
+                # Use in-memory if available, fallback to DB history
+                stream_metrics_history = stream_info.metrics_history if stream_info.metrics_history else db_metrics
+                
                 stream_dict = {
                     'stream_id': stream_info.stream_id,
                     'url': stream_info.url,
@@ -5060,7 +5101,7 @@ def get_stream_session(session_id):
                     'loop_duration': getattr(stream_info, 'loop_duration', None),
                     'is_quarantined': stream_info.is_quarantined,
                     'reliability_score': stream_info.reliability_score,
-                    'current_speed': stream_info.metrics_history[-1].speed if stream_info.metrics_history else 0.0,
+                    'current_speed': stream_metrics_history[-1].speed if stream_metrics_history else 0.0,
                     'rank': stream_info.rank,
                     'last_logo_status': getattr(stream_info, 'last_logo_status', 'PENDING'),
                     'display_logo_status': getattr(stream_info, 'display_logo_status', 'PENDING'),
@@ -5068,8 +5109,8 @@ def get_stream_session(session_id):
                     'screenshot_path': stream_info.screenshot_path,
                     'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}" if stream_info.screenshot_path else None,
                     'last_screenshot_time': stream_info.last_screenshot_time,
-                    'metrics_count': len(stream_info.metrics_history) if stream_info.metrics_history else 0,
-                    'metrics_history': [asdict(m) for m in stream_info.metrics_history if since_timestamp is None or m.timestamp > since_timestamp] if stream_info.metrics_history else []
+                    'metrics_count': len(stream_metrics_history) if stream_metrics_history else 0,
+                    'metrics_history': [asdict(m) for m in stream_metrics_history if since_timestamp is None or m.timestamp > since_timestamp] if stream_metrics_history else []
                 }
                 
                 # Calculate review time remaining
