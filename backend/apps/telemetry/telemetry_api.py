@@ -68,7 +68,7 @@ def get_provider_telemetry():
         res_stats = session.query(
             StreamTelemetry.provider_id,
             StreamTelemetry.resolution_height,
-            func.count(StreamTelemetry.id).label('count')
+            func.count(func.distinct(StreamTelemetry.stream_id)).label('count')
         ).join(Run).filter(Run.timestamp >= cutoff, StreamTelemetry.resolution_height.isnot(None)).group_by(
             StreamTelemetry.provider_id, StreamTelemetry.resolution_height
         ).all()
