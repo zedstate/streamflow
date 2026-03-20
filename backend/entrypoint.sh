@@ -57,7 +57,8 @@ echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/hea
 echo "[INFO] ============================================"
 
 # Start Flask API directly
-echo "[INFO] Starting Flask API..."
+echo "[INFO] Running configuration migrations..."
+python3 scripts/migrate_to_sql.py
 
 export PYTHONPATH=.
 
