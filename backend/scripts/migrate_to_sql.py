@@ -181,6 +181,8 @@ def migrate_automation(session, data_dir) -> int:
     rows_written = 0
 
     # --- Global automation settings ---
+    # These three keys live at the top level of automation_config.json and must
+    # be written to SystemSetting individually (matching how AutomationConfigManager reads them).
     global_keys = (
         'regular_automation_enabled',
         'playlist_update_interval_minutes',
@@ -193,18 +195,32 @@ def migrate_automation(session, data_dir) -> int:
             logger.info(f"  ✓ Migrated global automation setting: {key}")
 
     # --- Profiles ---
-    # Build a json_id -> new DB id map so periods can resolve their profile FK correctly.
-    json_id_to_db_id: dict = {}
+    # The profile relationship is NOT stored inside period objects. Periods have
+    # no profile_id field in the JSON. The profile → period → channel relationship
+    # is stored separately in channel_period_assignments (see below). We still
+    # need the profile DB id for the AutomationPeriod FK, so we derive it from
+    # channel_period_assignments: find any channel that references this period,
+    # read its profile UUID, and look that UUID up in the profiles dict.
+    #
+    # Build: period_uuid -> profile_uuid from channel_period_assignments
+    period_to_profile_uuid: dict = {}
+    for cid, period_map in data.get('channel_period_assignments', {}).items():
+        if isinstance(period_map, dict):
+            for period_uuid, profile_uuid in period_map.items():
+                period_to_profile_uuid.setdefault(str(period_uuid), str(profile_uuid))
+
+    # Build: profile_uuid -> new DB integer id
+    profile_uuid_to_db_id: dict = {}
     count_profiles = 0
 
     profiles = data.get('profiles', {})
-    for p_id, p_item in profiles.items():
+    for p_uuid, p_item in profiles.items():
         name = p_item.get('name', 'Profile')
 
         existing = session.query(AutomationProfile).filter(AutomationProfile.name == name).first()
         if existing:
             logger.info(f"  Automation Profile '{name}' already exists in DB, skipping.")
-            json_id_to_db_id[str(p_id)] = existing.id
+            profile_uuid_to_db_id[str(p_uuid)] = existing.id
             continue
 
         extra = {
@@ -221,15 +237,19 @@ def migrate_automation(session, data_dir) -> int:
         )
         session.add(prof)
         session.flush()
-        json_id_to_db_id[str(p_id)] = prof.id
+        profile_uuid_to_db_id[str(p_uuid)] = prof.id
         count_profiles += 1
         rows_written += 1
 
     # --- Periods ---
+    # After migration, AutomationConfigManager reads periods by their integer DB id
+    # but channel_period_assignments continues to use the original UUID strings as
+    # keys (it is stored as a JSON blob in SystemSetting). The AutomationPeriod row
+    # needs a valid profile_id FK, resolved via the maps built above.
     count_periods = 0
 
     periods = data.get('automation_periods', {})
-    for per_id, per_item in periods.items():
+    for per_uuid, per_item in periods.items():
         name = per_item.get('name', 'Period')
 
         existing_period = session.query(AutomationPeriod).filter(AutomationPeriod.name == name).first()
@@ -237,8 +257,9 @@ def migrate_automation(session, data_dir) -> int:
             logger.info(f"  Automation Period '{name}' already exists in DB, skipping.")
             continue
 
-        json_profile_id = str(per_item.get('profile_id', ''))
-        target_profile_db_id = json_id_to_db_id.get(json_profile_id)
+        # Resolve profile FK: period_uuid -> profile_uuid -> DB integer id
+        profile_uuid = period_to_profile_uuid.get(str(per_uuid))
+        target_profile_db_id = profile_uuid_to_db_id.get(profile_uuid) if profile_uuid else None
 
         if target_profile_db_id is None:
             first_prof = session.query(AutomationProfile).first()
@@ -247,7 +268,7 @@ def migrate_automation(session, data_dir) -> int:
                 continue
             target_profile_db_id = first_prof.id
             logger.warning(
-                f"  Period '{name}' references unknown profile id {json_profile_id!r}; "
+                f"  Period '{name}' has no profile assignment in channel_period_assignments; "
                 f"assigning to profile id {target_profile_db_id}."
             )
 
@@ -273,6 +294,26 @@ def migrate_automation(session, data_dir) -> int:
         f"✓ Migrated {count_profiles} Automation Profiles and {count_periods} Periods "
         f"from {data_dir.name}"
     )
+
+    # --- Channel / group / period assignments ---
+    # These three blobs are stored verbatim as SystemSetting JSON values.
+    # channel_period_assignments: { channel_id_str: { period_uuid: profile_uuid } }
+    # channel_assignments:        { channel_id_str: profile_uuid }
+    # group_assignments:          { group_id_str:   profile_uuid }
+    # The UUID keys are used directly by AutomationConfigManager — no remapping needed.
+    assignment_keys = (
+        'channel_period_assignments',
+        'channel_assignments',
+        'group_assignments',
+    )
+    for key in assignment_keys:
+        value = data.get(key)
+        if value:  # skip empty dicts — no point writing them
+            session.merge(SystemSetting(key=key, value=value))
+            rows_written += 1
+            count = len(value)
+            logger.info(f"  ✓ Migrated {key} ({count} entries)")
+
     return rows_written
 
 
