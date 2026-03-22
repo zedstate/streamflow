@@ -51,8 +51,8 @@ def get_provider_telemetry():
         # We calculate total checked, total dead, average quality, avg bitrate
         stats = session.query(
             StreamTelemetry.provider_id,
-            func.count(StreamTelemetry.id).label('total_streams'),
-            func.sum(case((StreamTelemetry.is_dead == True, 1), else_=0)).label('dead_streams'),
+            func.count(func.distinct(StreamTelemetry.stream_id)).label('total_streams'),
+            func.count(func.distinct(case((StreamTelemetry.is_dead == True, StreamTelemetry.stream_id), else_=None))).label('dead_streams'),
             func.avg(StreamTelemetry.bitrate_kbps).label('avg_bitrate_kbps'),
             func.avg(StreamTelemetry.fps).label('avg_fps'),
             func.avg(StreamTelemetry.quality_score).label('avg_quality_score'),

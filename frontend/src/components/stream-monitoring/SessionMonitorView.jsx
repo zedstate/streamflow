@@ -27,7 +27,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
   const [cursorTime, setCursorTime] = useState(null); // Current timestamp of the timeline
   const [isLive, setIsLive] = useState(true); // Whether we are following the latest updates
   const [zoomLevel, setZoomLevel] = useState(60); // Window size in seconds (default 1 minute)
-  const [activePreviewTab, setActivePreviewTab] = useState("screenshots");
+  const [activePreviewTab, setActivePreviewTab] = useState("");
   const [showTimeline, setShowTimeline] = useState(true);
   const [expandedStreamId, setExpandedStreamId] = useState(null);
   const { toast } = useToast();
@@ -110,7 +110,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
 
   useEffect(() => {
     loadSession();
-    loadAliveScreenshots();
+    if (activePreviewTab === 'screenshots') {
+      loadAliveScreenshots();
+    }
     loadPlayingStreams();
 
     // Poll for updates every 2 seconds if active
@@ -123,7 +125,9 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
         }
         // These calls are async, we can't easily wait for them here, 
         // but loadSession itself will skip if it sees inactive (actually it should be stopped by interval clear)
-        loadAliveScreenshots();
+        if (activePreviewTab === 'screenshots') {
+          loadAliveScreenshots();
+        }
         loadPlayingStreams();
         loadSession();
         return currentSession;
@@ -131,7 +135,7 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [sessionId]);
+  }, [sessionId, activePreviewTab]);
 
   const loadPlayingStreams = async () => {
     try {
@@ -530,45 +534,53 @@ function SessionMonitorView({ sessionId, onBack, onStop }) {
                 <TabsTrigger value="live">Live Streams</TabsTrigger>
               </TabsList>
 
+              {!activePreviewTab && (
+                <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg bg-muted/10">
+                  <p>Select a preview mode above to view stream activity</p>
+                </div>
+              )}
+
               <TabsContent value="screenshots" className="mt-0 outline-none">
-                {aliveScreenshots.length > 0 ? (
-                  <div className="w-full relative overflow-hidden">
-                    <div className="overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800" style={{ maxWidth: 'calc(100vw - 400px)' }}>
-                      <div className="flex gap-4 pb-4">
-                        {aliveScreenshots.map((screenshot) => (
-                          <div key={screenshot.stream_id} className="flex-none w-80">
-                            <Card>
-                              <CardContent className="p-4">
-                                <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
-                                  <img
-                                    src={screenshot.screenshot_url}
-                                    alt={screenshot.stream_name}
-                                    className="w-full h-full object-contain"
-                                    onError={(e) => {
-                                      e.target.src = FALLBACK_IMAGE_SVG;
-                                    }}
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
-                                    {screenshot.stream_name}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Stream ID: {screenshot.stream_id}
-                                  </p>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </div>
-                        ))}
+                {activePreviewTab === 'screenshots' && (
+                  aliveScreenshots.length > 0 ? (
+                    <div className="w-full relative overflow-hidden">
+                      <div className="overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-gray-800" style={{ maxWidth: 'calc(100vw - 400px)' }}>
+                        <div className="flex gap-4 pb-4">
+                          {aliveScreenshots.map((screenshot) => (
+                            <div key={screenshot.stream_id} className="flex-none w-80">
+                              <Card>
+                                <CardContent className="p-4">
+                                  <div className="aspect-video bg-black rounded-md overflow-hidden mb-3">
+                                    <img
+                                      src={screenshot.screenshot_url}
+                                      alt={screenshot.stream_name}
+                                      className="w-full h-full object-contain"
+                                      onError={(e) => {
+                                        e.target.src = FALLBACK_IMAGE_SVG;
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="font-medium text-sm truncate" title={screenshot.stream_name}>
+                                      {screenshot.stream_name}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Stream ID: {screenshot.stream_id}
+                                    </p>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-12">
-                    <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground">No screenshots available yet</p>
-                  </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <p className="text-muted-foreground">No screenshots available yet</p>
+                    </div>
+                  )
                 )}
               </TabsContent>
 
@@ -1034,10 +1046,23 @@ function SpeedMetricsChart({ sessionId, streamId, cursorTime, isLive, zoomLevel,
     return () => clearInterval(interval);
   }, [sessionId, streamId]);
 
+  const lastTimestampRef = React.useRef(null);
+
   const loadMetrics = async () => {
     try {
-      const response = await streamSessionsAPI.getStreamMetrics(sessionId, streamId);
-      setAllMetrics(response.data?.metrics || []);
+      const response = await streamSessionsAPI.getStreamMetrics(sessionId, streamId, lastTimestampRef.current);
+      const newMetrics = response.data?.metrics || [];
+      
+      if (newMetrics.length > 0) {
+        lastTimestampRef.current = newMetrics[newMetrics.length - 1].timestamp;
+        setAllMetrics(prev => {
+          // Prevent duplicates by checking the last timestamp
+          const filterPrev = prev.length > 0 && newMetrics[0].timestamp <= prev[prev.length - 1].timestamp 
+            ? prev.filter(p => p.timestamp < newMetrics[0].timestamp)
+            : prev;
+          return [...filterPrev, ...newMetrics];
+        });
+      }
       setLoading(false);
     } catch (err) {
       console.error('Failed to load metrics:', err);

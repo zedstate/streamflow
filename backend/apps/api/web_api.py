@@ -5360,9 +5360,12 @@ def get_stream_metrics(session_id, stream_id):
             return jsonify({"error": "Stream not found in session"}), 404
         
         # Get metrics history
+        since_ts = request.args.get('since_timestamp', type=float)
         metrics_data = []
         if stream_info.metrics_history:
             for metric in stream_info.metrics_history:
+                if since_ts is not None and metric.timestamp <= since_ts:
+                    continue
                 metrics_data.append({
                     'timestamp': metric.timestamp,
                     'speed': metric.speed,
