@@ -1188,6 +1188,23 @@ class StreamSessionManager:
             except Exception as e:
                 logger.error(f"Error checking monitors for deleted session {session_id}: {e}")
         
+        # Strip all physical screenshot files associated with this session before removal
+        # Only delete if no other active session is currently monitoring the same stream
+        def is_stream_actively_monitored(sid: int) -> bool:
+            for other_sid, other_session in self.sessions.items():
+                if other_sid != session_id and other_session.is_active and sid in other_session.streams:
+                    return True
+            return False
+
+        try:
+            from apps.stream.stream_screenshot_service import get_screenshot_service
+            screenshot_service = get_screenshot_service()
+            for stream_id in self.sessions[session_id].streams.keys():
+                if not is_stream_actively_monitored(stream_id):
+                    screenshot_service.delete_screenshot(stream_id)
+        except Exception as e:
+            logger.error(f"Error cleaning up screenshots for deleted session {session_id}: {e}")
+        
         # Remove session
         del self.sessions[session_id]
         if session_id in self.session_locks:

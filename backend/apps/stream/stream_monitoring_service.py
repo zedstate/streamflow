@@ -317,15 +317,17 @@ class StreamMonitoringService:
                     # The penalty logic in _evaluate_session_streams will move it to quarantine if it loops again
                     if info.reliability_score >= PASS_SCORE_THRESHOLD:
                         logger.info(f"Stream {stream_id} passed review (Score: {info.reliability_score:.1f}), moving to Stable")
-                        with self.session_manager.session_locks[session.session_id]:
-                            info.status = 'stable'
-                            info.last_status_change = current_time
-                            # Reset loop duration if it was a loop review
-                            if is_loop_review:
-                                info.loop_duration = None
-                                info.status_reason = None
-                            updates_needed = True
-                            transitioned_to_stable = True
+                        lock = self.session_manager.session_locks.get(session.session_id)
+                        if lock:
+                            with lock:
+                                info.status = 'stable'
+                                info.last_status_change = current_time
+                                # Reset loop duration if it was a loop review
+                                if is_loop_review:
+                                    info.loop_duration = None
+                                    info.status_reason = None
+                                updates_needed = True
+                                transitioned_to_stable = True
                     # Else: stay in review until score improves or it dies (monitored by standard logic)
         
         if updates_needed:
