@@ -296,23 +296,77 @@ def migrate_automation(session, data_dir) -> int:
     )
 
     # --- Channel / group / period assignments ---
-    # These three blobs are stored verbatim as SystemSetting JSON values.
-    # channel_period_assignments: { channel_id_str: { period_uuid: profile_uuid } }
-    # channel_assignments:        { channel_id_str: profile_uuid }
-    # group_assignments:          { group_id_str:   profile_uuid }
-    # The UUID keys are used directly by AutomationConfigManager — no remapping needed.
-    assignment_keys = (
-        'channel_period_assignments',
-        'channel_assignments',
-        'group_assignments',
-    )
-    for key in assignment_keys:
-        value = data.get(key)
-        if value:  # skip empty dicts — no point writing them
-            session.merge(SystemSetting(key=key, value=value))
+    # At runtime AutomationConfigManager stores these blobs with INTEGER string ids
+    # as keys/values (e.g. "1", "2") because create_period() and create_profile()
+    # return str(row.id). The JSON backup used UUIDs from the old file-based system.
+    # get_period() and get_profile() both do int(id) and return None on a UUID, so
+    # we must remap every UUID to its new integer DB id before writing.
+    #
+    # profile_uuid_to_db_id and period_uuid_to_db_id are built from the loops above.
+    # Build period_uuid -> DB id map from what was just inserted.
+    period_uuid_to_db_id: dict = {}
+    for per_uuid, per_item in periods.items():
+        name = per_item.get('name', 'Period')
+        row = session.query(AutomationPeriod).filter(AutomationPeriod.name == name).first()
+        if row:
+            period_uuid_to_db_id[str(per_uuid)] = str(row.id)
+
+    # channel_period_assignments: { channel_id: { period_uuid: profile_uuid } }
+    # -> remapped to:             { channel_id: { str(period_db_id): str(profile_db_id) } }
+    raw_cpa = data.get('channel_period_assignments', {})
+    if raw_cpa:
+        remapped_cpa = {}
+        skipped = 0
+        for cid, period_map in raw_cpa.items():
+            if not isinstance(period_map, dict):
+                continue
+            remapped_inner = {}
+            for per_uuid, prof_uuid in period_map.items():
+                per_db_id  = period_uuid_to_db_id.get(str(per_uuid))
+                prof_db_id = str(profile_uuid_to_db_id.get(str(prof_uuid), ''))
+                if per_db_id and prof_db_id:
+                    remapped_inner[per_db_id] = prof_db_id
+                else:
+                    skipped += 1
+                    logger.warning(
+                        f"  channel_period_assignments: could not remap "
+                        f"period {per_uuid!r} or profile {prof_uuid!r} for channel {cid} — skipped"
+                    )
+            if remapped_inner:
+                remapped_cpa[str(cid)] = remapped_inner
+        session.merge(SystemSetting(key='channel_period_assignments', value=remapped_cpa))
+        rows_written += 1
+        logger.info(
+            f"  ✓ Migrated channel_period_assignments "
+            f"({len(remapped_cpa)} channels"
+            + (f", {skipped} entries skipped" if skipped else "") + ")"
+        )
+
+    # channel_assignments: { channel_id: profile_uuid } -> { channel_id: str(profile_db_id) }
+    raw_ca = data.get('channel_assignments', {})
+    if raw_ca:
+        remapped_ca = {
+            str(cid): str(profile_uuid_to_db_id[str(prof_uuid)])
+            for cid, prof_uuid in raw_ca.items()
+            if str(prof_uuid) in profile_uuid_to_db_id
+        }
+        if remapped_ca:
+            session.merge(SystemSetting(key='channel_assignments', value=remapped_ca))
             rows_written += 1
-            count = len(value)
-            logger.info(f"  ✓ Migrated {key} ({count} entries)")
+            logger.info(f"  ✓ Migrated channel_assignments ({len(remapped_ca)} entries)")
+
+    # group_assignments: { group_id: profile_uuid } -> { group_id: str(profile_db_id) }
+    raw_ga = data.get('group_assignments', {})
+    if raw_ga:
+        remapped_ga = {
+            str(gid): str(profile_uuid_to_db_id[str(prof_uuid)])
+            for gid, prof_uuid in raw_ga.items()
+            if str(prof_uuid) in profile_uuid_to_db_id
+        }
+        if remapped_ga:
+            session.merge(SystemSetting(key='group_assignments', value=remapped_ga))
+            rows_written += 1
+            logger.info(f"  ✓ Migrated group_assignments ({len(remapped_ga)} entries)")
 
     return rows_written
 
