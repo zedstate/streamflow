@@ -46,7 +46,7 @@ class TestSingleChannelCheckingMode(unittest.TestCase):
                 import channel_settings_manager
                 channel_settings_manager._channel_settings_manager = None
                 
-                from stream_checker_service import StreamCheckerService
+                from apps.stream.stream_checker_service import StreamCheckerService
                 from channel_settings_manager import get_channel_settings_manager
                 
                 # Mock config
@@ -126,7 +126,7 @@ class TestSingleChannelCheckingMode(unittest.TestCase):
                 import channel_settings_manager
                 channel_settings_manager._channel_settings_manager = None
                 
-                from stream_checker_service import StreamCheckerService
+                from apps.stream.stream_checker_service import StreamCheckerService
                 from channel_settings_manager import get_channel_settings_manager
                 
                 # Mock config
@@ -208,7 +208,7 @@ class TestSingleChannelCheckingMode(unittest.TestCase):
                 import channel_settings_manager
                 channel_settings_manager._channel_settings_manager = None
                 
-                from stream_checker_service import StreamCheckerService
+                from apps.stream.stream_checker_service import StreamCheckerService
                 from channel_settings_manager import get_channel_settings_manager
                 
                 # Mock config

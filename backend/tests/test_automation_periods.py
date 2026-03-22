@@ -12,7 +12,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from automation_config_manager import AutomationConfigManager, CONFIG_DIR, AUTOMATION_CONFIG_FILE
+from apps.automation.automation_config_manager import AutomationConfigManager, CONFIG_DIR, AUTOMATION_CONFIG_FILE
 
 
 def test_automation_periods_creation():
@@ -22,7 +22,7 @@ def test_automation_periods_creation():
     # Use temporary directory for testing
     with tempfile.TemporaryDirectory() as tmpdir:
         # Override config paths
-        import automation_config_manager
+        import apps.automation.automation_config_manager
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
         automation_config_manager.CONFIG_DIR = Path(tmpdir)
@@ -80,7 +80,7 @@ def test_automation_periods_channel_assignment():
     print("Test 2: Assigning periods to channels")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        import automation_config_manager
+        import apps.automation.automation_config_manager
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
         automation_config_manager.CONFIG_DIR = Path(tmpdir)
@@ -137,7 +137,7 @@ def test_automation_periods_update_delete():
     print("Test 3: Updating and deleting periods")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        import automation_config_manager
+        import apps.automation.automation_config_manager
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
         automation_config_manager.CONFIG_DIR = Path(tmpdir)
@@ -199,7 +199,7 @@ def test_effective_configuration():
     print("Test 4: Testing effective configuration")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        import automation_config_manager
+        import apps.automation.automation_config_manager
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
         automation_config_manager.CONFIG_DIR = Path(tmpdir)
@@ -247,7 +247,7 @@ def test_multiple_periods_per_channel():
     print("Test 5: Multiple periods per channel")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        import automation_config_manager
+        import apps.automation.automation_config_manager
         original_config_dir = automation_config_manager.CONFIG_DIR
         original_config_file = automation_config_manager.AUTOMATION_CONFIG_FILE
         automation_config_manager.CONFIG_DIR = Path(tmpdir)

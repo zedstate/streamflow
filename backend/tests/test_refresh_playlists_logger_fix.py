@@ -24,7 +24,7 @@ class TestRefreshPlaylistsLoggerFix(unittest.TestCase):
         """
         # Import the module - if there's a NameError, the test will fail
         try:
-            import automated_stream_manager
+            import apps.automation.automated_stream_manager
             # Verify the module loaded successfully
             self.assertTrue(hasattr(automated_stream_manager, 'AutomatedStreamManager'))
             self.assertTrue(hasattr(automated_stream_manager, 'logger'))
@@ -33,7 +33,7 @@ class TestRefreshPlaylistsLoggerFix(unittest.TestCase):
     
     def test_logger_available_in_exception_handler(self):
         """Test that logger is available when DeadStreamsTracker import fails."""
-        import automated_stream_manager
+        import apps.automation.automated_stream_manager
         
         # Verify logger exists and can be used
         self.assertTrue(hasattr(automated_stream_manager, 'logger'))
@@ -47,7 +47,7 @@ class TestRefreshPlaylistsLoggerFix(unittest.TestCase):
     
     def test_dead_streams_tracker_flag_set(self):
         """Test that DEAD_STREAMS_TRACKER_AVAILABLE flag is properly set."""
-        import automated_stream_manager
+        import apps.automation.automated_stream_manager
         
         # Verify the flag exists and is a boolean
         self.assertTrue(hasattr(automated_stream_manager, 'DEAD_STREAMS_TRACKER_AVAILABLE'))

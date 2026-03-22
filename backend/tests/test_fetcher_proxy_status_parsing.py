@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from udi.fetcher import UDIFetcher
+from apps.udi.fetcher import UDIFetcher
 
 
 class TestFetcherProxyStatusParsing(unittest.TestCase):

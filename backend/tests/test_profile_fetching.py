@@ -16,9 +16,9 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from udi.fetcher import UDIFetcher
-from dispatcharr_config import get_dispatcharr_config
-from logging_config import setup_logging
+from apps.udi.fetcher import UDIFetcher
+from apps.config.dispatcharr_config import get_dispatcharr_config
+from apps.core.logging_config import setup_logging
 
 logger = setup_logging(__name__)
 

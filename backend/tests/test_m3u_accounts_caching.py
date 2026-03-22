@@ -22,7 +22,7 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from automated_stream_manager import AutomatedStreamManager
+from apps.automation.automated_stream_manager import AutomatedStreamManager
 
 
 class TestM3UAccountsCaching(unittest.TestCase):
@@ -296,7 +296,7 @@ class TestM3UAccountsCachingDebugLogs(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
         import logging
         from io import StringIO
-        import automated_stream_manager
+        import apps.automation.automated_stream_manager
         
         # Set up logging capture
         self.log_stream = StringIO()

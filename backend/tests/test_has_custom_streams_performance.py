@@ -25,7 +25,7 @@ class TestHasCustomStreamsPerformance(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_returns_true_when_custom_stream_exists(self, mock_get_udi):
         """Test that has_custom_streams returns True when custom stream exists in UDI cache."""
-        from api_utils import has_custom_streams
+        from apps.core.api_utils import has_custom_streams
         
         # Mock UDI manager to have custom streams
         mock_udi = MagicMock()
@@ -42,7 +42,7 @@ class TestHasCustomStreamsPerformance(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_returns_false_when_no_custom_streams(self, mock_get_udi):
         """Test that has_custom_streams returns False when no custom streams in UDI cache."""
-        from api_utils import has_custom_streams
+        from apps.core.api_utils import has_custom_streams
         
         # Mock UDI manager with no custom streams
         mock_udi = MagicMock()
@@ -57,7 +57,7 @@ class TestHasCustomStreamsPerformance(unittest.TestCase):
     @patch('api_utils.get_udi_manager')
     def test_uses_udi_cache_not_api(self, mock_get_udi):
         """Test that has_custom_streams uses UDI cache, not direct API calls."""
-        from api_utils import has_custom_streams
+        from apps.core.api_utils import has_custom_streams
         
         # Mock UDI manager
         mock_udi = MagicMock()

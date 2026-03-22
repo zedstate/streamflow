@@ -1,8 +1,8 @@
 
 import unittest
 from unittest.mock import MagicMock, patch
-from stream_monitoring_service import StreamMonitoringService
-from stream_session_manager import SessionInfo, StreamInfo
+from apps.stream.stream_monitoring_service import StreamMonitoringService
+from apps.stream.stream_session_manager import SessionInfo, StreamInfo
 
 class TestEmptyChannelFill(unittest.TestCase):
     @patch('stream_monitoring_service.get_session_manager')

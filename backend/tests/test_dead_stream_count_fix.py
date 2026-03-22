@@ -24,7 +24,7 @@ class TestDeadStreamCountFix(unittest.TestCase):
     
     def test_dead_streams_tracker_stores_channel_id(self):
         """Test that dead streams tracker stores and retrieves channel_id."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         # Create temporary tracker file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -55,7 +55,7 @@ class TestDeadStreamCountFix(unittest.TestCase):
     
     def test_dead_streams_persist_in_tracker_after_removal(self):
         """Test that dead streams remain in tracker even after channel removal."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         # Create temporary tracker file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -89,7 +89,7 @@ class TestDeadStreamCountFix(unittest.TestCase):
     
     def test_dead_streams_tracker_persistence(self):
         """Test that dead streams are persisted to disk and can be reloaded."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         # Create temporary tracker file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:

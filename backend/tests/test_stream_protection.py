@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Mock dotenv before imports
 sys.modules['dotenv'] = MagicMock()
 
-from stream_monitoring_service import StreamMonitoringService
-from stream_session_manager import StreamInfo, SessionInfo
+from apps.stream.stream_monitoring_service import StreamMonitoringService
+from apps.stream.stream_session_manager import StreamInfo, SessionInfo
 
 class TestStreamProtection(unittest.TestCase):
     def setUp(self):

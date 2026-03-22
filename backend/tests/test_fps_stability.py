@@ -6,10 +6,10 @@ import os
 # Add backend to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from stream_checker_service import StreamCheckerService
-from stream_monitoring_service import StreamMonitoringService
-from stream_session_manager import StreamInfo
-from stream_check_utils import get_stream_info_and_bitrate
+from apps.stream.stream_checker_service import StreamCheckerService
+from apps.stream.stream_monitoring_service import StreamMonitoringService
+from apps.stream.stream_session_manager import StreamInfo
+from apps.stream.stream_check_utils import get_stream_info_and_bitrate
 
 class TestFPSStability(unittest.TestCase):
     
@@ -68,7 +68,7 @@ class TestFPSStability(unittest.TestCase):
         self.assertEqual(key1[3], 25.0)
 
     def test_monitor_fps_rounding(self):
-        from ffmpeg_stream_monitor import FFmpegStreamMonitor
+        from apps.stream.ffmpeg_stream_monitor import FFmpegStreamMonitor
         monitor = FFmpegStreamMonitor("http://url")
         
         # Test metadata line parsing

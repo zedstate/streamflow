@@ -1,0 +1,3788 @@
+#!/usr/bin/env python3
+"""
+Stream Checker Service for Dispatcharr.
+
+This service manages stream quality checking, rating, and ordering for
+Dispatcharr channels. It implements a comprehensive system for maintaining
+optimal stream quality across all channels.
+
+Features:
+    - Queue-based channel checking with priority support
+    - Tracking of M3U playlist update events
+    - Scheduled global checks during configurable off-peak hours
+    - Progressive stream rating and automatic ordering
+    - Real-time progress reporting via web API
+    - Thread-safe operations with proper synchronization
+
+The service runs continuously in the background, monitoring for channel
+updates and maintaining a queue of channels that need checking. It
+integrates with the stream_check_utils.py module for stream analysis.
+"""
+
+import json
+import logging
+import os
+import threading
+import time
+from collections import defaultdict, deque, Counter
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple, Any
+import queue
+
+from apps.core.api_utils import (
+    fetch_channel_streams,
+    update_channel_streams,
+    _get_base_url,
+    patch_request,
+    batch_update_stream_stats
+)
+
+# Import UDI for direct data access
+from apps.udi import get_udi_manager
+
+# Import dead streams tracker
+from apps.stream.dead_streams_tracker import DeadStreamsTracker
+
+# Import channel settings manager
+# Import channel settings manager - DEPRECATED/REMOVED
+# from channel_settings_manager import get_channel_settings_manager
+
+# Import profile config
+# Import profile config - DEPRECATED/REMOVED
+# from profile_config import get_profile_config
+
+# Import centralized stream stats utilities
+from apps.core.stream_stats_utils import (
+    parse_bitrate_value,
+    format_bitrate,
+    parse_fps_value,
+    format_fps,
+    extract_stream_stats,
+    format_stream_stats_for_display,
+    calculate_channel_averages,
+    is_stream_dead as utils_is_stream_dead
+)
+
+# Import changelog manager
+try:
+    from apps.automation.automated_stream_manager import ChangelogManager
+    CHANGELOG_AVAILABLE = True
+except ImportError:
+    CHANGELOG_AVAILABLE = False
+
+# Import croniter for cron expression validation
+try:
+    from croniter import croniter
+    CRONITER_AVAILABLE = True
+except ImportError:
+    CRONITER_AVAILABLE = False
+
+# Setup centralized logging
+from apps.core.logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
+
+logger = setup_logging(__name__)
+
+# Configuration directory
+CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
+
+
+class StreamCheckConfig:
+    """Configuration for stream checking service."""
+    
+    DEFAULT_CONFIG = {
+        'enabled': True,
+        'check_interval': 300,  # DEPRECATED - checks now only triggered by M3U refresh
+        # Individual automation controls
+        'automation_controls': {
+            'auto_m3u_updates': True,  # Automatically refresh M3U playlists
+            'auto_stream_matching': True,  # Automatically match streams to channels via regex
+            'auto_quality_checking': True,  # Automatically check stream quality
+            'remove_non_matching_streams': False  # Remove streams from channels if they no longer match regex
+        },
+        'global_check_schedule': {
+            'enabled': True,
+            'cron_expression': '0 3 * * *',  # Cron expression: default is daily at 3:00 AM
+            'frequency': 'daily',  # DEPRECATED: kept for backward compatibility - 'daily' or 'monthly'
+            'hour': 3,  # DEPRECATED: kept for backward compatibility - 3 AM for off-peak checking
+            'minute': 0,  # DEPRECATED: kept for backward compatibility
+            'day_of_month': 1  # DEPRECATED: kept for backward compatibility - Day of month for monthly checks (1-31)
+        },
+        'stream_analysis': {
+            'ffmpeg_duration': 30,  # seconds to analyze each stream
+            'timeout': 30,  # timeout for operations
+            'stream_startup_buffer': 10,  # seconds buffer for stream startup (max time before stream starts)
+            'retries': 1,  # retry attempts
+            'retry_delay': 10,  # seconds between retries
+            'user_agent': 'VLC/3.0.14'  # user agent for ffmpeg/ffprobe
+        },
+        'scoring': {
+            'weights': {
+                'bitrate': 0.40,
+                'resolution': 0.35,
+                'fps': 0.15,
+                'codec': 0.10
+            },
+            'min_score': 0.0,  # minimum score to keep stream
+            'prefer_h265': True  # prefer h265 over h264
+        },
+        'queue': {
+            'max_size': 1000,
+            'check_on_update': True,  # check channels when they receive M3U updates
+            'max_channels_per_run': 50  # limit channels per check cycle
+        },
+        'concurrent_streams': {
+            'global_limit': 10,  # Maximum concurrent stream checks globally (0 = unlimited)
+            'enabled': True,  # Enable concurrent checking via Celery
+            'stagger_delay': 1.0  # Delay in seconds between dispatching tasks to prevent simultaneous starts
+        },
+        'dead_stream_handling': {
+            'enabled': True,  # Enable dead stream removal
+            'min_resolution_width': 0,  # Minimum width in pixels (0 = no minimum, e.g., 1280 for 720p)
+            'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
+            'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
+            'min_score': 0  # Minimum score (0-100, 0 = no minimum)
+        },
+        'batch_operations': {
+            'enabled': True,  # Enable batch stats updates to reduce API calls
+            'batch_size': 10,  # Number of streams to update per batch
+            'verify_updates': False  # Verify channel updates by refreshing UDI (adds API overhead)
+        }
+    }
+    
+    def __init__(self, config_file: Optional[str] = None) -> None:
+        """
+        Initialize the StreamCheckConfig.
+        """
+        from apps.database.manager import get_db_manager
+        self.db = get_db_manager()
+        self.config = self._load_config()
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """
+        Load configuration from database or create default.
+        
+        Merges loaded config with DEFAULT_CONFIG to ensure all
+        required keys exist even if config in DB is incomplete.
+        
+        Returns:
+            Dict[str, Any]: The configuration dictionary.
+        """
+        import copy
+        log_function_call(logger, "_load_config")
+        
+        loaded = self.db.get_system_setting('stream_checker_config', {})
+        if loaded:
+            logger.debug(f"Loaded config from DB with {len(loaded)} top-level keys")
+            # Deep copy defaults to avoid mutating DEFAULT_CONFIG
+            config = copy.deepcopy(self.DEFAULT_CONFIG)
+            config.update(loaded)
+            
+            # Auto-migrate legacy pipeline mode to automation_controls
+            pipeline_mode = config.get('pipeline_mode', '')
+            if pipeline_mode and pipeline_mode != 'disabled':
+                logger.info(f"Migrating legacy pipeline mode '{pipeline_mode}' to automation_controls")
+                
+                if pipeline_mode == 'pipeline_1':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': True}
+                elif pipeline_mode == 'pipeline_1_5':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': True}
+                elif pipeline_mode == 'pipeline_2':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': False}
+                elif pipeline_mode == 'pipeline_2_5':
+                    config['automation_controls'] = {'auto_m3u_updates': True, 'auto_stream_matching': True, 'auto_quality_checking': False}
+                elif pipeline_mode == 'pipeline_3':
+                    config['automation_controls'] = {'auto_m3u_updates': False, 'auto_stream_matching': False, 'auto_quality_checking': False}
+                
+                config.pop('pipeline_mode', None)
+                self._save_config(config)
+            
+            return config
+        
+        logger.debug("No config in DB, creating default")
+        config = copy.deepcopy(self.DEFAULT_CONFIG)
+        self._save_config(config)
+        return config
+    
+    def _save_config(
+        self, config: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Save configuration to database.
+        
+        Parameters:
+            config (Optional[Dict[str, Any]]): Config to save.
+                Defaults to self.config.
+        """
+        if config is None:
+            config = self.config
+        
+        self.db.set_system_setting('stream_checker_config', config)
+    
+    def update(self, updates: Dict[str, Any]) -> None:
+        """
+        Update configuration with new values.
+        
+        Performs deep update to handle nested dictionaries.
+        
+        Parameters:
+            updates (Dict[str, Any]): Configuration updates to apply.
+        """
+        def deep_update(
+            base: Dict[str, Any], updates: Dict[str, Any]
+        ) -> None:
+            """Recursively update nested dictionaries."""
+            for key, value in updates.items():
+                if (isinstance(value, dict) and key in base and
+                        isinstance(base[key], dict)):
+                    deep_update(base[key], value)
+                else:
+                    base[key] = value
+        
+        deep_update(self.config, updates)
+        self._save_config()
+        logger.info("Stream checker configuration updated")
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Get configuration value using dot notation.
+        
+        Supports nested keys like 'queue.max_size'.
+        
+        Parameters:
+            key (str): Configuration key (supports dot notation).
+            default (Any): Default value if key not found.
+            
+        Returns:
+            Any: The configuration value or default.
+        """
+        keys = key.split('.')
+        value = self.config
+        for k in keys:
+            if isinstance(value, dict):
+                value = value.get(k)
+            else:
+                return default
+        return value if value is not None else default
+    
+    def is_auto_m3u_updates_enabled(self) -> bool:
+        """Check if automatic M3U updates are enabled."""
+        return self.config.get('automation_controls', {}).get('auto_m3u_updates', True)
+    
+    def is_auto_stream_matching_enabled(self) -> bool:
+        """Check if automatic stream matching is enabled."""
+        return self.config.get('automation_controls', {}).get('auto_stream_matching', True)
+    
+    def is_auto_quality_checking_enabled(self) -> bool:
+        """Check if automatic quality checking is enabled."""
+        return self.config.get('automation_controls', {}).get('auto_quality_checking', True)
+    
+
+
+class ChannelUpdateTracker:
+    """Tracks which channels have received M3U updates."""
+    
+    def __init__(self, tracker_file=None):
+        """Initialize tracker using Database backend."""
+        from apps.database.manager import get_db_manager
+        self.db = get_db_manager()
+        self.updates = self._load_updates()
+        self.lock = threading.Lock()
+        self._save_updates()
+    
+    def _load_updates(self) -> Dict:
+        """Load update tracking data from Database."""
+        loaded = self.db.get_system_setting('channel_updates', {})
+        if loaded:
+            return loaded
+        return {'channels': {}, 'last_global_check': None}
+    
+    def _save_updates(self):
+        """Save update tracking data to Database."""
+        try:
+            self.db.set_system_setting('channel_updates', self.updates)
+        except Exception as e:
+            logger.error(f"Failed to save channel updates: {e}")
+    
+    def mark_channel_updated(self, channel_id: int, timestamp: str = None, stream_count: int = None):
+        """Mark a channel as having received an update.
+        
+        Args:
+            channel_id: The channel ID to mark as updated
+            timestamp: When the update occurred (defaults to now)
+            stream_count: Number of streams in the channel after update
+        """
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+        
+        with self.lock:
+            if 'channels' not in self.updates:
+                self.updates['channels'] = {}
+            
+            channel_key = str(channel_id)
+            
+            # Always mark channel as needing check if stream count changed
+            # This ensures new streams are analyzed even during invulnerability period
+            if channel_key in self.updates['channels']:
+                channel_info = self.updates['channels'][channel_key]
+                # Preserve checked_stream_ids if they exist
+                checked_stream_ids = channel_info.get('checked_stream_ids', [])
+                
+                self.updates['channels'][channel_key] = {
+                    'last_update': timestamp,
+                    'needs_check': True,
+                    'stream_count': stream_count,
+                    'checked_stream_ids': checked_stream_ids
+                }
+            else:
+                self.updates['channels'][channel_key] = {
+                    'last_update': timestamp,
+                    'needs_check': True,
+                    'stream_count': stream_count,
+                    'checked_stream_ids': []
+                }
+            self._save_updates()
+    
+    def mark_channels_updated(self, channel_ids: List[int], timestamp: str = None, stream_counts: Dict[int, int] = None):
+        """Mark multiple channels as updated.
+        
+        Args:
+            channel_ids: List of channel IDs to mark
+            timestamp: When the update occurred (defaults to now)
+            stream_counts: Optional dict mapping channel_id to stream count
+        """
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+        
+        if stream_counts is None:
+            stream_counts = {}
+        
+        marked_count = 0
+        
+        with self.lock:
+            if 'channels' not in self.updates:
+                self.updates['channels'] = {}
+            
+            for channel_id in channel_ids:
+                channel_key = str(channel_id)
+                stream_count = stream_counts.get(channel_id)
+                
+                # Always mark channel if stream count changed (new streams added)
+                # Preserve checked_stream_ids if they exist
+                if channel_key in self.updates['channels']:
+                    channel_info = self.updates['channels'][channel_key]
+                    checked_stream_ids = channel_info.get('checked_stream_ids', [])
+                    
+                    self.updates['channels'][channel_key] = {
+                        'last_update': timestamp,
+                        'needs_check': True,
+                        'stream_count': stream_count,
+                        'checked_stream_ids': checked_stream_ids
+                    }
+                else:
+                    self.updates['channels'][channel_key] = {
+                        'last_update': timestamp,
+                        'needs_check': True,
+                        'stream_count': stream_count,
+                        'checked_stream_ids': []
+                    }
+                marked_count += 1
+            
+            if marked_count > 0:
+                self._save_updates()
+        
+        logger.info(f"Marked {marked_count} channels as updated")
+    
+    def get_channels_needing_check(self) -> List[int]:
+        """Get list of channel IDs that need checking (read-only, doesn't clear flag).
+        
+        For actual queueing operations, use get_and_clear_channels_needing_check() instead
+        to prevent race conditions.
+        """
+        with self.lock:
+            channels = []
+            for channel_id, info in self.updates.get('channels', {}).items():
+                if info.get('needs_check', False):
+                    channels.append(int(channel_id))
+            return channels
+    
+    def get_and_clear_channels_needing_check(self, max_channels: int = None) -> List[int]:
+        """Get list of channel IDs that need checking and atomically clear their needs_check flag.
+        
+        This atomic operation prevents race conditions where M3U refresh could
+        re-mark channels while they're being queued.
+        
+        Args:
+            max_channels: Maximum number of channels to return (None = all)
+            
+        Returns:
+            List of channel IDs that were marked as needing check
+        """
+        with self.lock:
+            channels = []
+            timestamp = datetime.now().isoformat()
+            
+            for channel_id, info in self.updates.get('channels', {}).items():
+                if info.get('needs_check', False):
+                    channels.append(int(channel_id))
+                    # Clear the flag immediately
+                    info['needs_check'] = False
+                    info['queued_at'] = timestamp
+                    
+                    if max_channels and len(channels) >= max_channels:
+                        break
+            
+            # Filter channels by checking_mode setting (channel-level overrides group-level)
+            # Filter channels by checking_mode setting (channel-level overrides group-level)
+            # Need to get full channel data to access channel_group_id
+            udi = get_udi_manager()
+            from apps.automation.automation_config_manager import get_automation_config_manager
+            automation_config = get_automation_config_manager()
+            
+            filtered_channels = []
+            for cid in channels:
+                # Get channel data to access group_id
+                channel_data = None
+                for ch in udi.get_channels():
+                    if ch.get('id') == cid:
+                        channel_data = ch
+                        break
+                
+                group_id = channel_data.get('channel_group_id') if channel_data else None
+                
+                # Get effective profile
+                # Get effective profile via configuration
+                config = automation_config.get_effective_configuration(cid, group_id)
+                profile = config.get('profile') if config else None
+                
+                if profile and profile.get('stream_checking', {}).get('enabled', False):
+                    filtered_channels.append(cid)
+            
+            excluded_count = len(channels) - len(filtered_channels)
+            
+            if excluded_count > 0:
+                logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level)")
+            
+            if filtered_channels:
+                self._save_updates()
+                logger.debug(f"Atomically retrieved and cleared {len(filtered_channels)} channels needing check")
+            
+            return filtered_channels
+    
+    def mark_channel_checked(self, channel_id: int, timestamp: str = None, stream_count: int = None, checked_stream_ids: List[int] = None):
+        """Mark a channel as checked (completed).
+        
+        Args:
+            channel_id: The channel ID to mark as checked
+            timestamp: When the check was completed (defaults to now)
+            stream_count: Number of streams in the channel
+            checked_stream_ids: List of stream IDs that were checked
+        """
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+        
+        with self.lock:
+            if 'channels' not in self.updates:
+                self.updates['channels'] = {}
+            
+            channel_key = str(channel_id)
+            if channel_key in self.updates['channels']:
+                # Update existing entry
+                self.updates['channels'][channel_key]['needs_check'] = False
+                self.updates['channels'][channel_key]['last_check'] = timestamp
+                if stream_count is not None:
+                    self.updates['channels'][channel_key]['stream_count'] = stream_count
+                if checked_stream_ids is not None:
+                    self.updates['channels'][channel_key]['checked_stream_ids'] = checked_stream_ids
+            else:
+                # Create new entry
+                self.updates['channels'][channel_key] = {
+                    'needs_check': False,
+                    'last_check': timestamp,
+                    'stream_count': stream_count,
+                    'checked_stream_ids': checked_stream_ids if checked_stream_ids is not None else []
+                }
+            self._save_updates()
+    
+    def get_checked_stream_ids(self, channel_id: int) -> List[int]:
+        """Get the list of stream IDs that have been checked for a channel.
+        
+        Args:
+            channel_id: The channel ID to query
+            
+        Returns:
+            List of stream IDs that have been checked (empty list if none or channel not tracked)
+        """
+        with self.lock:
+            channel_key = str(channel_id)
+            if channel_key in self.updates.get('channels', {}):
+                return self.updates['channels'][channel_key].get('checked_stream_ids', [])
+            return []
+    
+    def mark_channel_for_force_check(self, channel_id: int):
+        """Mark a channel for force checking (bypasses 2-hour immunity).
+        
+        Args:
+            channel_id: The channel ID to mark for force check
+        """
+        with self.lock:
+            if 'channels' not in self.updates:
+                self.updates['channels'] = {}
+            
+            channel_key = str(channel_id)
+            if channel_key not in self.updates['channels']:
+                self.updates['channels'][channel_key] = {}
+            
+            self.updates['channels'][channel_key]['force_check'] = True
+            self._save_updates()
+    
+    def should_force_check(self, channel_id: int) -> bool:
+        """Check if a channel should be force checked (bypassing immunity).
+        
+        Args:
+            channel_id: The channel ID to check
+            
+        Returns:
+            True if force check is enabled for this channel
+        """
+        with self.lock:
+            channel_key = str(channel_id)
+            if channel_key in self.updates.get('channels', {}):
+                return self.updates['channels'][channel_key].get('force_check', False)
+            return False
+    
+    def clear_force_check(self, channel_id: int):
+        """Clear the force check flag for a channel.
+        
+        Args:
+            channel_id: The channel ID to clear force check for
+        """
+        with self.lock:
+            channel_key = str(channel_id)
+            if channel_key in self.updates.get('channels', {}):
+                self.updates['channels'][channel_key]['force_check'] = False
+                self._save_updates()
+    
+    def mark_global_check(self, timestamp: str = None):
+        """Mark that a global check was initiated.
+        
+        This only updates the timestamp to prevent duplicate global checks.
+        It does NOT clear needs_check flags - those should only be cleared
+        when channels are actually checked via mark_channel_checked().
+        """
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+        
+        with self.lock:
+            self.updates['last_global_check'] = timestamp
+            self._save_updates()
+    
+    def get_last_global_check(self) -> Optional[str]:
+        """Get timestamp of last global check."""
+        return self.updates.get('last_global_check')
+
+
+class StreamCheckQueue:
+    """Queue manager for channel stream checking."""
+    
+    def __init__(self, max_size=1000):
+        self.queue = queue.Queue(maxsize=max_size)
+        self.queued = {}  # Track channels already in queue dict(channel_id -> stream_count)
+        self.in_progress = {} # dict(channel_id -> stream_count)
+        self.completed = set()
+        self.failed = {}
+        self.lock = threading.Lock()
+        
+        # ETA Tracking variables
+        import collections
+        self.stream_processing_times = collections.deque(maxlen=100)
+        self.channel_start_times = {}
+        self.stats = {
+            'total_queued': 0,
+            'total_completed': 0,
+            'total_failed': 0,
+            'current_channel': None,
+            'queue_size': 0
+        }
+    
+    def add_channel(self, channel_id: int, priority: int = 0, stream_count: int = 1):
+        """Add a channel to the checking queue."""
+        with self.lock:
+            # Check if this is a new "batch" starting (queue is completely empty and no workers are active)
+            if self.queue.empty() and len(self.in_progress) == 0:
+                self.stats['total_queued'] = 0
+                self.stats['total_completed'] = 0
+                self.stats['total_failed'] = 0
+                self.queued.clear()
+                self.completed.clear()
+                self.failed.clear()
+
+            # Check if channel is already queued, in progress, or completed
+            if channel_id not in self.queued and channel_id not in self.in_progress and channel_id not in self.completed:
+                try:
+                    self.queue.put((priority, channel_id), block=False)
+                    # We default to 1 stream roughly if unknown, but add_channels will pass precise length 
+                    self.queued[channel_id] = stream_count
+                    self.stats['total_queued'] += 1
+                    self.stats['queue_size'] = self.queue.qsize()
+                    logger.debug(f"Added channel {channel_id} to queue (priority: {priority})")
+                    return True
+                except queue.Full:
+                    logger.warning(f"Queue is full, cannot add channel {channel_id}")
+                    return False
+        return False
+    
+    def add_channels(self, channel_ids: List[int], priority: int = 0):
+        """Add multiple channels to the queue."""
+        added = 0
+        from apps.udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        for channel_id in channel_ids:
+            channel = udi.get_channel_by_id(channel_id)
+            stream_count = len(channel.get('streams', [])) if channel else 1
+            if self.add_channel(channel_id, priority, stream_count=stream_count):
+                added += 1
+        logger.info(f"Added {added}/{len(channel_ids)} channels to checking queue")
+        return added
+    
+    def remove_from_completed(self, channel_id: int):
+        """Remove a channel from the completed set to allow re-queueing.
+        
+        This is used when a channel receives new streams and needs to be
+        checked again, even if it was previously completed.
+        """
+        with self.lock:
+            if channel_id in self.completed:
+                self.completed.discard(channel_id)
+                logger.debug(f"Removed channel {channel_id} from completed set")
+                return True
+        return False
+    
+    def get_next_channel(self, timeout: float = 1.0) -> Optional[int]:
+        """Get the next channel to check."""
+        try:
+            priority, channel_id = self.queue.get(timeout=timeout)
+            with self.lock:
+                stream_count = self.queued.pop(channel_id, 1)  # Remove from queued dict
+                self.in_progress[channel_id] = stream_count
+                self.channel_start_times[channel_id] = datetime.now()
+                self.stats['current_channel'] = channel_id
+                self.stats['queue_size'] = self.queue.qsize()
+            return channel_id
+        except queue.Empty:
+            return None
+    
+    def mark_completed(self, channel_id: int):
+        """Mark a channel check as completed."""
+        with self.lock:
+            # Calculate stream processing duration
+            if channel_id in self.channel_start_times:
+                duration_sec = (datetime.now() - self.channel_start_times[channel_id]).total_seconds()
+                stream_count = self.in_progress.get(channel_id, 1)
+                if stream_count > 0:
+                    time_per_stream = duration_sec / stream_count
+                    self.stream_processing_times.append(time_per_stream)
+                del self.channel_start_times[channel_id]
+
+            if channel_id in self.in_progress:
+                del self.in_progress[channel_id]
+            self.completed.add(channel_id)
+            self.stats['total_completed'] += 1
+            if self.stats['current_channel'] == channel_id:
+                self.stats['current_channel'] = None
+            logger.debug(f"Marked channel {channel_id} as completed")
+    
+    def mark_failed(self, channel_id: int, error: str):
+        """Mark a channel check as failed."""
+        with self.lock:
+            if channel_id in self.channel_start_times:
+                del self.channel_start_times[channel_id]
+                
+            if channel_id in self.in_progress:
+                del self.in_progress[channel_id]
+            self.failed[channel_id] = {
+                'error': error,
+                'timestamp': datetime.now().isoformat()
+            }
+            self.stats['total_failed'] += 1
+            if self.stats['current_channel'] == channel_id:
+                self.stats['current_channel'] = None
+            logger.warning(f"Marked channel {channel_id} as failed: {error}")
+    
+    def get_status(self) -> Dict:
+        """Get current queue status."""
+        with self.lock:
+            return {
+                'queue_size': self.queue.qsize(),
+                'queued': len(self.queued),
+                'in_progress': len(self.in_progress),
+                'completed': len(self.completed),
+                'failed': len(self.failed),
+                
+                # Expose stream ETA calculations to API Response payload
+                'queued_streams_count': sum(self.queued.values()),
+                'in_progress_streams_count': sum(self.in_progress.values()),
+                'avg_stream_process_time_sec': sum(self.stream_processing_times) / len(self.stream_processing_times) if self.stream_processing_times else 0,
+                
+                'current_channel': self.stats['current_channel'],
+                'total_queued': self.stats['total_queued'],
+                'total_completed': self.stats['total_completed'],
+                'total_failed': self.stats['total_failed']
+            }
+    
+    def clear(self):
+        """Clear the queue and reset stats."""
+        with self.lock:
+            while not self.queue.empty():
+                try:
+                    self.queue.get_nowait()
+                except queue.Empty:
+                    break
+            self.queued.clear()
+            self.in_progress.clear()
+            self.completed.clear()
+            self.failed.clear()
+            self.stats = {
+                'total_queued': 0,
+                'total_completed': 0,
+                'total_failed': 0,
+                'current_channel': None,
+                'queue_size': 0
+            }
+        logger.info("Queue cleared")
+
+    def is_empty(self) -> bool:
+        """Check if the queue is empty."""
+        return self.queue.empty()
+
+
+class StreamCheckerProgress:
+    """Manages progress tracking for stream checker operations."""
+    
+    def __init__(self):
+        self.lock = threading.Lock()
+    
+    def update(self, channel_id: int, channel_name: str, current: int, total: int,
+               current_stream: str = '', status: str = 'checking', step: str = '', step_detail: str = '',
+               streams_detail: Optional[Dict] = None):
+        """Update progress information."""
+        from apps.database.manager import get_db_manager
+        with self.lock:
+            progress_data = {
+                'channel_id': channel_id,
+                'channel_name': channel_name,
+                'current_stream': current,
+                'total_streams': total,
+                'percentage': round((current / total * 100) if total > 0 else 0, 1),
+                'current_stream_name': current_stream,
+                'status': status,
+                'step_detail': step_detail,
+                'timestamp': datetime.now().isoformat()
+            }
+            if streams_detail is not None:
+                progress_data['streams_detail'] = streams_detail
+            
+            try:
+                db = get_db_manager()
+                db.set_system_setting('stream_checker_progress', progress_data)
+            except Exception as e:
+                logger.warning(f"Failed to write progress to database: {e}")
+    
+    def clear(self):
+        """Clear progress tracking."""
+        from apps.database.manager import get_db_manager
+        with self.lock:
+            try:
+                db = get_db_manager()
+                db.set_system_setting('stream_checker_progress', {})
+            except Exception as e:
+                logger.warning(f"Failed to clear progress in database: {e}")
+    
+    def get(self) -> Optional[Dict]:
+        """Get current progress."""
+        from apps.database.manager import get_db_manager
+        with self.lock:
+            try:
+                db = get_db_manager()
+                data = db.get_system_setting('stream_checker_progress', {})
+                return data if data else None
+            except Exception:
+                return None
+
+
+class StreamCheckerService:
+    """Main service for managing stream checking operations."""
+    
+    def __init__(self):
+        log_function_call(logger, "__init__")
+        logger.debug("Initializing StreamCheckerService components...")
+        
+        self.config = StreamCheckConfig()
+        logger.debug(f"Config loaded: pipeline_mode={self.config.get('pipeline_mode')}")
+        
+        self.update_tracker = ChannelUpdateTracker()
+        logger.debug("Update tracker initialized")
+        
+        self.check_queue = StreamCheckQueue(
+            max_size=self.config.get('queue.max_size', 1000)
+        )
+        logger.debug(f"Check queue initialized with max_size={self.config.get('queue.max_size', 1000)}")
+        
+        self.progress = StreamCheckerProgress()
+        logger.debug("Progress tracker initialized")
+        
+        self.dead_streams_tracker = DeadStreamsTracker()
+        logger.debug("Dead streams tracker initialized")
+        
+        # Initialize changelog manager
+        self.changelog = None
+        if CHANGELOG_AVAILABLE:
+            try:
+                self.changelog = ChangelogManager(changelog_file=CONFIG_DIR / "stream_checker_changelog.json")
+                logger.info("Stream checker changelog manager initialized")
+            except Exception as e:
+                log_exception(logger, e, "changelog initialization")
+                logger.warning(f"Failed to initialize changelog manager: {e}")
+        
+        # Batch changelog tracking
+        self.batch_changelog_entries = []
+        self.batch_start_time = None
+        self.batch_lock = threading.Lock()
+        
+        self.running = False
+        self.checking = False
+        self.start_time = datetime.now()
+        self.worker_thread = None
+        self.scheduler_thread = None
+        self.lock = threading.Lock()
+        self._cancel_queueing = False
+        
+        self.sync_batch_state = {
+            'active': False,
+            'total_channels': 0,
+            'completed': 0,
+            'failed': 0,
+            'in_progress': 0
+        }
+        
+        # Event for immediate triggering of updated channels check
+        self.check_trigger = threading.Event()
+        logger.debug("Check trigger event created")
+        
+        # Event for immediate config change notification
+        self.config_changed = threading.Event()
+        logger.debug("Config changed event created")
+        
+        # Event for aborting current channel check
+        self.abort_current_check = threading.Event()
+        logger.debug("Abort current check event created")
+        
+        logger.info("Stream Checker Service initialized")
+        log_function_return(logger, "__init__")
+    
+    def start(self):
+        """Start the stream checker service."""
+        log_function_call(logger, "start")
+        with self.lock:
+            if self.running:
+                logger.warning("Stream checker service is already running")
+                return
+            
+            log_state_change(logger, "stream_checker_service", "stopped", "starting")
+            self.running = True
+            
+            # Start worker thread for processing queue
+            self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+            self.worker_thread.start()
+            logger.debug(f"Worker thread started (id: {self.worker_thread.ident})")
+            
+            # Start scheduler thread for periodic checks
+            self.scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True)
+            self.scheduler_thread.start()
+            logger.debug(f"Scheduler thread started (id: {self.scheduler_thread.ident})")
+            
+            log_state_change(logger, "stream_checker_service", "starting", "running")
+            logger.info("Stream checker service started")
+            log_function_return(logger, "start")
+    
+    def stop(self):
+        """Stop the stream checker service."""
+        with self.lock:
+            if not self.running:
+                logger.warning("Stream checker service is not running")
+                return
+            
+            self.running = False
+            logger.info("Stream checker service stopping...")
+        
+        # Wait for threads to finish
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=5)
+        if self.scheduler_thread and self.scheduler_thread.is_alive():
+            self.scheduler_thread.join(timeout=5)
+        
+        self.progress.clear()
+        logger.info("Stream checker service stopped")
+    
+    def _worker_loop(self):
+        """Main worker loop for processing the check queue."""
+        log_function_call(logger, "_worker_loop")
+        logger.info("Stream checker worker started")
+        
+        while self.running:
+            try:
+                logger.debug("Worker waiting for next channel from queue...")
+                channel_id = self.check_queue.get_next_channel(timeout=1.0)
+                if channel_id is None:
+                    # No channel in queue - check if we should finalize a batch
+                    if self.batch_start_time is not None:
+                        # Queue is empty and we have an active batch - finalize it
+                        self._finalize_batch_changelog()
+                    logger.debug("No channel in queue (timeout)")
+                    continue
+                
+                # Start a new batch if not already started
+                if self.batch_start_time is None:
+                    self._start_batch_changelog()
+                
+                logger.debug(f"Worker processing channel {channel_id}")
+                # Clear abort flag before checking
+                self.abort_current_check.clear()
+                # Check this channel
+                self._check_channel(channel_id)
+                logger.debug(f"Worker completed channel {channel_id}")
+                
+            except Exception as e:
+                log_exception(logger, e, "worker loop")
+                logger.error(f"Error in worker loop: {e}", exc_info=True)
+        
+        # Finalize any remaining batch before stopping
+        if self.batch_start_time is not None:
+            self._finalize_batch_changelog()
+        
+        logger.info("Stream checker worker stopped")
+        log_function_return(logger, "_worker_loop")
+    
+    def _scheduler_loop(self):
+        """Scheduler loop for M3U update-triggered and scheduled checks."""
+        logger.info("Stream checker scheduler started")
+        
+        while self.running:
+            try:
+                # Wait for either a trigger event or timeout (60 seconds for global check monitoring)
+                triggered = self.check_trigger.wait(timeout=60)
+                
+                # Handle trigger for M3U updates
+                if triggered:
+                    self.check_trigger.clear()
+                    # Only process channel queueing if this was a real M3U update trigger
+                    # (not a config change wake-up)
+                    if not self.config_changed.is_set():
+                        # Call _queue_updated_channels() directly - it handles pipeline mode checking internally
+                        self._queue_updated_channels()
+                
+                # Check if config was changed
+                if self.config_changed.is_set():
+                    self.config_changed.clear()
+                    logger.info("Configuration change detected, applying new settings immediately")
+                
+            except Exception as e:
+                logger.error(f"Error in scheduler loop: {e}", exc_info=True)
+        
+        logger.info("Stream checker scheduler stopped")
+    
+    def _queue_updated_channels(self):
+        """Queue channels that have received M3U updates.
+        
+        This respects the pipeline mode:
+        - Disabled: Skip all automation
+        - Pipeline 1/1.5: Queue channels for checking
+        - Pipeline 2/2.5: Skip checking (only update and match)
+        """
+        # Check if auto quality checking is enabled (considers both pipeline mode and individual controls)
+        if not self.config.is_auto_quality_checking_enabled():
+            logger.info("Skipping channel queueing - automatic quality checking is disabled")
+            return
+        
+        max_channels = self.config.get('queue.max_channels_per_run', 50)
+        
+        # Atomically get channels and clear their needs_check flag
+        # This prevents duplicate queueing if M3U refresh happens during check
+        channels_to_queue = self.update_tracker.get_and_clear_channels_needing_check(max_channels)
+        
+        if channels_to_queue:
+            # Remove channels from completed set to allow re-queueing
+            # This is necessary when channels receive new streams after being checked
+            for channel_id in channels_to_queue:
+                self.check_queue.remove_from_completed(channel_id)
+            
+            added = self.check_queue.add_channels(channels_to_queue, priority=10)
+            logger.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking")
+        else:
+            logger.debug("No channels need checking")
+    
+    def _queue_all_channels(self, force_check: bool = False):
+        """Queue all channels for checking (global check).
+        
+        Args:
+            force_check: If True, marks channels for force checking which bypasses 2-hour immunity
+        """
+        self._cancel_queueing = False
+        try:
+            udi = get_udi_manager()
+            channels = udi.get_channels()
+            
+            if channels:
+                channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
+                
+                # Filter by profile if one is selected
+                # Filter channels using Automation Profiles
+                from apps.automation.automation_config_manager import get_automation_config_manager
+                automation_config = get_automation_config_manager()
+                
+                filtered_channel_ids = []
+                
+                for ch in channels:
+                    if not isinstance(ch, dict) or 'id' not in ch:
+                        continue
+                    
+                    cid = ch['id']
+                    channel_group_id = ch.get('channel_group_id')
+                    
+                    # Get effective profile
+                    # Get effective profile via configuration
+                    config = automation_config.get_effective_configuration(cid, channel_group_id)
+                    profile = config.get('profile') if config else None
+                    
+                    # Check if stream checking is enabled in the profile
+                    if profile and profile.get('stream_checking', {}).get('enabled', False):
+                        filtered_channel_ids.append(cid)
+                
+                excluded_count = len(channel_ids) - len(filtered_channel_ids)
+                
+                if excluded_count > 0:
+                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level)")
+                
+                if not filtered_channel_ids:
+                    logger.info("No channels with checking enabled to queue for global check")
+                    return
+                
+                if force_check:
+                    # Mark all enabled channels for force check (bypasses immunity)
+                    for channel_id in filtered_channel_ids:
+                        self.update_tracker.mark_channel_for_force_check(channel_id)
+                
+                # Remove channels from completed set to allow re-queueing
+                # This is necessary for global checks to re-check all channels
+                for channel_id in filtered_channel_ids:
+                    self.check_queue.remove_from_completed(channel_id)
+                
+                max_channels = self.config.get('queue.max_channels_per_run', 50)
+                
+                # Queue in batches with higher priority for global checks
+                total_added = 0
+                for i in range(0, len(filtered_channel_ids), max_channels):
+                    if getattr(self, '_cancel_queueing', False):
+                        logger.info("Aborting channel queueing loop due to cancel flag")
+                        break
+                    batch = filtered_channel_ids[i:i+max_channels]
+                    added = self.check_queue.add_channels(batch, priority=5)
+                    total_added += added
+                
+                logger.info(f"Queued {total_added}/{len(filtered_channel_ids)} channels for global check (force_check={force_check})")
+        except Exception as e:
+            logger.error(f"Failed to queue all channels: {e}")
+    
+    def _is_stream_dead(self, stream_data: Dict[str, Any], channel_id: Optional[int] = None) -> bool:
+        """
+        Check if a stream should be considered dead based on profile or global settings.
+        
+        This method uses categorization logic: 
+        - 'offline': truly dead (0x0 resolution, 0 bitrate)
+        - 'low_quality': dead based on quality thresholds
+        
+        Args:
+            stream_data: Dictionary containing stream statistics
+            channel_id: Optional channel ID to look up profile-specific thresholds
+            
+        Returns:
+            bool: True if the stream is considered dead, False otherwise.
+        """
+        # Default configuration
+        dead_stream_config = self.config.get('dead_stream_handling', {})
+        profile_config = {}
+        
+        # Try to get profile-specific settings if channel_id provided
+        if channel_id is not None:
+            try:
+                from apps.automation.automation_config_manager import get_automation_config_manager
+                automation_config = get_automation_config_manager()
+                
+                # Get effective profile
+                udi = get_udi_manager()
+                channel = udi.get_channel_by_id(channel_id)
+                group_id = channel.get('channel_group_id') if channel else None
+                config = automation_config.get_effective_configuration(channel_id, group_id)
+                profile = config.get('profile') if config else None
+                
+                if profile:
+                    stream_checking = profile.get('stream_checking', {})
+                    if stream_checking.get('enabled', False):
+                        # Construct config from profile settings
+                        # Convert min_res string (e.g., '1080p') to dimensions
+                        min_res = stream_checking.get('min_resolution', '0x0')
+                        if min_res == '2160p' or min_res == '4k':
+                            profile_config['min_resolution_width'], profile_config['min_resolution_height'] = 3840, 2160
+                        elif min_res == '1080p':
+                            profile_config['min_resolution_width'], profile_config['min_resolution_height'] = 1920, 1080
+                        elif min_res == '720p':
+                            profile_config['min_resolution_width'], profile_config['min_resolution_height'] = 1280, 720
+                        elif min_res == '480p':
+                            profile_config['min_resolution_width'], profile_config['min_resolution_height'] = 854, 480
+                        elif min_res == '360p':
+                            profile_config['min_resolution_width'], profile_config['min_resolution_height'] = 640, 360
+                        
+                        if 'min_bitrate' in stream_checking:
+                            profile_config['min_bitrate_kbps'] = stream_checking['min_bitrate']
+                        
+                        if 'min_fps' in stream_checking:
+                            profile_config['min_fps'] = stream_checking['min_fps']
+                        
+                        # Use profile config if available
+                        check_config = profile_config
+                    else:
+                        # Stream matching enabled but checker disabled in profile?
+                        # Fallback to global or basic
+                        check_config = dead_stream_config if dead_stream_config.get('enabled', True) else {'min_resolution_width': 0, 'min_resolution_height': 0, 'min_bitrate_kbps': 0}
+                else:
+                    check_config = dead_stream_config
+            except Exception as e:
+                logger.warning(f"Error fetching profile for dead stream check: {e}")
+                check_config = dead_stream_config
+        else:
+            check_config = dead_stream_config
+
+        # If global handling is disabled and no profile was found, use basic check (absolute failures only)
+        if not check_config.get('enabled', True) and not profile_config:
+            check_config = {
+                'min_resolution_width': 0,
+                'min_resolution_height': 0,
+                'min_bitrate_kbps': 0,
+                'min_score': 0
+            }
+        
+        # Use centralized utility for the check
+        is_dead, reason = utils_is_stream_dead(stream_data, check_config)
+        
+        if is_dead:
+            # Mark in dead streams tracker with categorization
+            stream_url = stream_data.get('url')
+            if stream_url:
+                stream_id = stream_data.get('id') or stream_data.get('stream_id')
+                stream_name = stream_data.get('name') or stream_data.get('stream_name', 'Unknown')
+                # Use passed channel_id if available, otherwise from stream_data
+                effective_channel_id = channel_id if channel_id is not None else stream_data.get('channel_id')
+                self.dead_streams_tracker.mark_as_dead(stream_url, stream_id, stream_name, effective_channel_id, reason=reason)
+        
+        return is_dead
+    
+    def _calculate_channel_averages(self, analyzed_streams: List[Dict], dead_stream_ids: set) -> Dict[str, str]:
+        """Calculate channel-level average statistics from analyzed streams.
+        
+        Uses centralized utility function for consistent average calculation.
+        
+        Args:
+            analyzed_streams: List of analyzed stream dictionaries
+            dead_stream_ids: Set of stream IDs that are marked as dead
+            
+        Returns:
+            Dictionary with avg_resolution, avg_bitrate, and avg_fps
+        """
+        return calculate_channel_averages(analyzed_streams, dead_stream_ids)
+    
+    def _get_m3u_account_name(self, stream_id: int, udi=None) -> Optional[str]:
+        """Get the M3U account name for a stream.
+        
+        Args:
+            stream_id: The stream ID to look up
+            udi: Optional UDI manager instance (will fetch if not provided)
+            
+        Returns:
+            M3U account name or None if not found
+        """
+        try:
+            if udi is None:
+                udi = get_udi_manager()
+            
+            stream_data = udi.get_stream_by_id(stream_id)
+            if not stream_data:
+                return None
+            
+            m3u_account_id = stream_data.get('m3u_account')
+            if not m3u_account_id:
+                return None
+            
+            m3u_account = udi.get_m3u_account_by_id(m3u_account_id)
+            if not m3u_account:
+                return None
+            
+            return m3u_account.get('name', 'Unknown')
+        except Exception as e:
+            logger.debug(f"Could not fetch M3U account for stream {stream_id}: {e}")
+            return None
+    
+    
+    def _update_stream_stats(self, stream_data: Dict) -> bool:
+        """Update stream stats for a single stream on the server and sync with UDI cache.
+        
+        This method:
+        1. Constructs the stats payload from analyzed stream data
+        2. Merges with existing stats on Dispatcharr
+        3. PATCHes the updated stats to Dispatcharr
+        4. Updates the UDI cache to keep it in sync
+        
+        This ensures that the UDI cache always reflects the latest stats written to Dispatcharr,
+        preventing inconsistencies between changelog data and actual Dispatcharr data.
+        """
+        base_url = _get_base_url()
+        if not base_url:
+            logger.error("DISPATCHARR_BASE_URL not set.")
+            return False
+        
+        stream_id = stream_data.get("stream_id")
+        if not stream_id:
+            logger.warning("No stream_id in stream data. Skipping stats update.")
+            return False
+        
+        # Construct the stream stats payload from the analyzed stream data
+        stream_stats_payload = {
+            "resolution": stream_data.get("resolution"),
+            "source_fps": stream_data.get("fps"),
+            "video_codec": stream_data.get("video_codec"),
+            "audio_codec": stream_data.get("audio_codec"),
+            "hdr_format": stream_data.get("hdr_format"),
+            "pixel_format": stream_data.get("pixel_format"),
+            "audio_sample_rate": stream_data.get("audio_sample_rate"),
+            "audio_channels": stream_data.get("audio_channels"),
+            "channel_layout": stream_data.get("channel_layout"),
+            "audio_bitrate": stream_data.get("audio_bitrate"),
+            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
+        }
+        
+        # Clean up the payload, removing any None values or N/A values
+        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+        
+        if not stream_stats_payload:
+            logger.debug(f"No data to update for stream {stream_id}. Skipping.")
+            return False
+        
+        # Construct the URL for the specific stream
+        stream_url = f"{base_url}/api/channels/streams/{int(stream_id)}/"
+        
+        try:
+            # Fetch the existing stream data from UDI
+            udi = get_udi_manager()
+            existing_stream_data = udi.get_stream_by_id(int(stream_id))
+            if not existing_stream_data:
+                logger.warning(f"Could not fetch existing data for stream {stream_id}. Skipping stats update.")
+                return False
+            
+            # Get the existing stream_stats or an empty dict
+            existing_stats = existing_stream_data.get("stream_stats") or {}
+            if isinstance(existing_stats, str):
+                try:
+                    existing_stats = json.loads(existing_stats)
+                except json.JSONDecodeError:
+                    existing_stats = {}
+            
+            # Merge the existing stats with the new payload
+            updated_stats = {**existing_stats, **stream_stats_payload}
+            
+            # Send the PATCH request with the updated stream_stats
+            patch_payload = {"stream_stats": updated_stats}
+            logger.info(f"Updating stream {stream_id} stats with: {stream_stats_payload}")
+            patch_request(stream_url, patch_payload)
+            
+            # Update UDI cache with the new stats to keep it in sync with Dispatcharr
+            # This ensures changelog and verification read the correct, up-to-date data
+            updated_stream_data = existing_stream_data.copy()
+            updated_stream_data['stream_stats'] = updated_stats
+            udi.update_stream(int(stream_id), updated_stream_data)
+            logger.debug(f"Updated UDI cache for stream {stream_id} with new stats")
+            
+            return True
+        
+        except Exception as e:
+            logger.error(f"Error updating stats for stream {stream_id}: {e}")
+            return False
+    
+    def _prepare_stream_stats_for_batch(self, stream_data: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Prepare stream stats for batch update.
+        
+        This method extracts and formats stream stats from analyzed stream data
+        for use in batch update operations.
+        
+        Parameters:
+            stream_data (Dict): Analyzed stream data with resolution, fps, codecs, bitrate
+            
+        Returns:
+            Optional[Dict[str, Any]]: Dict with 'stream_id' and 'stream_stats' keys,
+                                     or None if no valid stats to update
+        """
+        stream_id = stream_data.get("stream_id")
+        if not stream_id:
+            logger.warning("No stream_id in stream data. Skipping stats preparation.")
+            return None
+        
+        # Construct the stream stats payload from the analyzed stream data
+        stream_stats_payload = {
+            "resolution": stream_data.get("resolution"),
+            "source_fps": stream_data.get("fps"),
+            "video_codec": stream_data.get("video_codec"),
+            "audio_codec": stream_data.get("audio_codec"),
+            "hdr_format": stream_data.get("hdr_format"),
+            "pixel_format": stream_data.get("pixel_format"),
+            "audio_sample_rate": stream_data.get("audio_sample_rate"),
+            "audio_channels": stream_data.get("audio_channels"),
+            "channel_layout": stream_data.get("channel_layout"),
+            "audio_bitrate": stream_data.get("audio_bitrate"),
+            "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
+        }
+        
+        # Clean up the payload, removing any None values or N/A values
+        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+        
+        if not stream_stats_payload:
+            logger.debug(f"No data to update for stream {stream_id}. Skipping.")
+            return None
+        
+        return {
+            'stream_id': stream_id,
+            'stream_stats': stream_stats_payload
+        }
+    
+    def _start_batch_changelog(self):
+        """Start a new batch for changelog entries."""
+        with self.batch_lock:
+            self.batch_start_time = datetime.now().isoformat()
+            self.batch_changelog_entries = []
+            logger.debug("Started new changelog batch")
+    
+    def _add_to_batch_changelog(self, channel_entry: Dict[str, Any]):
+        """Add a channel check result to the current batch.
+        
+        Args:
+            channel_entry: Dictionary containing channel check results
+        """
+        with self.batch_lock:
+            if self.batch_start_time is not None:
+                self.batch_changelog_entries.append(channel_entry)
+                logger.debug(f"Added channel entry to batch (total: {len(self.batch_changelog_entries)})")
+    
+    def _finalize_batch_changelog(self):
+        """Finalize the current batch and create a consolidated changelog entry."""
+        with self.batch_lock:
+            if self.batch_start_time is None or len(self.batch_changelog_entries) == 0:
+                logger.debug("No batch to finalize")
+                return
+            
+            if not self.changelog:
+                logger.debug("Changelog not available, skipping batch finalization")
+                self.batch_start_time = None
+                self.batch_changelog_entries = []
+                return
+            
+            try:
+                # Calculate duration
+                start_dt = datetime.fromisoformat(self.batch_start_time)
+                end_dt = datetime.now()
+                duration_seconds = int((end_dt - start_dt).total_seconds())
+                
+                # Format duration as human-readable string
+                if duration_seconds < 60:
+                    duration_str = f"{duration_seconds}s"
+                elif duration_seconds < 3600:
+                    minutes = duration_seconds // 60
+                    seconds = duration_seconds % 60
+                    duration_str = f"{minutes}m {seconds}s"
+                else:
+                    hours = duration_seconds // 3600
+                    minutes = (duration_seconds % 3600) // 60
+                    duration_str = f"{hours}h {minutes}m"
+                
+                # Calculate aggregate stats
+                total_channels = len(self.batch_changelog_entries)
+                total_streams = sum(entry.get('total_streams', 0) for entry in self.batch_changelog_entries)
+                streams_analyzed = sum(entry.get('streams_analyzed', 0) for entry in self.batch_changelog_entries)
+                dead_streams = sum(entry.get('dead_streams_detected', 0) for entry in self.batch_changelog_entries)
+                streams_revived = sum(entry.get('streams_revived', 0) for entry in self.batch_changelog_entries)
+                successful_checks = sum(1 for entry in self.batch_changelog_entries if entry.get('success', False))
+                failed_checks = total_channels - successful_checks
+                
+                # Prepare subentries in the format expected by the UI
+                subentries = [{
+                    "group": "check",
+                    "items": [
+                        {
+                            "channel_id": entry.get('channel_id'),
+                            "channel_name": entry.get('channel_name'),
+                            "logo_url": entry.get('logo_url'),
+                            "stats": {
+                                "total_streams": entry.get('total_streams', 0),
+                                "streams_analyzed": entry.get('streams_analyzed', 0),
+                                "dead_streams": entry.get('dead_streams_detected', 0),
+                                "streams_revived": entry.get('streams_revived', 0),
+                                "avg_resolution": entry.get('avg_resolution', 'N/A'),
+                                "avg_bitrate": entry.get('avg_bitrate', 'N/A'),
+                                "avg_fps": entry.get('avg_fps', 'N/A'),
+                                "stream_details": entry.get('stream_stats', [])
+                            }
+                        }
+                        for entry in self.batch_changelog_entries
+                    ]
+                }]
+                
+                # Create consolidated changelog entry
+                self.changelog.add_entry(
+                    action='batch_stream_check',
+                    details={
+                        'total_channels': total_channels,
+                        'successful_checks': successful_checks,
+                        'failed_checks': failed_checks,
+                        'total_streams': total_streams,
+                        'streams_analyzed': streams_analyzed,
+                        'dead_streams': dead_streams,
+                        'streams_revived': streams_revived,
+                        'duration': duration_str,
+                        'duration_seconds': duration_seconds
+                    },
+                    timestamp=self.batch_start_time,
+                    subentries=subentries
+                )
+                
+                logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed in {duration_str}")
+                
+                # Note: trigger_channel_re_enabling and trigger_empty_channel_disabling 
+                # have been deprecated as they relied on Dispatcharr channel profiles 
+                # which have been removed.
+                
+            except Exception as e:
+                logger.error(f"Failed to finalize batch changelog: {e}", exc_info=True)
+            finally:
+                # Reset batch tracking
+                self.batch_start_time = None
+                self.batch_changelog_entries = []
+    
+    # Deprecated: _trigger_empty_channel_disabling and _trigger_channel_re_enabling
+    # were removed as they relied on a missing module 'empty_channel_manager'
+    # and obsolete Dispatcharr features.
+    
+    def _check_channel_limits(self, channel_id: int, channel_name: str, streams: List[Dict]) -> Optional[Dict]:
+        """Check if a channel can be checked based on viewer and playlist limits.
+        
+        This method now uses profile-aware checking. Instead of just checking account-level
+        max_streams, it verifies that at least one stream has an available profile slot.
+        
+        Args:
+            channel_id: ID of the channel
+            channel_name: Name of the channel
+            streams: List of streams for the channel
+            
+        Returns:
+            None if check can proceed, or a result dict if check should be skipped
+        """
+        udi = get_udi_manager()
+        
+        # Check if channel has active viewers using real-time proxy status
+        has_active_viewers = udi.is_channel_active(channel_id)
+        if has_active_viewers:
+            logger.warning(f"Channel {channel_name} has active viewers, skipping check to avoid disruption")
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0,
+                'skipped': True,
+                'skip_reason': 'active_viewers'
+            }
+        
+        # Check if at least one stream can run (has an available profile)
+        # This replaces the old account-level checking with profile-aware logic
+        has_available_slot = False
+        blocked_reasons = []
+        
+        for stream in streams:
+            m3u_account = stream.get('m3u_account')
+            if not m3u_account:
+                # Custom stream without M3U account - can always check
+                has_available_slot = True
+                break
+            
+            # Check if this stream can run using profile-aware checking
+            can_run, reason = udi.check_stream_can_run(stream)
+            if can_run:
+                has_available_slot = True
+                break
+            else:
+                if reason and reason not in blocked_reasons:
+                    blocked_reasons.append(reason)
+        
+        # If no stream has an available slot, skip the check
+        if not has_available_slot:
+            reason_str = "; ".join(blocked_reasons) if blocked_reasons else "All M3U account profiles are at capacity"
+            logger.warning(f"Cannot check channel {channel_name}: {reason_str}")
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0,
+                'skipped': True,
+                'skip_reason': 'max_streams_reached',
+                'reason_detail': reason_str
+            }
+        
+        # At least one stream has an available slot, check can proceed
+        return None
+    
+    def _get_resolution_product(self, stream_data: Dict) -> int:
+        """Get resolution product (width * height) from stream data."""
+        res = stream_data.get('resolution', '')
+        if 'x' in str(res):
+            try:
+                width, height = map(int, str(res).split('x'))
+                return width * height
+            except: pass
+        return 0
+
+    # Removed _refine_sorted_streams in favor of lexicographical Sort Keys.
+    
+    def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
+        """Check and reorder streams for a specific channel.
+        
+        Routes to either concurrent or sequential checking based on configuration.
+        
+        Args:
+            channel_id: ID of the channel to check
+            skip_batch_changelog: If True, don't add this check to the batch changelog
+        """
+        concurrent_enabled = self.config.get('concurrent_streams.enabled', True)
+        
+        if concurrent_enabled:
+            return self._check_channel_concurrent(channel_id, skip_batch_changelog=skip_batch_changelog)
+        else:
+            return self._check_channel_sequential(channel_id, skip_batch_changelog=skip_batch_changelog)
+    
+    def _check_channel_concurrent(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None):
+        """Check and reorder streams for a specific channel using parallel thread pool.
+        
+        Args:
+            channel_id: ID of the channel to check
+            skip_batch_changelog: If True, don't add this check to the batch changelog
+            target_stream_ids: Optional list of stream IDs. If provided, ONLY these
+                               streams will be checked, bypassing all other logic.
+        """
+        import time as time_module
+        from apps.stream.stream_check_utils import analyze_stream
+        from apps.stream.concurrent_stream_limiter import get_smart_scheduler, get_account_limiter, initialize_account_limits
+        
+        start_time = time_module.time()
+        log_function_call(logger, "_check_channel_concurrent", channel_id=channel_id)
+        
+        log_state_change(logger, f"channel_{channel_id}", "queued", "checking")
+        self.checking = True
+        logger.info(f"=" * 80)
+        logger.info(f"Checking channel {channel_id} (parallel mode)")
+        logger.info(f"=" * 80)
+        
+        # Get dead stream removal configuration early (used later in finally block)
+        dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
+        
+        # Get effective profile for this channel
+        stream_limit = 0
+        allow_revive = True
+        grace_period = False
+        priority_m3u_ids = []
+        priority_mode = 'absolute'
+        scoring_weights = None
+        
+        try:
+            from apps.automation.automation_config_manager import get_automation_config_manager
+            automation_config = get_automation_config_manager()
+            
+            # Fetch channel data to get group_id (might be fetched already but just in case)
+            udi = get_udi_manager()
+            channel = udi.get_channel_by_id(channel_id)
+            group_id = channel.get('channel_group_id') if channel else None
+            
+            config = automation_config.get_effective_configuration(channel_id, group_id)
+            profile = config.get('profile') if config else None
+            if profile:
+                profile_stream_checking = profile.get('stream_checking', {})
+                stream_limit = profile_stream_checking.get('stream_limit', 0)
+                allow_revive = profile_stream_checking.get('allow_revive', True)
+                priority_m3u_ids = profile_stream_checking.get('m3u_priority', [])
+                priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
+                grace_period = profile_stream_checking.get('grace_period', False)
+                scoring_weights = profile.get('scoring_weights', None)
+                
+                # Also check if checking is enabled at all for this profile
+                if not profile_stream_checking.get('enabled', False):
+                    logger.info(f"Stream checking disabled by profile for channel {channel_id}")
+                    return {
+                        'dead_streams_count': 0,
+                        'revived_streams_count': 0,
+                        'skipped': True,
+                        'skip_reason': 'profile_disabled'
+                    }
+        except Exception as e:
+            logger.warning(f"Failed to load profile settings for channel {channel_id}: {e}")
+        
+        try:
+            # Get channel information from UDI
+            logger.debug(f"Updating progress for channel {channel_id} initialization")
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name='Loading...',
+                current=0,
+                total=0,
+                status='initializing',
+                step='Fetching channel info',
+                step_detail='Retrieving channel data from UDI'
+            )
+            
+            udi = get_udi_manager()
+            base_url = _get_base_url()
+            logger.debug(f"Fetching channel data for channel {channel_id} from UDI")
+            channel_data = udi.get_channel_by_id(channel_id)
+            if not channel_data:
+                logger.error(f"UDI returned None for channel {channel_id}")
+                raise Exception(f"Could not fetch channel {channel_id}")
+            
+            channel_name = channel_data.get('name', f'Channel {channel_id}')
+            
+            # Get streams for this channel
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=0,
+                status='initializing',
+                step='Fetching streams',
+                step_detail=f'Loading streams for {channel_name}'
+            )
+            
+            streams = fetch_channel_streams(channel_id)
+            if not streams or len(streams) == 0:
+                logger.info(f"No streams found for channel {channel_name}")
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return {
+                    'dead_streams_count': 0,
+                    'revived_streams_count': 0
+                }
+            
+            logger.info(f"Found {len(streams)} streams for channel {channel_name}")
+            
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
+            limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
+            if limit_check_result is not None:
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return limit_check_result
+            
+            # Check if this is a force check (bypasses 2-hour immunity)
+            force_check = self.update_tracker.should_force_check(channel_id)
+            
+            # Global Action / Force Check overrides profile settings
+            if force_check:
+                if not allow_revive:
+                    logger.info(f"Force check enabled for channel {channel_name}: Overriding Profile 'allow_revive' to True")
+                    allow_revive = True
+            
+            # Get list of already checked streams to avoid re-analyzing
+            checked_stream_info = self.update_tracker.updates.get('channels', {}).get(str(channel_id), {})
+            checked_stream_ids = checked_stream_info.get('checked_stream_ids', [])
+            last_check_str = checked_stream_info.get('last_check')
+            
+            # Check if immunity period (2 hours) has expired
+            immunity_expired = False
+            if last_check_str and grace_period:
+                try:
+                    last_check_time = datetime.fromisoformat(last_check_str)
+                    if (datetime.now() - last_check_time).total_seconds() > 7200:
+                        immunity_expired = True
+                        logger.info(f"Immunity period (2 hours) expired for channel {channel_name} - will re-analyze all streams")
+                except Exception as e:
+                    logger.warning(f"Failed to parse last_check timestamp for channel {channel_id}: {e}")
+            
+            current_stream_ids = [s['id'] for s in streams]
+            
+            # Identify which streams need analysis (new or unchecked)
+            
+            if target_stream_ids is not None:
+                # Targeted check mode: Evaluates newly assigned streams ONLY
+                streams_to_check = [s for s in streams if str(s['id']) in [str(ts) for ts in target_stream_ids]]
+                streams_already_checked = [s for s in streams if str(s['id']) not in [str(ts) for ts in target_stream_ids]]
+                logger.info(f"Targeted stream check: evaluating {len(streams_to_check)} specific newly assigned streams")
+                
+            elif force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
+                # If grace period is DISABLED, we check everything every time unless it's a "needs_check" trigger?
+                # Actually, if grace_period is False, users probably expect regular checks.
+                # However, we only get here if the worker picked up the channel.
+                # If it's a force check or immunity expired, check all.
+                # If grace period is OFF, we also check everything if we are running.
+                streams_to_check = streams
+                streams_already_checked = []
+                
+                if force_check:
+                    logger.info(f"Force check enabled: analyzing all {len(streams)} streams (bypassing 2-hour immunity)")
+                    self.update_tracker.clear_force_check(channel_id)
+                elif grace_period and immunity_expired:
+                    logger.info(f"Grace period (2h) expired: re-analyzing {len(streams)} streams for {channel_name}")
+                elif not grace_period:
+                    logger.info(f"Grace period disabled for profile: analyzing all {len(streams)} streams")
+            else:
+                # Normal incremental check: only analyze new streams
+                streams_to_check = [s for s in streams if s['id'] not in checked_stream_ids]
+                streams_already_checked = [s for s in streams if s['id'] in checked_stream_ids]
+                
+                if streams_to_check:
+                    logger.info(f"Found {len(streams_to_check)} new/unchecked streams (out of {len(streams)} total)")
+                else:
+                    logger.info(f"All {len(streams)} streams have been recently checked (within 2h immunity), using cached scores")
+                    
+                    # Optimization: Skip check entirely if all conditions are met:
+                    # 1. No new streams to analyze (all have been checked)
+                    # 2. Stream count matches previous check (no additions/deletions)
+                    # 3. Set of stream IDs is identical (no stream replacements)
+                    previous_stream_count = len(checked_stream_ids)
+                    current_stream_count = len(current_stream_ids)
+                    
+                    if (current_stream_count == previous_stream_count and 
+                        set(current_stream_ids) == set(checked_stream_ids)):
+                        logger.info(f"Channel {channel_name} unchanged since last check - skipping reorder")
+                        self.check_queue.mark_completed(channel_id)
+                        # Update timestamp but keep existing checked_stream_ids
+                        self.update_tracker.mark_channel_checked(
+                            channel_id,
+                            stream_count=current_stream_count,
+                            checked_stream_ids=checked_stream_ids
+                        )
+                        # Best effort to reconstruct stats for skipped/cached streams
+                        cached_stats = []
+                        for s in streams:
+                            # Try to find existing stats if available in stream object
+                            # Otherwise use placeholders
+                            extracted_stats = extract_stream_stats(s)
+                            formatted_stats = format_stream_stats_for_display(extracted_stats)
+                            
+                            cached_for_score = {
+                                'stream_id': s.get('id'),
+                                'stream_name': s.get('name'),
+                                'stream_url': s.get('url'),
+                                'bitrate_kbps': extracted_stats.get('bitrate_kbps'),
+                                'resolution': extracted_stats.get('resolution'),
+                                'fps': extracted_stats.get('fps'),
+                                'video_codec': extracted_stats.get('video_codec'),
+                                'audio_codec': extracted_stats.get('audio_codec'),
+                                'hdr_format': extracted_stats.get('hdr_format'),
+                                'status': 'cached'
+                            }
+                            
+                            temp_score = self._calculate_stream_score(cached_for_score, priority_m3u_ids, priority_mode, scoring_weights)
+
+                            stat = {
+                                'stream_id': s.get('id'),
+                                'stream_name': s.get('name'),
+                                'resolution': formatted_stats['resolution'],
+                                'fps': formatted_stats['fps'],
+                                'video_codec': formatted_stats['video_codec'],
+                                'bitrate': formatted_stats['bitrate'],
+                                'm3u_account': self._get_m3u_account_name(s.get('id'), udi) if hasattr(self, '_get_m3u_account_name') else 'N/A',
+                                'score': temp_score
+                            }
+                            cached_stats.append(stat)
+
+                        return {
+                            'dead_streams_count': 0,
+                            'revived_streams_count': 0,
+                            'dead_streams': [],
+                            'revived_streams': [],
+                            'skipped_streams_count': len(streams),
+                            'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams],
+                            'checked_streams': cached_stats
+                        }
+                    else:
+                        logger.info(f"Channel composition changed (prev: {previous_stream_count}, curr: {current_stream_count}) - will reorder")
+            
+            # Get configuration for analysis
+            analysis_params = self.config.get('stream_analysis', {})
+            global_limit = self.config.get('concurrent_streams.global_limit', 10)
+            stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
+            
+            # Initialize account limits from UDI
+            accounts = udi.get_m3u_accounts()
+            if accounts:
+                initialize_account_limits(accounts)
+                logger.debug(f"Initialized concurrent stream limits for {len(accounts)} M3U accounts")
+            
+            # Initialize smart scheduler with account-aware limiting
+            smart_scheduler = get_smart_scheduler(global_limit=global_limit)
+            
+            # Prepare for concurrent execution
+            analyzed_streams = []
+            dead_stream_ids = set()  # Use set for O(1) lookups
+            revived_stream_ids = []
+            total_streams = len(streams_to_check)
+            completed_count = [0]  # Use list for mutable closure
+            
+            # Dict to keep track of the stream details throughout the analysis
+            stream_statuses = {
+                s['id']: {
+                    'id': s['id'],
+                    'name': s.get('name', f"Stream {s['id']}"),
+                    'status': 'pending',
+                    'm3u_account': self._get_m3u_account_name(s.get('id'), udi) if hasattr(self, '_get_m3u_account_name') else 'N/A'
+                }
+                for s in streams_to_check
+            }
+            
+            # Start callback for parallel checker
+            def start_callback(stream):
+                stream_id = stream.get('id')
+                if stream_id in stream_statuses:
+                    stream_statuses[stream_id]['status'] = 'checking'
+                    self.progress.update(
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        current=completed_count[0],
+                        total=total_streams,
+                        current_stream=stream.get('name', 'Unknown'),
+                        status='analyzing',
+                        step='Analyzing streams with account limits',
+                        step_detail=f'Started checking {stream.get("name", "Unknown")}',
+                        streams_detail=list(stream_statuses.values())
+                    )
+            
+            def progress_callback(completed, total, result):
+                completed_count[0] = completed
+                stream_name = result.get('stream_name', 'Unknown')
+                stream_id = result.get('stream_id')
+                
+                # Calculate temp score for UI display
+                temp_score = self._calculate_stream_score(result, priority_m3u_ids, priority_mode, scoring_weights)
+                
+                # Update stream status based on result
+                is_dead = self._is_stream_dead(result, channel_id)
+                
+                if stream_id in stream_statuses:
+                    if result.get('status') == 'ERROR':
+                        stream_statuses[stream_id]['status'] = 'error'
+                        stream_statuses[stream_id]['score'] = 0.0
+                    elif is_dead:
+                        stream_statuses[stream_id]['status'] = 'dead'
+                        stream_statuses[stream_id]['score'] = 0.0
+                    else:
+                        stream_statuses[stream_id]['status'] = 'completed'
+                        # Optional: record score or resolution
+                        stream_statuses[stream_id]['score'] = temp_score
+                        stream_statuses[stream_id]['resolution'] = result.get('resolution', '0x0')
+                        stream_statuses[stream_id]['video_codec'] = result.get('video_codec', 'N/A')
+                        stream_statuses[stream_id]['fps'] = result.get('fps', 0)
+                        stream_statuses[stream_id]['bitrate'] = result.get('bitrate_kbps')
+                        stream_statuses[stream_id]['hdr_format'] = result.get('hdr_format')
+                
+                # Update progress
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=completed,
+                    total=total,
+                    current_stream=stream_name,
+                    status='analyzing',
+                    step='Analyzing streams with account limits',
+                    step_detail=f'Completed {completed}/{total}',
+                    streams_detail=list(stream_statuses.values())
+                )
+            
+            if streams_to_check:
+                logger.info(f"Starting smart parallel analysis of {total_streams} streams with {global_limit} global workers")
+                
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=0,
+                    total=total_streams,
+                    status='analyzing',
+                    step='Analyzing streams with account limits',
+                    step_detail=f'Using smart scheduler with per-account limits'
+                )
+                
+                # Check streams in parallel with account-aware limits
+                results = smart_scheduler.check_streams_with_limits(
+                    streams=streams_to_check,
+                    check_function=analyze_stream,
+                    progress_callback=progress_callback,
+                    start_callback=start_callback,
+                    stagger_delay=stagger_delay,
+                    abort_event=self.abort_current_check,
+                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
+                    timeout=analysis_params.get('timeout', 30),
+                    retries=analysis_params.get('retries', 1),
+                    retry_delay=analysis_params.get('retry_delay', 10),
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
+                )
+                
+                # Process results - ALL checks are complete at this point
+                # Collect stats for batch update to minimize API calls
+                batch_stats_list = []
+                batch_config = self.config.get('batch_operations', {})
+                batch_enabled = batch_config.get('enabled', True)
+                batch_size = batch_config.get('batch_size', 10)
+                
+                for analyzed in results:
+                    # Prepare stats for batch update
+                    if batch_enabled:
+                        stats_item = self._prepare_stream_stats_for_batch(analyzed)
+                        if stats_item:
+                            batch_stats_list.append(stats_item)
+                    else:
+                        # Fall back to individual updates if batching is disabled
+                        self._update_stream_stats(analyzed)
+                    
+                    # Check if stream is dead
+                    is_dead = self._is_stream_dead(analyzed, channel_id)
+                    stream_id = analyzed.get('stream_id')
+                    stream_url = analyzed.get('stream_url', '')
+                    stream_name = analyzed.get('stream_name', 'Unknown')
+                    was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                    
+                    if is_dead and not was_dead:
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream_id, stream_name, channel_id):
+                            dead_stream_ids.add(stream_id)
+                            logger.warning(f"Stream {stream_id} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark stream {stream_id} as dead in tracker")
+                    elif not is_dead and was_dead:
+                        if allow_revive:
+                            if self.dead_streams_tracker.mark_as_alive(stream_url):
+                                revived_stream_ids.append(stream_id)
+                                logger.info(f"Stream {stream_id} REVIVED: {stream_name}")
+                        else:
+                            # Not allowed to revive, treat as still dead
+                            dead_stream_ids.add(stream_id)
+                            logger.info(f"Stream {stream_id} is alive but revival disabled by profile: {stream_name}")
+                    elif is_dead and was_dead:
+                        logger.debug(f"Stream {stream_id} remains dead (already marked)")
+                        # Add to dead_stream_ids so the stream removal logic (line 1455) will filter it out
+                        dead_stream_ids.add(stream_id)
+                    
+                    # Calculate score using per-profile scoring weights
+                    score = self._calculate_stream_score(analyzed, priority_m3u_ids, priority_mode, scoring_weights)
+                    analyzed['score'] = score
+                    analyzed['channel_id'] = channel_id
+                    analyzed['channel_name'] = channel_name
+                    analyzed_streams.append(analyzed)
+                
+                
+                # --- MERGE CACHED STREAMS FOR CORRECT SORTING AND LIMITING ---
+                # Retrieve "cached" streams that weren't analyzed (because they are within immunity period)
+                # We need to include them in the sorting and limiting process to ensure we keep the absolute best streams
+                if streams_already_checked:
+                    cached_analyzed_streams = []
+                    logger.info(f"Re-integrating {len(streams_already_checked)} cached streams for global sorting/limiting")
+                    
+                    for stream in streams_already_checked:
+                        stream_id = stream['id']
+                        # Reconstruct a minimal 'analyzed' object from stored stats
+                        # This allows standard scoring and sorting logic to work
+                        stream_stats = stream.get('stream_stats')
+                        if stream_stats is None:
+                            stream_stats = {}
+                        elif isinstance(stream_stats, str):
+                            try:
+                                stream_stats = json.loads(stream_stats)
+                            except:
+                                stream_stats = {}
+                        
+                        # Map stored stats back to analysis keys
+                        cached_analyzed = {
+                            'stream_id': stream_id,
+                            'stream_url': stream.get('url'),
+                            'stream_name': stream.get('name'),
+                            'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                            'resolution': stream_stats.get('resolution', 'N/A'),
+                            'fps': stream_stats.get('source_fps', 0),
+                            'video_codec': stream_stats.get('video_codec', 'N/A'),
+                            'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                            'hdr_format': stream_stats.get('hdr_format'),
+                            'status': 'cached',
+                            'channel_id': channel_id,
+                            'channel_name': channel_name,
+                            'score': 0.0 # Will be calculated below
+                        }
+                        
+                        # Calculate score using CURRENT profile weights
+                        score = self._calculate_stream_score(cached_analyzed, priority_m3u_ids, priority_mode, scoring_weights)
+                        cached_analyzed['score'] = score
+                        cached_analyzed_streams.append(cached_analyzed)
+                    
+                    # Merge cached streams with newly analyzed streams
+                    analyzed_streams.extend(cached_analyzed_streams)
+                    logger.info(f"Merged {len(cached_analyzed_streams)} cached streams with {len(results)} new results. Total candidates: {len(analyzed_streams)}")
+
+                if batch_enabled and batch_stats_list:
+                    logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
+                    successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
+                    logger.info(f"Batch update complete: {successful} successful, {failed} failed")
+                
+                logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
+            
+            # Sort streams by score (highest first)
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='processing',
+                step='Calculating scores',
+                step_detail='Sorting streams by quality score'
+            )
+            # Sort streams using tiered sort keys (lexicographical ranking)
+            for analyzed in analyzed_streams:
+                analyzed['sort_key'] = self._generate_stream_sort_key(analyzed, priority_m3u_ids, priority_mode)
+                
+            analyzed_streams.sort(key=lambda x: x['sort_key'])
+            
+            # Apply stream limit if configured in profile
+            if stream_limit > 0 and len(analyzed_streams) > stream_limit:
+                removed_count = len(analyzed_streams) - stream_limit
+                logger.info(f"Applying profile stream limit: Keeping top {stream_limit} streams, removing {removed_count}")
+                analyzed_streams = analyzed_streams[:stream_limit]
+            
+            # Remove dead streams from the channel (if enabled in config)
+            # Dead streams are checked during all channel checks (normal and global)
+            # If they're still dead, they're removed; if revived, they remain
+            if dead_stream_ids:
+                if dead_stream_removal_enabled:
+                    logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                    analyzed_streams = [s for s in analyzed_streams if s.get('stream_id') not in dead_stream_ids]
+                else:
+                    logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
+            
+            if revived_stream_ids:
+                logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
+            
+            # Update channel with reordered streams
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='updating',
+                step='Reordering streams',
+                step_detail='Applying new stream order to channel'
+            )
+            reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
+            # Dead streams have already been filtered from analyzed_streams if removal is enabled
+            # If removal is disabled, allow them to remain in the channel
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=(not dead_stream_removal_enabled))
+            
+            # Verify the update
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='verifying',
+                step='Verifying update',
+                step_detail='Confirming stream order was applied'
+            )
+            
+            # Only verify if enabled in configuration
+            batch_config = self.config.get('batch_operations', {})
+            verify_updates = batch_config.get('verify_updates', False)
+            
+            if verify_updates:
+                time_module.sleep(0.5)
+                udi.refresh_channel_by_id(channel_id)
+                logger.debug(f"Verified channel {channel_name} update via UDI refresh")
+            else:
+                logger.debug(f"Skipped verification for channel {channel_name} (disabled in config)")
+            
+            logger.info(f"✓ Channel {channel_name} checked and streams reordered (parallel mode)")
+            
+            # Generate detailed stream stats for return value and changelog
+            try:
+                # Get channel logo URL
+                logo_url = None
+                logo_id = channel_data.get('logo_id')
+                if logo_id:
+                    logo_url = f"/api/logos/{logo_id}"
+                
+                # Calculate channel-level averages from analyzed streams
+                averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
+                
+                stream_stats = []
+                # Use all analyzed streams for stats, not just first 10
+                for analyzed in analyzed_streams:
+                    stream_id = analyzed.get('stream_id')
+                    is_dead = stream_id in dead_stream_ids
+                    is_revived = stream_id in revived_stream_ids
+                    
+                    # Extract and format stats using centralized utilities
+                    extracted_stats = extract_stream_stats(analyzed)
+                    formatted_stats = format_stream_stats_for_display(extracted_stats)
+                    
+                    # Get M3U account name for this stream using helper method
+                    m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+                    
+                    stream_stat = {
+                        'stream_id': stream_id,
+                        'stream_name': analyzed.get('stream_name'),
+                        'resolution': formatted_stats['resolution'],
+                        'fps': formatted_stats['fps'],
+                        'video_codec': formatted_stats['video_codec'],
+                        'audio_codec': formatted_stats.get('audio_codec', 'N/A'),
+                        'bitrate': formatted_stats['bitrate'],
+                        'm3u_account': m3u_account_name,
+                        'hdr_format': extracted_stats.get('hdr_format')
+                    }
+                    
+                    # Mark dead streams as "dead" instead of showing score:0
+                    if is_dead:
+                        stream_stat['status'] = 'dead'
+                    elif is_revived:
+                        stream_stat['status'] = 'revived'
+                        stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                    else:
+                        stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                    
+                    # Clean up N/A values for cleaner JSON
+                    cleaned_stat = {k: v for k, v in stream_stat.items() if v not in [None]}
+                    stream_stats.append(cleaned_stat)
+
+            except Exception as e:
+                logger.error(f"Error generating stream stats: {e}")
+                stream_stats = []
+                averages = {'avg_resolution': 'N/A', 'avg_bitrate': 'N/A', 'avg_fps': 'N/A'}
+                logo_url = None
+
+            # Add to batch changelog instead of creating individual entry
+            if self.changelog:
+                try:
+                    
+                    # Add to batch instead of creating individual changelog entry
+                    
+                    # Add to batch instead of creating individual changelog entry
+                    # Only add to batch if not explicitly skipped (e.g., when called from check_single_channel)
+                    if not skip_batch_changelog:
+                        self._add_to_batch_changelog({
+                            'channel_id': channel_id,
+                            'channel_name': channel_name,
+                            'logo_url': logo_url,
+                            'total_streams': len(streams),
+                            'streams_analyzed': len(analyzed_streams),
+                            'dead_streams_detected': len(dead_stream_ids),
+                            'streams_revived': len(revived_stream_ids),
+                            'avg_resolution': averages['avg_resolution'],
+                            'avg_bitrate': averages['avg_bitrate'],
+                            'avg_fps': averages['avg_fps'],
+                            'success': True,
+                            'stream_stats': stream_stats
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to add to batch changelog: {e}")
+            
+            # Mark as completed
+            self.check_queue.mark_completed(channel_id)
+            # Update current_stream_ids to exclude dead streams that were removed
+            # This prevents dead stream IDs from being saved in checked_stream_ids
+            # which would cause them to be skipped by 2-hour immunity even after revival
+            # Note: Using list comprehension instead of set operations to preserve order
+            # Only exclude dead streams if removal is enabled
+            if dead_stream_removal_enabled:
+                final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            else:
+                final_stream_ids = current_stream_ids  # Keep all streams if removal is disabled
+            self.update_tracker.mark_channel_checked(
+                channel_id, 
+                stream_count=len(streams),
+                checked_stream_ids=final_stream_ids
+            )
+            
+            # Return statistics for callers that need them
+            return {
+                'dead_streams_count': len(dead_stream_ids),
+                'revived_streams_count': len(revived_stream_ids),
+                'dead_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in dead_stream_ids],
+                'revived_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in revived_stream_ids],
+                'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
+                'checked_streams': stream_stats
+            }
+
+            
+        except Exception as e:
+            logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
+            self.check_queue.mark_failed(channel_id, str(e))
+            
+            # Only add to batch changelog if not explicitly skipped
+            if self.changelog and not skip_batch_changelog:
+                try:
+                    try:
+                        channel_name = channel_data.get('name', f'Channel {channel_id}')
+                    except:
+                        channel_name = f'Channel {channel_id}'
+                    
+                    # Add failed check to batch
+                    self._add_to_batch_changelog({
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'total_streams': 0,
+                        'streams_analyzed': 0,
+                        'dead_streams_detected': 0,
+                        'streams_revived': 0,
+                        'success': False,
+                        'error': str(e),
+                        'stream_stats': []
+                    })
+                except Exception as changelog_error:
+                    logger.warning(f"Failed to add to batch changelog: {changelog_error}")
+            
+            # Return empty stats on error
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0,
+                'checked_streams': [],
+                'error': str(e)
+            }
+        
+        finally:
+            self.checking = False
+            log_function_return(logger, "_check_channel_concurrent")
+
+    
+    def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None):
+        """Check and reorder streams for a specific channel using sequential checking.
+        
+        Args:
+            channel_id: ID of the channel to check
+            skip_batch_changelog: If True, don't add this check to the batch changelog
+            target_stream_ids: Optional list of stream IDs. If provided, ONLY these
+                               streams will be checked, bypassing all other logic.
+        """
+        import time as time_module
+        start_time = time_module.time()
+        log_function_call(logger, "_check_channel_sequential", channel_id=channel_id)
+        
+        log_state_change(logger, f"channel_{channel_id}", "queued", "checking")
+        self.checking = True
+        logger.info(f"=" * 80)
+        logger.info(f"Checking channel {channel_id} (sequential mode)")
+        logger.info(f"=" * 80)
+        
+        # Get dead stream removal configuration early (used later in finally block)
+        dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
+        
+        # Get effective profile for this channel
+        stream_limit = 0
+        allow_revive = True
+        grace_period = False
+        priority_m3u_ids = []
+        priority_mode = 'absolute'
+        scoring_weights = None
+        
+        try:
+            from apps.automation.automation_config_manager import get_automation_config_manager
+            automation_config = get_automation_config_manager()
+            
+            # Fetch channel data to get group_id (might be fetched already but just in case)
+            udi = get_udi_manager()
+            channel = udi.get_channel_by_id(channel_id)
+            group_id = channel.get('channel_group_id') if channel else None
+            
+            config = automation_config.get_effective_configuration(channel_id, group_id)
+            profile = config.get('profile') if config else None
+            if profile:
+                profile_stream_checking = profile.get('stream_checking', {})
+                stream_limit = profile_stream_checking.get('stream_limit', 0)
+                allow_revive = profile_stream_checking.get('allow_revive', True)
+                priority_m3u_ids = profile_stream_checking.get('m3u_priority', [])
+                priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
+                grace_period = profile_stream_checking.get('grace_period', False)
+                scoring_weights = profile.get('scoring_weights', None)
+                
+                # Also check if checking is enabled at all for this profile
+                if not profile_stream_checking.get('enabled', False):
+                    logger.info(f"Stream checking disabled by profile for channel {channel_id}")
+                    return {
+                        'dead_streams_count': 0,
+                        'revived_streams_count': 0,
+                        'skipped': True,
+                        'skip_reason': 'profile_disabled'
+                    }
+        except Exception as e:
+            logger.warning(f"Failed to load profile settings for channel {channel_id}: {e}")
+        
+        try:
+            # Get channel information from UDI
+            logger.debug(f"Updating progress for channel {channel_id} initialization")
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name='Loading...',
+                current=0,
+                total=0,
+                status='initializing',
+                step='Fetching channel info',
+                step_detail='Retrieving channel data from UDI'
+            )
+            
+            udi = get_udi_manager()
+            base_url = _get_base_url()
+            logger.debug(f"Fetching channel data for channel {channel_id} from UDI")
+            channel_data = udi.get_channel_by_id(channel_id)
+            if not channel_data:
+                logger.error(f"UDI returned None for channel {channel_id}")
+                raise Exception(f"Could not fetch channel {channel_id}")
+            
+            channel_name = channel_data.get('name', f'Channel {channel_id}')
+            
+            # Get streams for this channel
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=0,
+                status='initializing',
+                step='Fetching streams',
+                step_detail=f'Loading streams for {channel_name}'
+            )
+            
+            streams = fetch_channel_streams(channel_id)
+            if not streams or len(streams) == 0:
+                logger.info(f"No streams found for channel {channel_name}")
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return {
+                    'dead_streams_count': 0,
+                    'revived_streams_count': 0
+                }
+            
+            logger.info(f"Found {len(streams)} streams for channel {channel_name}")
+            
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
+            limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
+            if limit_check_result is not None:
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return limit_check_result
+            
+            # Check if this is a force check (bypasses 2-hour immunity)
+            force_check = self.update_tracker.should_force_check(channel_id)
+            
+            # Global Action / Force Check overrides profile settings
+            if force_check:
+                if not allow_revive:
+                    logger.info(f"Force check enabled for channel {channel_name}: Overriding Profile 'allow_revive' to True")
+                    allow_revive = True
+            
+            # Get list of already checked streams to avoid re-analyzing
+            checked_stream_info = self.update_tracker.updates.get('channels', {}).get(str(channel_id), {})
+            checked_stream_ids = checked_stream_info.get('checked_stream_ids', [])
+            last_check_str = checked_stream_info.get('last_check')
+            
+            # Check if immunity period (2 hours) has expired
+            immunity_expired = False
+            if last_check_str and grace_period:
+                try:
+                    last_check_time = datetime.fromisoformat(last_check_str)
+                    if (datetime.now() - last_check_time).total_seconds() > 7200:
+                        immunity_expired = True
+                        logger.info(f"Immunity period (2 hours) expired for channel {channel_name} - will re-analyze all streams")
+                except Exception as e:
+                    logger.warning(f"Failed to parse last_check timestamp for channel {channel_id}: {e}")
+            
+            current_stream_ids = [s['id'] for s in streams]
+            
+            # Identify which streams need analysis (new or unchecked)
+            
+            if target_stream_ids is not None:
+                # Targeted check mode: Evaluates newly assigned streams ONLY
+                streams_to_check = [s for s in streams if str(s['id']) in [str(ts) for ts in target_stream_ids]]
+                streams_already_checked = [s for s in streams if str(s['id']) not in [str(ts) for ts in target_stream_ids]]
+                logger.info(f"Targeted stream check: evaluating {len(streams_to_check)} specific newly assigned streams")
+                
+            elif force_check or (grace_period and immunity_expired) or (not grace_period and not force_check):
+                streams_to_check = streams
+                streams_already_checked = []
+                
+                if force_check:
+                    logger.info(f"Force check enabled: analyzing all {len(streams)} streams (bypassing 2-hour immunity)")
+                    self.update_tracker.clear_force_check(channel_id)
+                elif grace_period and immunity_expired:
+                    logger.info(f"Grace period (2h) expired: re-analyzing {len(streams)} streams for {channel_name}")
+                elif not grace_period:
+                    logger.info(f"Grace period disabled for profile: analyzing all {len(streams)} streams")
+            else:
+                # Normal incremental check: only analyze new streams
+                streams_to_check = [s for s in streams if s['id'] not in checked_stream_ids]
+                streams_already_checked = [s for s in streams if s['id'] in checked_stream_ids]
+                
+                if streams_to_check:
+                    logger.info(f"Found {len(streams_to_check)} new/unchecked streams (out of {len(streams)} total)")
+                else:
+                    logger.info(f"All {len(streams)} streams have been recently checked (within 2h immunity), using cached scores")
+                    
+                    # Optimization: Skip check entirely if all conditions are met:
+                    # 1. No new streams to analyze (all have been checked)
+                    # 2. Stream count matches previous check (no additions/deletions)
+                    # 3. Set of stream IDs is identical (no stream replacements)
+                    previous_stream_count = len(checked_stream_ids)
+                    current_stream_count = len(current_stream_ids)
+                    
+                    if (current_stream_count == previous_stream_count and 
+                        set(current_stream_ids) == set(checked_stream_ids)):
+                        logger.info(f"Channel {channel_name} unchanged since last check - skipping reorder")
+                        self.check_queue.mark_completed(channel_id)
+                        # Update timestamp but keep existing checked_stream_ids
+                        self.update_tracker.mark_channel_checked(
+                            channel_id,
+                            stream_count=current_stream_count,
+                            checked_stream_ids=checked_stream_ids
+                        )
+                        return
+                    else:
+                        logger.info(f"Channel composition changed (prev: {previous_stream_count}, curr: {current_stream_count}) - will reorder")
+            
+            # Import stream analysis functions from stream_check_utils
+            from apps.stream.stream_check_utils import analyze_stream
+            
+            # Analyze new/unchecked streams
+            analyzed_streams = []
+            dead_stream_ids = set()  # Use set for O(1) lookups
+            revived_stream_ids = []
+            total_streams = len(streams_to_check)
+            
+            # Dict to keep track of the stream details throughout the analysis
+            stream_statuses = {
+                s['id']: {
+                    'id': s['id'],
+                    'name': s.get('name', f"Stream {s['id']}"),
+                    'status': 'pending',
+                    'm3u_account': self._get_m3u_account_name(s.get('id'), udi) if hasattr(self, '_get_m3u_account_name') else 'N/A'
+                }
+                for s in streams_to_check
+            }
+            
+            for idx, stream in enumerate(streams_to_check, 1):
+                if self.abort_current_check.is_set():
+                    logger.info("Abort requested, stopping sequential stream checks")
+                    break
+                    
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=idx,
+                    total=total_streams,
+                    current_stream=stream.get('name', 'Unknown'),
+                    status='analyzing',
+                    step='Analyzing stream quality',
+                    step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})',
+                    streams_detail=list(stream_statuses.values())
+                )
+                
+                if stream['id'] in stream_statuses:
+                    stream_statuses[stream['id']]['status'] = 'checking'
+                
+                # Analyze stream
+                analysis_params = self.config.get('stream_analysis', {})
+                
+                # Apply URL transformation if using M3U profile with search/replace patterns
+                stream_url = stream.get('url', '')
+                if udi:
+                    stream_url = udi.apply_profile_url_transformation(stream)
+                
+                analyzed = analyze_stream(
+                    stream_url=stream_url,
+                    stream_id=stream['id'],
+                    stream_name=stream.get('name', 'Unknown'),
+                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                    timeout=analysis_params.get('timeout', 30),
+                    retries=analysis_params.get('retries', 1),
+                    retry_delay=analysis_params.get('retry_delay', 10),
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
+                )
+                
+                # Update stream stats on dispatcharr with ffmpeg-extracted data
+                self._update_stream_stats(analyzed)
+                
+                # Check if stream is dead (resolution=0 or bitrate=0)
+                is_dead = self._is_stream_dead(analyzed, channel_id)
+                stream_url = stream.get('url', '')
+                stream_name = stream.get('name', 'Unknown')
+                was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                
+                if is_dead and not was_dead:
+                    # Mark as dead in tracker
+                    if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name, channel_id):
+                        dead_stream_ids.add(stream['id'])
+                        logger.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
+                    else:
+                        logger.error(f"Failed to mark stream {stream['id']} as DEAD, will not remove from channel")
+                elif not is_dead and was_dead:
+                    # Stream was revived!
+                    if allow_revive:
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream['id'])
+                            logger.info(f"Stream {stream['id']} REVIVED: {stream_name}")
+                    else:
+                        dead_stream_ids.add(stream['id'])
+                        logger.info(f"Stream {stream['id']} is alive but revival disabled by profile: {stream_name}")
+                elif is_dead and was_dead:
+                    # Stream remains dead
+                    dead_stream_ids.add(stream['id'])
+                
+                # Calculate score
+                score = self._calculate_stream_score(analyzed, priority_m3u_ids, priority_mode, scoring_weights)
+                analyzed['score'] = score
+                analyzed_streams.append(analyzed)
+                
+                # Update stream status for progress display
+                if stream['id'] in stream_statuses:
+                    if analyzed.get('status') == 'ERROR':
+                        stream_statuses[stream['id']]['status'] = 'error'
+                        stream_statuses[stream['id']]['score'] = 0.0
+                    elif is_dead:
+                        stream_statuses[stream['id']]['status'] = 'dead'
+                        stream_statuses[stream['id']]['score'] = 0.0
+                    else:
+                        stream_statuses[stream['id']]['status'] = 'completed'
+                        stream_statuses[stream['id']]['score'] = score
+                        stream_statuses[stream['id']]['resolution'] = analyzed.get('resolution', '0x0')
+                        stream_statuses[stream['id']]['video_codec'] = analyzed.get('video_codec', 'N/A')
+                        stream_statuses[stream['id']]['fps'] = analyzed.get('fps', 0)
+                        stream_statuses[stream['id']]['bitrate'] = analyzed.get('bitrate_kbps')
+                
+                logger.info(f"Stream {idx}/{total_streams}: {stream.get('name')} - Score: {score:.2f}")
+            
+            # For already-checked streams, retrieve their cached data from UDI
+            for stream in streams_already_checked:
+                stream_data = udi.get_stream_by_id(stream['id'])
+                if stream_data:
+                    stream_stats = stream_data.get('stream_stats', {})
+                    # Handle None case explicitly
+                    if stream_stats is None:
+                        stream_stats = {}
+                    if isinstance(stream_stats, str):
+                        try:
+                            stream_stats = json.loads(stream_stats)
+                            # Handle case where JSON string is "null"
+                            if stream_stats is None:
+                                stream_stats = {}
+                        except json.JSONDecodeError:
+                            stream_stats = {}
+                    
+                    # Reconstruct analyzed format from stored stats
+                    # Use "0x0" for resolution, 0 for FPS and bitrate when not available
+                    analyzed = {
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'stream_id': stream['id'],
+                        'stream_name': stream.get('name', 'Unknown'),
+                        'stream_url': stream.get('url', ''),
+                        'resolution': stream_stats.get('resolution', '0x0'),
+                        'fps': stream_stats.get('source_fps', 0),
+                        'video_codec': stream_stats.get('video_codec', 'N/A'),
+                        'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                        'hdr_format': stream_stats.get('hdr_format'),
+                        'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                        'status': 'OK'  # Assume OK for previously checked streams
+                    }
+                    
+                    # Check if this cached stream is dead and handle state transitions
+                    stream_url = stream.get('url', '')
+                    stream_name = stream.get('name', 'Unknown')
+                    is_dead = self._is_stream_dead(analyzed, channel_id)
+                    was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                    
+                    # Handle dead/alive state transitions (same logic as newly-checked streams)
+                    if is_dead and not was_dead:
+                        # Newly detected as dead
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name, channel_id):
+                            dead_stream_ids.add(stream['id'])
+                            logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
+                    elif not is_dead and was_dead:
+                        # Stream was revived!
+                        if allow_revive:
+                            if self.dead_streams_tracker.mark_as_alive(stream_url):
+                                revived_stream_ids.append(stream['id'])
+                                logger.info(f"Cached stream {stream['id']} REVIVED: {stream_name}")
+                        else:
+                            # Not allowed to revive, treat as still dead
+                            dead_stream_ids.add(stream['id'])
+                            logger.info(f"Cached stream {stream['id']} is alive but revival disabled by profile: {stream_name}")
+                    elif is_dead and was_dead:
+                        # Stream remains dead (already marked)
+                        logger.debug(f"Cached stream {stream['id']} remains dead (already marked)")
+                        dead_stream_ids.add(stream['id'])
+                    
+                    # Calculate score using stored stats and CURRENT profile weights
+                    score = self._calculate_stream_score(analyzed, priority_m3u_ids, priority_mode, scoring_weights)
+                    analyzed['score'] = score
+                    analyzed_streams.append(analyzed)
+                    logger.debug(f"Using cached data for stream {stream['id']}: {stream.get('name')} - Score: {score:.2f}")
+                else:
+                    # If we can't fetch cached data, analyze this stream
+                    logger.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
+                    analysis_params = self.config.get('stream_analysis', {})
+                    
+                    # Apply URL transformation if using M3U profile with search/replace patterns
+                    stream_url = stream.get('url', '')
+                    if udi:
+                        stream_url = udi.apply_profile_url_transformation(stream)
+                    
+                    analyzed = analyze_stream(
+                        stream_url=stream_url,
+                        stream_id=stream['id'],
+                        stream_name=stream.get('name', 'Unknown'),
+                        ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                        timeout=analysis_params.get('timeout', 30),
+                        retries=analysis_params.get('retries', 1),
+                        retry_delay=analysis_params.get('retry_delay', 10),
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
+                    )
+                    self._update_stream_stats(analyzed)
+                    score = self._calculate_stream_score(analyzed, priority_m3u_ids, priority_mode)
+                    analyzed['score'] = score
+                    analyzed_streams.append(analyzed)
+            
+            # Sort streams by score (highest first)
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='processing',
+                step='Calculating scores',
+                step_detail='Sorting streams by quality score'
+            )
+            # Sort streams using tiered sort keys (lexicographical ranking)
+            for analyzed in analyzed_streams:
+                analyzed['sort_key'] = self._generate_stream_sort_key(analyzed, priority_m3u_ids, priority_mode)
+                
+            analyzed_streams.sort(key=lambda x: x['sort_key'])
+            
+            # Apply stream limit if configured in profile
+            if stream_limit > 0 and len(analyzed_streams) > stream_limit:
+                removed_count = len(analyzed_streams) - stream_limit
+                logger.info(f"Applying profile stream limit: Keeping top {stream_limit} streams, removing {removed_count}")
+                analyzed_streams = analyzed_streams[:stream_limit]
+            
+            # Remove dead streams from the channel (if enabled in config)
+            # Dead streams are checked during all channel checks (normal and global)
+            # If they're still dead, they're removed; if revived, they remain
+            if dead_stream_ids:
+                if dead_stream_removal_enabled:
+                    logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                    # Log which streams are being removed
+                    for stream_id in dead_stream_ids:
+                        dead_stream = next((s for s in analyzed_streams if s.get('stream_id') == stream_id), None)
+                        if dead_stream:
+                            logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
+                    analyzed_streams = [s for s in analyzed_streams if s.get('stream_id') not in dead_stream_ids]
+                else:
+                    logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
+            
+            if revived_stream_ids:
+                logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
+            
+            # Update channel with reordered streams
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='updating',
+                step='Reordering streams',
+                step_detail='Applying new stream order to channel'
+            )
+            reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
+            # Dead streams have already been filtered from analyzed_streams if removal is enabled
+            # If removal is disabled, allow them to remain in the channel
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=(not dead_stream_removal_enabled))
+            
+            # Verify the update was applied correctly
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='verifying',
+                step='Verifying update',
+                step_detail='Confirming stream order was applied'
+            )
+            
+            # Only verify if enabled in configuration
+            batch_config = self.config.get('batch_operations', {})
+            verify_updates = batch_config.get('verify_updates', False)
+            
+            if verify_updates:
+                time.sleep(0.5)  # Brief delay to ensure API has processed the update
+                # Refresh this specific channel in UDI to get updated data after write
+                udi.refresh_channel_by_id(channel_id)
+                updated_channel_data = udi.get_channel_by_id(channel_id)
+                if updated_channel_data:
+                    updated_stream_ids = updated_channel_data.get('streams', [])
+                    if updated_stream_ids == reordered_ids:
+                        logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
+                    else:
+                        logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
+                        logger.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
+                else:
+                    logger.warning(f"⚠ Could not verify channel {channel_name}: channel data not found after refresh")
+            else:
+                logger.debug(f"Skipped verification for channel {channel_name} (disabled in config)")
+            
+            logger.info(f"✓ Channel {channel_name} checked and streams reordered")
+            
+            # Add changelog entry with stream stats
+            if self.changelog:
+                try:
+                    # Calculate channel-level averages from analyzed streams
+                    averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
+                    
+                    # Prepare stream stats summary for changelog
+                    stream_stats = []
+                    for analyzed in analyzed_streams[:10]:  # Limit to top 10
+                        stream_id = analyzed.get('stream_id')
+                        is_dead = stream_id in dead_stream_ids
+                        is_revived = stream_id in revived_stream_ids
+                        
+                        # Extract and format stats using centralized utilities
+                        extracted_stats = extract_stream_stats(analyzed)
+                        formatted_stats = format_stream_stats_for_display(extracted_stats)
+                        
+                        # Get M3U account name for this stream using helper method
+                        m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+                        
+                        stream_stat = {
+                            'stream_id': stream_id,
+                            'stream_name': analyzed.get('stream_name'),
+                            'resolution': formatted_stats['resolution'],
+                            'fps': formatted_stats['fps'],
+                            'video_codec': formatted_stats['video_codec'],
+                            'audio_codec': formatted_stats['audio_codec'],
+                            'bitrate': formatted_stats['bitrate'],
+                            'm3u_account': m3u_account_name,
+                            'hdr_format': extracted_stats.get('hdr_format')
+                        }
+                        
+                        # Mark dead streams as "dead" instead of showing score:0
+                        if is_dead:
+                            stream_stat['status'] = 'dead'
+                        elif is_revived:
+                            stream_stat['status'] = 'revived'
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        else:
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                            # Include original status from analysis if present
+                            if 'status' in analyzed:
+                                stream_stat['analysis_status'] = analyzed.get('status')
+                        
+                        # Clean up N/A values for cleaner output
+                        stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
+                        stream_stats.append(stream_stat)
+                    
+                    # Get channel logo URL
+                    logo_url = None
+                    logo_id = channel_data.get('logo_id')
+                    if logo_id:
+                        logo_url = f"/api/logos/{logo_id}"
+                    
+                    # Add to batch changelog instead of creating individual entry
+                    # Only add to batch if not explicitly skipped (e.g., when called from check_single_channel)
+                    if not skip_batch_changelog:
+                        self._add_to_batch_changelog({
+                            'channel_id': channel_id,
+                            'channel_name': channel_name,
+                            'logo_url': logo_url,
+                            'total_streams': len(streams),
+                            'streams_analyzed': len(analyzed_streams),
+                            'dead_streams_detected': len(dead_stream_ids),
+                            'streams_revived': len(revived_stream_ids),
+                            'avg_resolution': averages['avg_resolution'],
+                            'avg_bitrate': averages['avg_bitrate'],
+                            'avg_fps': averages['avg_fps'],
+                            'success': True,
+                            'stream_details': stream_stats[:10]  # Limit to top 10 for brevity
+                        })
+                        logger.info(f"Added channel {channel_name} to batch changelog")
+                except Exception as e:
+                    logger.warning(f"Failed to add to batch changelog: {e}")
+            
+            # Mark as completed with stream count and checked stream IDs
+            self.check_queue.mark_completed(channel_id)
+            # Update current_stream_ids to exclude dead streams that were removed
+            # This prevents dead stream IDs from being saved in checked_stream_ids
+            # which would cause them to be skipped by 2-hour immunity even after revival
+            # Note: Using list comprehension instead of set operations to preserve order
+            # Only exclude dead streams if removal is enabled
+            if dead_stream_removal_enabled:
+                final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            else:
+                final_stream_ids = current_stream_ids  # Keep all streams if removal is disabled
+            self.update_tracker.mark_channel_checked(
+                channel_id, 
+                stream_count=len(streams),
+                checked_stream_ids=final_stream_ids
+            )
+            
+            # Return statistics for callers that need them
+            return {
+                'dead_streams_count': len(dead_stream_ids),
+                'revived_streams_count': len(revived_stream_ids),
+                'dead_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in dead_stream_ids],
+                'revived_streams': [{
+                    'id': s, 
+                    'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
+                    'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
+                } for s in revived_stream_ids],
+                'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked]
+            }
+
+
+            
+        except Exception as e:
+            logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
+            self.check_queue.mark_failed(channel_id, str(e))
+            
+            # Add failed check to batch changelog
+            # Only add to batch if not explicitly skipped
+            if self.changelog and not skip_batch_changelog:
+                try:
+                    # Try to get channel name if available
+                    try:
+                        channel_name = channel_data.get('name', f'Channel {channel_id}')
+                    except:
+                        channel_name = f'Channel {channel_id}'
+                    
+                    self._add_to_batch_changelog({
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'total_streams': 0,
+                        'streams_analyzed': 0,
+                        'dead_streams_detected': 0,
+                        'streams_revived': 0,
+                        'success': False,
+                        'error': str(e),
+                        'stream_stats': []
+                    })
+                except Exception as changelog_error:
+                    logger.warning(f"Failed to add to batch changelog: {changelog_error}")
+            
+            # Return empty stats on error
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0
+            }
+        
+        finally:
+            self.checking = False
+    
+    def _calculate_stream_score(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute', scoring_weights: Dict = None) -> float:
+        """Calculate a quality score for a stream based on analysis.
+        
+        Applies M3U account priority matching the order in the channel's Automation Profile.
+        
+        Args:
+            stream_data: Dictionary of stream analysis data
+            priority_m3u_ids: List of M3U account IDs in priority order (highest first)
+            priority_mode: 'absolute' (priority trumps quality) or 'same_resolution' (quality trumps priority)
+            scoring_weights: Optional per-profile scoring weights. Falls back to global config if not provided.
+        """
+        # Dead streams always get a score of 0
+        if self._is_stream_dead(stream_data):
+            return 0.0
+        
+        # Use per-profile weights if provided, otherwise fall back to global config
+        if scoring_weights is None:
+            weights = self.config.get('scoring.weights', {})
+            prefer_h265 = self.config.get('scoring.prefer_h265', True)
+        else:
+            weights = {
+                'bitrate': scoring_weights.get('bitrate', 0.35),
+                'resolution': scoring_weights.get('resolution', 0.30),
+                'fps': scoring_weights.get('fps', 0.15),
+                'codec': scoring_weights.get('codec', 0.10),
+                'hdr': scoring_weights.get('hdr', 0.10)
+            }
+            prefer_h265 = scoring_weights.get('prefer_h265', True)
+        
+        score = 0.0
+        
+        # Bitrate score (0-1, normalized to typical range 1000-8000 kbps)
+        bitrate = stream_data.get('bitrate_kbps', 0)
+        if isinstance(bitrate, (int, float)) and bitrate > 0:
+            bitrate_score = min(bitrate / 8000, 1.0)
+            score += bitrate_score * weights.get('bitrate', 0.40)
+        
+        # Resolution score (0-1)
+        resolution = stream_data.get('resolution', 'N/A')
+        resolution_score = 0.0
+        if 'x' in str(resolution):
+            try:
+                width, height = map(int, resolution.split('x'))
+                # Score based on vertical resolution
+                if height >= 2160:
+                    resolution_score = 1.0
+                elif height >= 1080:
+                    resolution_score = 0.85
+                elif height >= 720:
+                    resolution_score = 0.7
+                elif height >= 576:
+                    resolution_score = 0.5
+                else:
+                    resolution_score = 0.3
+            except (ValueError, AttributeError):
+                pass
+        score += resolution_score * weights.get('resolution', 0.35)
+        
+        # FPS score (0-1)
+        fps = stream_data.get('fps', 0)
+        if isinstance(fps, (int, float)) and fps > 0:
+            fps_score = min(fps / 60, 1.0)
+            score += fps_score * weights.get('fps', 0.15)
+        
+        # Codec score (0-1)
+        codec = stream_data.get('video_codec', '').lower()
+        codec_score = 0.0
+        if codec:
+            if 'h265' in codec or 'hevc' in codec:
+                codec_score = 1.0 if prefer_h265 else 0.8
+            elif 'h264' in codec or 'avc' in codec:
+                codec_score = 0.8 if prefer_h265 else 1.0
+            elif codec != 'n/a':
+                codec_score = 0.5
+        score += codec_score * weights.get('codec', 0.10)
+        
+        # HDR score (0-1)
+        # Give full score for HDR10 or HLG, zero for SDR
+        hdr_format = stream_data.get('hdr_format')
+        hdr_score = 1.0 if hdr_format in ['HDR10', 'HLG'] else 0.0
+        score += hdr_score * weights.get('hdr', 0.10)
+        
+        return round(score, 2)
+    
+    def _get_priority_boost(self, stream_id: int, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute') -> float:
+        """Calculate priority boost for a stream based on its M3U account priority.
+        
+        Args:
+            stream_id: The stream ID
+            stream_data: Stream data dictionary containing resolution and other info
+            priority_m3u_ids: List of M3U account IDs in priority order (highest first)
+            priority_mode: 'absolute' or 'same_resolution'
+            
+        Returns:
+            Priority boost value
+        """
+        try:
+            if not priority_m3u_ids:
+                return 0.0
+                
+            # Get stream from UDI to find its M3U account
+            udi = get_udi_manager()
+            stream = udi.get_stream_by_id(stream_id)
+            if not stream:
+                return 0.0
+            
+            m3u_account_id = stream.get('m3u_account')
+            if not m3u_account_id:
+                return 0.0
+            
+            # Check if this account is in the priority list
+            if m3u_account_id in priority_m3u_ids:
+                # Calculate boost based on position (index)
+                # Lower index = higher priority
+                index = priority_m3u_ids.index(m3u_account_id)
+                total_accounts = len(priority_m3u_ids)
+                
+                if priority_mode == 'equal':
+                    # Equal Mode
+                    # No priority boost, ranking matches quality exactly
+                    boost = 0.0
+                    logger.debug(f"Applying equal priority (no boost) to stream {stream_id}")
+                elif priority_mode == 'same_resolution':
+                    # Same Resolution (Tie-breaker) Mode
+                    # Small boost (0.05 per step) to break ties in quality
+                    # Example separation: 0.15 max (less than resolution tier gap)
+                    boost = 0.05 * (total_accounts - index)
+                    logger.debug(f"Applying tie-breaker priority boost of {boost} to stream {stream_id}")
+                else:
+                    # Absolute Mode (Default)
+                    # Massive boost to override quality differences
+                    # Boost formula: Base 10 + (inverted index count)
+                    boost = 10.0 + (total_accounts - index)
+                    logger.debug(f"Applying absolute priority boost of {boost} to stream {stream_id}")
+                
+                return boost
+            
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating priority boost for stream {stream_id}: {e}")
+            return 0.0
+    
+
+    def _get_resolution_tier(self, resolution: str) -> int:
+        """Map resolution string to a numeric tier (0-5, lower is better)."""
+        if not resolution or 'x' not in str(resolution):
+            return 5 # Unknown/N/A
+            
+        try:
+            # Handle list/tuple format if resolution was already parsed elsewhere
+            if isinstance(resolution, (list, tuple)):
+                height = int(resolution[1])
+            else:
+                width, height = map(int, str(resolution).split('x'))
+                
+            if height >= 2160: return 0 # 4K
+            if height >= 1080: return 1 # 1080p
+            if height >= 720:  return 2 # 720p
+            if height >= 576:  return 3 # 576p/SD
+            return 4 # Low resolution
+        except (ValueError, AttributeError, IndexError):
+            return 5
+
+    def _generate_stream_sort_key(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute') -> Tuple:
+        """Generate a lexicographical sort key for a stream based on priority tiers.
+        
+        The sort key is a tuple used for ascending sort (lower is better).
+        
+        (AccountRank, ResolutionTier, QualityScore)
+        
+        Tiers (for 'same_resolution' mode):
+        (ResolutionTier, AccountRank, QualityScore)
+        """
+        # 1. Account Rank (0 = highest)
+        account_rank = 100
+        stream_id = stream_data.get('stream_id')
+        if priority_m3u_ids and stream_id:
+            udi = get_udi_manager()
+            stream = udi.get_stream_by_id(stream_id)
+            if stream:
+                m3u_id = stream.get('m3u_account')
+                if m3u_id in priority_m3u_ids:
+                    account_rank = priority_m3u_ids.index(m3u_id)
+        
+        # 2. Resolution Tier (0 = highest)
+        res_tier = self._get_resolution_tier(stream_data.get('resolution'))
+        
+        
+        # 4. Quality Score (lower is better, so negate the 0-1 scale)
+        quality_score = -stream_data.get('score', 0.0)
+        
+        if priority_mode == 'same_resolution':
+            return (res_tier, account_rank, quality_score)
+        elif priority_mode == 'equal':
+            # In 'equal' mode, resolution and quality matter, but not M3U account priority
+            return (res_tier, quality_score)
+        else: # 'absolute' mode
+            return (account_rank, res_tier, quality_score)
+    
+    def get_status(self) -> Dict:
+        """Get current service status."""
+        queue_status = self.check_queue.get_status()
+        progress = self.progress.get()
+        
+        with self.lock:
+            sync_state = dict(self.sync_batch_state)
+            
+        if sync_state.get('active'):
+            # Override queue status with our synchronous batch status
+            # When active, ONLY the sync batch progress should be displayed
+            queue_status['in_progress'] = sync_state['in_progress']
+            queue_status['completed'] = sync_state['completed']
+            queue_status['failed'] = sync_state['failed']
+            queue_status['queued'] = sync_state['total_channels'] - sync_state['completed'] - sync_state['failed'] - sync_state['in_progress']
+            queue_status['total_queued'] = sync_state['total_channels']
+            queue_status['total_completed'] = sync_state['completed']
+            queue_status['total_failed'] = sync_state['failed']
+            queue_status['queue_size'] = queue_status['queued']
+            
+            # Map tracking stream properties back over queue_status for calculations
+            queue_status['queued_streams_count'] = sync_state.get('queued_streams_count', 0)
+            queue_status['in_progress_streams_count'] = sync_state.get('in_progress_streams_count', 0)
+            
+            # Use real queue average if available, otherwise 0
+            queue_status['avg_stream_process_time_sec'] = self.check_queue.get_status().get('avg_stream_process_time_sec', 0)
+            
+        # Mathematical ETA Calculation
+        avg_seconds = queue_status.get('avg_stream_process_time_sec', 0)
+        remaining_streams = queue_status.get('queued_streams_count', 0) + queue_status.get('in_progress_streams_count', 0)
+        
+        eta_seconds = 0
+        if avg_seconds > 0 and remaining_streams > 0:
+            if self.config.get('concurrent_streams.enabled', True):
+                # Parallel worker mapping applies strictly per-channel, not across the whole queue.
+                # E.g. If max_workers=5 and a channel has 1 stream, it processes sequentially.
+                # Therefore, ETA = (Remaining Channels) * (Average stream timing * Average streams per channel / max_workers)
+                
+                # To keep math accurate simply across total queued items vs average duration metric:
+                # We factor concurrency purely as a divisor of the remaining time, but cap the denominator
+                # at whatever typical 'max streams per channel' throughput averages to avoid over-optimistic calculations.
+                max_workers = max(1, self.config.get('concurrent_streams', {}).get('max_workers', 5))
+                
+                # Assume an average channel distributes its streams perfectly over max_workers:
+                eta_seconds = (avg_seconds * remaining_streams) / max_workers
+            else:
+                # Sequential Mode
+                eta_seconds = avg_seconds * remaining_streams
+                
+        queue_status['eta_seconds'] = int(eta_seconds)
+        
+        # Stream checking mode is active when:
+        # - An individual channel is being checked, OR
+        # - There are channels in the queue waiting to be checked
+        stream_checking_mode = (
+            self.checking or 
+            queue_status.get('queue_size', 0) > 0 or
+            queue_status.get('in_progress', 0) > 0 or
+            sync_state.get('active', False)
+        )
+        
+        return {
+            'running': self.running,
+            'checking': self.checking,
+            'stream_checking_mode': stream_checking_mode,
+            'enabled': self.config.get('enabled', True),
+            'queue': queue_status,
+            'progress': progress,
+            'last_global_check': self.update_tracker.get_last_global_check(),
+            'config': {
+                'automation_controls': self.config.get('automation_controls', {}),
+                'check_interval': self.config.get('check_interval'),
+                'global_check_schedule': self.config.get('global_check_schedule'),
+                'queue_settings': self.config.get('queue')
+            }
+        }
+    
+    def queue_channel(self, channel_id: int, priority: int = 10, force_check: bool = False) -> bool:
+        """Manually queue a channel for checking.
+        
+        Args:
+            channel_id: ID of the channel to queue
+            priority: Priority for queue ordering (higher = earlier)
+            force_check: If True, marks channel for force checking (bypasses 2-hour immunity)
+            
+        Returns:
+            True if channel was successfully queued, False otherwise
+        """
+        if force_check:
+            self.update_tracker.mark_channel_for_force_check(channel_id)
+            logger.info(f"Marked channel {channel_id} for force check (bypasses 2-hour immunity)")
+            
+        # Ensure we can re-queue if it was completed (manual check overrides completion state)
+        self.check_queue.remove_from_completed(channel_id)
+        
+        # Look up stream count accurately to assist in ETA tracking calculations
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(channel_id)
+        stream_count = len(channel.get('streams', [])) if channel else 1
+        
+        # Inject exact array width
+        with self.check_queue.lock:
+            # We add manually here if not queued, or intercept normal logic.
+            # Best way without changing add_channel signature excessively is to manually modify:
+            pass # We'll modify add_channel signature to handle this cleanly.
+        
+        # Calling modified add_channel
+        return self.check_queue.add_channel(channel_id, priority, stream_count=stream_count)
+    
+    def queue_channels(self, channel_ids: List[int], priority: int = 10, force_check: bool = False) -> int:
+        """Manually queue multiple channels for checking.
+        
+        Args:
+            channel_ids: List of channel IDs to queue
+            priority: Priority for queue ordering (higher = earlier)
+            force_check: If True, marks all channels for force checking (bypasses 2-hour immunity)
+            
+        Returns:
+            Number of channels successfully queued
+        """
+        if force_check:
+            for channel_id in channel_ids:
+                self.update_tracker.mark_channel_for_force_check(channel_id)
+            logger.info(f"Marked {len(channel_ids)} channels for force check (bypasses 2-hour immunity)")
+        return self.check_queue.add_channels(channel_ids, priority)
+    
+    def check_channels_synchronously(self, channel_ids: List[int], force_check: bool = False, target_stream_ids: Optional[Dict[int, List[str]]] = None) -> Dict[int, Dict]:
+        """Check multiple channels synchronously and return results.
+        
+        Using this method Bypasses the queue and worker/scheduler entirely.
+        This is useful for automation cycles where we want to wait for results
+        and consolidate them into a single report.
+        
+        Args:
+            channel_ids: List of channel IDs to check
+            force_check: If True, marks channels for force checking
+            target_stream_ids: Optional dict mapping channel_id -> list of stream_ids.
+                               If provided, only these specific streams will be evaluated.
+                               Any stream not in the list will be skipped and its existing
+                               stats cached. Used by automation for newly matched streams.
+            
+        Returns:
+            Dict mapping channel_id to result dict (containing dead/revived streams)
+        """
+        results = {}
+        
+        # Mark force check if requested
+        if force_check:
+            for channel_id in channel_ids:
+                self.update_tracker.mark_channel_for_force_check(channel_id)
+                
+        # Fast lookup precise stream counts
+        from apps.udi import get_udi_manager
+        udi = get_udi_manager()
+        
+        channel_streams = {}
+        total_streams = 0
+        for channel_id in channel_ids:
+            channel = udi.get_channel_by_id(channel_id)
+            stream_count = len(channel.get('streams', [])) if channel else 1
+            channel_streams[channel_id] = stream_count
+            total_streams += stream_count
+                
+        with self.lock:
+            self.sync_batch_state = {
+                'active': True,
+                'total_channels': len(channel_ids),
+                'completed': 0,
+                'failed': 0,
+                'in_progress': 0,
+                'queued_streams_count': total_streams,
+                'in_progress_streams_count': 0
+            }
+            self.checking = True
+        
+        try:
+            # Process each channel
+            for channel_id in channel_ids:
+                stream_count = channel_streams.get(channel_id, 1)
+                
+                with self.lock:
+                    self.sync_batch_state['in_progress'] = 1
+                    self.sync_batch_state['queued_streams_count'] = max(0, self.sync_batch_state['queued_streams_count'] - stream_count)
+                    self.sync_batch_state['in_progress_streams_count'] = stream_count
+                    
+                channel_start_time = datetime.now()
+                
+                try:
+                    # Use specific channel-checker directly depending on concurrency setting
+                    concurrent_enabled = self.config.get('concurrent_streams.enabled', True)
+                    
+                    if target_stream_ids and channel_id in target_stream_ids:
+                        stream_id_whitelist = target_stream_ids[channel_id]
+                    else:
+                        stream_id_whitelist = None
+                        
+                    if concurrent_enabled:
+                        channel_result = self._check_channel_concurrent(channel_id, skip_batch_changelog=True, target_stream_ids=stream_id_whitelist)
+                    else:
+                        channel_result = self._check_channel_sequential(channel_id, skip_batch_changelog=True, target_stream_ids=stream_id_whitelist)
+                        
+                    results[channel_id] = channel_result
+                    with self.lock:
+                        self.sync_batch_state['completed'] += 1
+                except Exception as e:
+                    logger.error(f"Error checking channel {channel_id} synchronously: {e}")
+                    results[channel_id] = {'error': str(e)}
+                    with self.lock:
+                        self.sync_batch_state['failed'] += 1
+                finally:
+                    duration_sec = (datetime.now() - channel_start_time).total_seconds()
+                    if stream_count > 0:
+                        time_per_stream = duration_sec / stream_count
+                        with self.check_queue.lock:
+                            self.check_queue.stream_processing_times.append(time_per_stream)
+                            
+                    with self.lock:
+                        self.sync_batch_state['in_progress'] = 0
+                        self.sync_batch_state['in_progress_streams_count'] = 0
+        finally:
+            with self.lock:
+                self.sync_batch_state['active'] = False
+                queue_status = self.check_queue.get_status()
+                if queue_status.get('queue_size', 0) == 0 and queue_status.get('in_progress', 0) == 0:
+                    self.checking = False
+                
+        return results
+
+    def check_single_channel(self, channel_id: int, program_name: Optional[str] = None) -> Dict:
+        """Check a single channel immediately and return results.
+        
+        This performs a targeted channel refresh for a single channel:
+        - Identifies M3U accounts used by the channel
+        - Refreshes playlists for accounts associated with the channel
+        - Clears dead streams for the specified channel to give them a second chance
+        - Re-matches and assigns streams (including previously dead ones) if matching_mode is enabled
+        - Force checks all streams (bypasses 2-hour immunity) if checking_mode is enabled
+        - Detects newly dead streams and marks them (if checking is enabled)
+        - Detects revived streams and marks them as alive (if checking is enabled)
+        - Removes dead streams from the channel (if checking is enabled)
+        
+        Note: This now works like Global Action but only for the specified channel.
+        Dead streams for other channels are not affected.
+        
+        Channel settings (matching_mode and checking_mode) are respected:
+        - If matching_mode is disabled, stream matching is skipped
+        - If checking_mode is disabled, stream quality checking is skipped
+        
+        Args:
+            channel_id: ID of the channel to check
+            program_name: Optional program name if this is a scheduled EPG check
+            
+        Returns:
+            Dict with check results and statistics
+        """
+        import time as time_module
+        start_time = time_module.time()
+        
+        try:
+            logger.info(f"Starting single channel check for channel {channel_id}")
+            
+            # Get channel info from UDI
+            udi = get_udi_manager()
+            channel = udi.get_channel_by_id(channel_id)
+            if not channel:
+                error_msg = f"Channel {channel_id} not found"
+                logger.error(error_msg)
+                return {'success': False, 'error': error_msg}
+            
+            channel_name = channel.get('name', f'Channel {channel_id}')
+            
+            # Check if channel is in active monitoring session (coordination with monitoring system)
+            from apps.stream.stream_session_manager import get_session_manager
+            session_manager = get_session_manager()
+            channels_in_monitoring = session_manager.get_channels_in_active_sessions()
+            
+            if channel_id in channels_in_monitoring:
+                logger.info(f"⏸ Skipping channel {channel_name} (ID: {channel_id}) - currently in active monitoring session")
+                return {
+                    'success': False,
+                    'skipped': True,
+                    'reason': 'in_monitoring_session',
+                    'message': f'Channel {channel_name} is in an active monitoring session and cannot be checked by automation',
+                    'channel_id': channel_id,
+                    'channel_name': channel_name
+                }
+            
+            # Check channel settings for matching and checking modes
+            # Check channel settings for matching and checking modes via Automation Profiles
+            from apps.automation.automation_config_manager import get_automation_config_manager
+            automation_config = get_automation_config_manager()
+            
+            # channel dict is available in local scope
+            channel_group_id = channel.get('channel_group_id')
+            config = automation_config.get_effective_configuration(channel_id, channel_group_id)
+            profile = config.get('profile') if config else None
+            
+            matching_enabled = False
+            checking_enabled = False
+            if profile:
+                matching_enabled = profile.get('stream_matching', {}).get('enabled', False)
+                checking_enabled = profile.get('stream_checking', {}).get('enabled', False)
+            
+            logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
+            
+            # Check if channel has active viewers or if its playlist has reached max concurrent streams
+            current_streams = fetch_channel_streams(channel_id)
+            if current_streams:
+                limit_check_result = self._check_channel_limits(channel_id, channel_name, current_streams)
+                if limit_check_result is not None:
+                    # Convert the internal result format to the single channel check format
+                    return {
+                        'success': False,
+                        'error': f"Channel check skipped: {limit_check_result.get('skip_reason', 'limits reached')}",
+                        'reason': limit_check_result.get('skip_reason'),
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'details': limit_check_result
+                    }
+            
+            # Step 1: Identify M3U accounts for channel (reusing current_streams from limit check above)
+            logger.info(f"Step 1/6: Identifying M3U accounts for channel {channel_name}...")
+            account_ids = set()
+            if current_streams:
+                for stream in current_streams:
+                    m3u_account = stream.get('m3u_account')
+                    if m3u_account:
+                        account_ids.add(m3u_account)
+            
+            # Also check dead streams for this channel to find M3U accounts
+            # This fixes the bug where channels with all dead streams couldn't refresh their playlists
+            dead_streams = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+            for dead_url, dead_info in dead_streams.items():
+                # Try to get the stream from UDI to find its m3u_account
+                stream_id = dead_info.get('stream_id')
+                if stream_id:
+                    stream = udi.get_stream_by_id(stream_id)
+                    if stream:
+                        m3u_account = stream.get('m3u_account')
+                        if m3u_account:
+                            account_ids.add(m3u_account)
+                            logger.info(f"Found M3U account {m3u_account} from dead stream {dead_info.get('stream_name', 'Unknown')}")
+            
+            # Step 2: Refresh playlists for those accounts
+            if account_ids:
+                logger.info(f"Step 2/6: Refreshing playlists for {len(account_ids)} M3U account(s)...")
+                # Import here to allow better test mocking
+                from apps.core.api_utils import refresh_m3u_playlists
+                for account_id in account_ids:
+                    logger.info(f"Refreshing M3U account {account_id}")
+                    refresh_m3u_playlists(account_id=account_id)
+                
+                # Refresh UDI cache to get updated streams
+                # Also refresh M3U accounts to detect any new accounts
+                # And refresh channel groups to detect any group changes
+                udi.refresh_m3u_accounts()  # Check for new M3U accounts
+                udi.refresh_streams()
+                udi.refresh_channels()
+                udi.refresh_channel_groups()  # Check for new/updated channel groups
+                logger.info("✓ Playlists refreshed and UDI cache updated")
+            else:
+                logger.info("Step 2/6: No M3U accounts found for this channel, skipping playlist refresh")
+            
+            # Step 3: Clear dead streams for this channel to give them a second chance
+            logger.info(f"Step 3/6: Clearing dead streams for channel {channel_name} to give them a second chance...")
+            try:
+                # First, check how many dead streams exist for this channel
+                dead_streams_for_channel = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+                initial_dead_count = len(dead_streams_for_channel)
+                
+                if initial_dead_count > 0:
+                    logger.info(f"Found {initial_dead_count} dead stream(s) for channel {channel_id} before clearing")
+                
+                # Clear all dead streams that belong to this channel by channel_id
+                # This handles cases where playlist refresh creates new streams with different URLs
+                cleared_count = self.dead_streams_tracker.remove_dead_streams_by_channel_id(channel_id)
+                
+                if cleared_count > 0:
+                    logger.info(f"✓ Cleared {cleared_count} dead stream(s) from tracker - they will be given a second chance")
+                    
+                    # Verify the streams were actually cleared
+                    remaining_dead = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+                    if len(remaining_dead) > 0:
+                        logger.warning(f"⚠ {len(remaining_dead)} dead stream(s) still remain after clearing - this may indicate an issue")
+                    else:
+                        logger.info("✓ Verified: All dead streams successfully removed from tracker")
+                else:
+                    logger.info("✓ No dead streams to clear for this channel")
+            except Exception as e:
+                logger.error(f"✗ Failed to clear dead streams: {e}", exc_info=True)
+            
+            # Step 4: Validate existing streams against regex patterns (if matching is enabled)
+            if matching_enabled:
+                logger.info(f"Step 4/6: Validating existing streams for channel {channel_name}...")
+                try:
+                    from apps.automation.automated_stream_manager import AutomatedStreamManager
+                    automation_manager = AutomatedStreamManager()
+                    
+                    # Run validation - respects automation_controls.remove_non_matching_streams setting
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    if validation_results.get("streams_removed", 0) > 0:
+                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams")
+                    else:
+                        logger.info("✓ No non-matching streams found to remove")
+                except Exception as e:
+                    logger.error(f"✗ Failed to validate streams: {e}")
+            else:
+                logger.info(f"Step 4/6: Skipping stream validation (matching is disabled for this channel)")
+            
+            # Step 5: Re-match and assign streams for this specific channel (if matching is enabled)
+            # With dead streams cleared, previously dead streams can now be re-added
+            if matching_enabled:
+                logger.info(f"Step 5/6: Re-matching streams for channel {channel_name}...")
+                try:
+                    # Import here to allow better test mocking
+                    from apps.automation.automated_stream_manager import AutomatedStreamManager
+                    automation_manager = AutomatedStreamManager()
+                    
+                    # Run full discovery (this will add new matching streams but skip dead ones)
+                    # Skip automatic check trigger since we'll perform the check explicitly in Step 6
+                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
+                    if assignments:
+                        logger.info(f"✓ Stream matching completed")
+                    else:
+                        logger.info("✓ No new stream assignments")
+                except Exception as e:
+                    logger.error(f"✗ Failed to match streams: {e}")
+            else:
+                logger.info(f"Step 5/6: Skipping stream matching (matching is disabled for this channel)")
+            
+            # Refresh UDI cache again to ensure the check in Step 6 sees the newly assigned streams
+            # This is critical because discover_and_assign_streams updates the DB but UDI cache might be stale
+            if matching_enabled:
+                logger.debug("Refreshing UDI cache for streams and channel to reflect new assignments...")
+                udi.refresh_streams()
+                udi.refresh_channel_by_id(channel_id)
+                logger.info(f"✓ UDI cache refreshed with latest stream assignments")
+            
+            # Step 6: Mark channel for force check and perform the check (if checking is enabled)
+            dead_count = 0
+            if checking_enabled:
+                logger.info(f"Step 6/6: Force checking all streams for channel {channel_name}...")
+                self.update_tracker.mark_channel_for_force_check(channel_id)
+                
+                # Perform the check (this will now bypass immunity and check all streams)
+                # Returns dict with dead_streams_count and revived_streams_count
+                # Skip batch changelog since this is a single channel check
+                check_result = self._check_channel(channel_id, skip_batch_changelog=True)
+                if not check_result or not isinstance(check_result, dict):
+                    # This should not happen with updated methods, but provide safe fallback
+                    logger.warning(f"_check_channel did not return expected result dict, using defaults")
+                    check_result = {'dead_streams_count': 0, 'revived_streams_count': 0}
+                
+                # Get the count of dead streams that were removed during the check
+                dead_count = check_result.get('dead_streams_count', 0)
+            else:
+                logger.info(f"Step 6/6: Skipping stream checking (checking is disabled for this channel)")
+            
+            # Gather statistics after check using centralized utility
+            streams = fetch_channel_streams(channel_id)
+            total_streams = len(streams)
+            
+            # Calculate channel averages using centralized function
+            channel_averages = calculate_channel_averages(streams, dead_stream_ids=set())
+            
+            check_stats = {
+                'total_streams': total_streams,
+                'dead_streams': dead_count,
+                'avg_resolution': channel_averages['avg_resolution'],
+                'avg_bitrate': channel_averages['avg_bitrate'],
+                'avg_fps': channel_averages['avg_fps'],
+                'stream_details': []
+            }
+            
+            # Add top stream details using centralized extraction
+            for stream in streams[:10]:  # Top 10 streams
+                # Extract stats using centralized utility
+                extracted_stats = extract_stream_stats(stream)
+                formatted_stats = format_stream_stats_for_display(extracted_stats)
+                
+                # Calculate score for this stream using its stats
+                # The score needs to be calculated from the stream_stats data stored in Dispatcharr
+                stream_stats = stream.get('stream_stats', {})
+                if stream_stats is None:
+                    stream_stats = {}
+                if isinstance(stream_stats, str):
+                    try:
+                        stream_stats = json.loads(stream_stats)
+                        if stream_stats is None:
+                            stream_stats = {}
+                    except json.JSONDecodeError:
+                        stream_stats = {}
+                
+                # Build stream data dict for score calculation
+                score_data = {
+                    'stream_id': stream.get('id'),
+                    'stream_name': stream.get('name', 'Unknown'),
+                    'stream_url': stream.get('url', ''),
+                    'resolution': stream_stats.get('resolution', '0x0'),
+                    'fps': stream_stats.get('source_fps', 0),
+                    'video_codec': stream_stats.get('video_codec', 'N/A'),
+                    'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0)
+                }
+                
+                # Calculate score
+                score = self._calculate_stream_score(score_data)
+                
+                # Get M3U account name for this stream using helper method
+                m3u_account_name = None
+                m3u_account_id = stream.get('m3u_account')
+                if m3u_account_id:
+                    m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
+                
+                check_stats['stream_details'].append({
+                    'stream_id': stream.get('id'),
+                    'stream_name': stream.get('name', 'Unknown'),
+                    'resolution': formatted_stats['resolution'],
+                    'bitrate': formatted_stats['bitrate'],
+                    'video_codec': formatted_stats['video_codec'],
+                    'fps': formatted_stats['fps'],
+                    'score': score,
+                    'm3u_account': m3u_account_name,
+                    'hdr_format': extracted_stats.get('hdr_format')
+                })
+            
+            # Calculate duration
+            end_time = time_module.time()
+            duration_seconds = int(end_time - start_time)
+            
+            # Format duration as human-readable string
+            if duration_seconds < 60:
+                duration_str = f"{duration_seconds}s"
+            elif duration_seconds < 3600:
+                minutes = duration_seconds // 60
+                seconds = duration_seconds % 60
+                duration_str = f"{minutes}m {seconds}s"
+            else:
+                hours = duration_seconds // 3600
+                minutes = (duration_seconds % 3600) // 60
+                duration_str = f"{hours}h {minutes}m"
+            
+            # Add duration to check stats
+            check_stats['duration'] = duration_str
+            check_stats['duration_seconds'] = duration_seconds
+            
+            # Add changelog entry
+            if self.changelog:
+                try:
+                    # Get logo URL for the channel
+                    logo_url = None
+                    logo_id = channel.get('logo_id')
+                    if logo_id:
+                        logo_url = f"/api/logos/{logo_id}"
+                    
+                    self.changelog.add_single_channel_check_entry(
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        check_stats=check_stats,
+                        logo_url=logo_url,
+                        program_name=program_name
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to add changelog entry: {e}")
+            
+            logger.info(f"✓ Single channel check completed for {channel_name} in {duration_str}")
+            
+            # Note: _trigger_channel_re_enabling and _trigger_empty_channel_disabling
+            # have been deprecated as they relied on obsolete Dispatcharr features
+            
+            return {
+                'success': True,
+                'channel_id': channel_id,
+                'channel_name': channel_name,
+                'stats': check_stats
+            }
+            
+        except Exception as e:
+            logger.error(f"Error checking single channel {channel_id}: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+    
+    def clear_queue(self):
+        """Clear the checking queue."""
+        self.check_queue.clear()
+        self.abort_current_check.set()
+        self._cancel_queueing = True
+        logger.info("Checking queue cleared and current check aborted")
+    
+    def trigger_check_updated_channels(self):
+        """Trigger immediate check of channels with M3U updates.
+        
+        This method signals the scheduler to immediately process any channels
+        that have been marked as updated, instead of waiting for the next
+        scheduled check interval.
+        """
+        if self.running:
+            logger.info("Triggering immediate check for updated channels")
+            self.check_trigger.set()
+        else:
+            logger.warning("Cannot trigger check - service is not running")
+    
+    def update_config(self, updates: Dict):
+        """Update service configuration and apply changes immediately."""
+        # Sanitize user_agent if present
+        if 'stream_analysis' in updates and 'user_agent' in updates['stream_analysis']:
+            user_agent = updates['stream_analysis']['user_agent']
+            # Sanitize user agent: allow alphanumeric, spaces, dots, slashes, dashes, underscores, parentheses
+            import re
+            sanitized = re.sub(r'[^a-zA-Z0-9 ./_\-()]+', '', str(user_agent))
+            # Limit length to 200 characters
+            sanitized = sanitized[:200].strip()
+            if not sanitized:
+                sanitized = 'VLC/3.0.14'  # Default fallback
+            updates['stream_analysis']['user_agent'] = sanitized
+            if sanitized != user_agent:
+                logger.warning(f"User agent sanitized from '{user_agent}' to '{sanitized}'")
+        
+        # Log what's being updated
+        config_changes = []
+        if 'automation_controls' in updates:
+            old_controls = self.config.get('automation_controls', {})
+            new_controls = updates['automation_controls']
+            for key, value in new_controls.items():
+                old_value = old_controls.get(key, False)
+                if old_value != value:
+                    config_changes.append(f"Automation control '{key}': {old_value} → {value}")
+        
+        if 'global_check_schedule' in updates:
+            schedule_changes = []
+            schedule = updates['global_check_schedule']
+            if 'hour' in schedule or 'minute' in schedule:
+                old_hour = self.config.get('global_check_schedule.hour', 3)
+                old_minute = self.config.get('global_check_schedule.minute', 0)
+                new_hour = schedule.get('hour', old_hour)
+                new_minute = schedule.get('minute', old_minute)
+                if old_hour != new_hour or old_minute != new_minute:
+                    schedule_changes.append(f"Time: {old_hour:02d}:{old_minute:02d} → {new_hour:02d}:{new_minute:02d}")
+            if 'frequency' in schedule:
+                old_freq = self.config.get('global_check_schedule.frequency', 'daily')
+                new_freq = schedule['frequency']
+                if old_freq != new_freq:
+                    schedule_changes.append(f"Frequency: {old_freq} → {new_freq}")
+            if 'enabled' in schedule:
+                old_enabled = self.config.get('global_check_schedule.enabled', True)
+                new_enabled = schedule['enabled']
+                if old_enabled != new_enabled:
+                    schedule_changes.append(f"Enabled: {old_enabled} → {new_enabled}")
+            if schedule_changes:
+                config_changes.append(f"Global check schedule: {', '.join(schedule_changes)}")
+        
+        # Apply the configuration update
+        self.config.update(updates)
+        
+        # Log the changes
+        if config_changes:
+            logger.info(f"Configuration updated: {'; '.join(config_changes)}")
+        else:
+            logger.info("Configuration updated")
+        
+        # Signal that config has changed for immediate application
+        if self.running:
+            self.config_changed.set()
+            # Wake up the scheduler immediately by setting the trigger
+            # The scheduler will check config_changed and skip channel queueing
+            self.check_trigger.set()
+            logger.info("Configuration changes will be applied immediately")
+        
+        # Reload queue max size if changed
+        if 'queue' in updates and 'max_size' in updates['queue']:
+            # Can't resize existing queue, but will apply on next restart
+            logger.info("Queue max size updated, will apply on next restart")
+
+
+# Global service instance
+_service_instance = None
+_service_lock = threading.Lock()
+
+def get_stream_checker_service() -> StreamCheckerService:
+    """Get or create the global stream checker service instance."""
+    global _service_instance
+    with _service_lock:
+        if _service_instance is None:
+            _service_instance = StreamCheckerService()
+        return _service_instance

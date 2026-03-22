@@ -31,19 +31,7 @@ mkdir -p csv logs "$CONFIG_DIR"
 echo "[INFO] Config directory: $CONFIG_DIR"
 
 # Validate environment setup
-if [ ! -f ".env" ]; then
-    echo "[INFO] No .env file found. Configuration will be loaded from JSON config files or environment variables."
-    
-    # Check if required environment variables are set (optional override)
-    if [ -n "$DISPATCHARR_BASE_URL" ] && [ -n "$DISPATCHARR_USER" ] && [ -n "$DISPATCHARR_PASS" ]; then
-        echo "[INFO] Using environment variables for Dispatcharr configuration (override mode)."
-    else
-        echo "[INFO] Dispatcharr credentials will be configured via the Setup Wizard."
-        echo "[INFO] Configuration is stored in: $CONFIG_DIR/dispatcharr_config.json"
-    fi
-else
-    echo "[INFO] Using .env file for configuration."
-fi
+echo "[INFO] Dispatcharr credentials will be configured via the Setup Wizard or loaded from the database."
 
 # Start StreamFlow service
 echo "[INFO] ============================================"
@@ -57,7 +45,10 @@ echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/hea
 echo "[INFO] ============================================"
 
 # Start Flask API directly
-echo "[INFO] Starting Flask API..."
+echo "[INFO] Running configuration migrations..."
+python3 scripts/migrate_to_sql.py
+
+export PYTHONPATH=.
 
 # Use exec to ensure Flask becomes PID 1 and receives signals properly
-exec python3 web_api.py --host "${API_HOST}" --port "${API_PORT}"
+exec python3 apps/api/web_api.py --host "${API_HOST}" --port "${API_PORT}"

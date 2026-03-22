@@ -23,7 +23,7 @@ class TestHTTPTimeout(unittest.TestCase):
     @patch('udi.fetcher.os.getenv')
     def test_udi_fetcher_fetch_url_has_timeout(self, mock_getenv, mock_get):
         """Test that UDI fetcher _fetch_url includes timeout parameter."""
-        from udi.fetcher import UDIFetcher
+        from apps.udi.fetcher import UDIFetcher
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -51,7 +51,7 @@ class TestHTTPTimeout(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_api_utils_fetch_data_has_timeout(self, mock_getenv, mock_get):
         """Test that api_utils fetch_data_from_url includes timeout parameter."""
-        from api_utils import fetch_data_from_url
+        from apps.core.api_utils import fetch_data_from_url
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -78,7 +78,7 @@ class TestHTTPTimeout(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_api_utils_patch_has_timeout(self, mock_getenv, mock_patch):
         """Test that api_utils patch_request includes timeout parameter."""
-        from api_utils import patch_request
+        from apps.core.api_utils import patch_request
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -104,7 +104,7 @@ class TestHTTPTimeout(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_api_utils_post_has_timeout(self, mock_getenv, mock_post):
         """Test that api_utils post_request includes timeout parameter."""
-        from api_utils import post_request
+        from apps.core.api_utils import post_request
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {

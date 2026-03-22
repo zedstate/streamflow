@@ -15,7 +15,7 @@ from unittest.mock import patch, MagicMock
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from udi.manager import UDIManager
+from apps.udi.manager import UDIManager
 
 
 def demonstrate_fix():

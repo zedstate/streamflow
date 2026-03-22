@@ -26,10 +26,10 @@ class TestImmediateConfigUpdate(unittest.TestCase):
     
     def test_stream_checker_config_change_signals_event(self):
         """Test that updating stream checker config signals the config_changed event."""
-        import stream_checker_service
+        import apps.stream.stream_checker_service
         
         with patch.object(stream_checker_service, 'CONFIG_DIR', Path(self.temp_dir)):
-            from stream_checker_service import StreamCheckerService
+            from apps.stream.stream_checker_service import StreamCheckerService
             
             service = StreamCheckerService()
             
@@ -63,7 +63,7 @@ class TestImmediateConfigUpdate(unittest.TestCase):
     
     def test_automation_config_update_logs_changes(self):
         """Test that automation config updates are logged properly."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         with patch('automated_stream_manager.CONFIG_DIR', Path(self.temp_dir)):
             manager = AutomatedStreamManager()
@@ -90,10 +90,10 @@ class TestImmediateConfigUpdate(unittest.TestCase):
     
     def test_pipeline_mode_change_logged(self):
         """Test that pipeline mode changes are logged with old and new values."""
-        import stream_checker_service
+        import apps.stream.stream_checker_service
         
         with patch.object(stream_checker_service, 'CONFIG_DIR', Path(self.temp_dir)):
-            from stream_checker_service import StreamCheckerService
+            from apps.stream.stream_checker_service import StreamCheckerService
             
             service = StreamCheckerService()
             service.start()
@@ -112,10 +112,10 @@ class TestImmediateConfigUpdate(unittest.TestCase):
     
     def test_schedule_time_change_logged(self):
         """Test that schedule time changes are logged with old and new values."""
-        import stream_checker_service
+        import apps.stream.stream_checker_service
         
         with patch.object(stream_checker_service, 'CONFIG_DIR', Path(self.temp_dir)):
-            from stream_checker_service import StreamCheckerService
+            from apps.stream.stream_checker_service import StreamCheckerService
             
             service = StreamCheckerService()
             service.start()
@@ -141,7 +141,7 @@ class TestImmediateConfigUpdate(unittest.TestCase):
     
     def test_config_persisted_to_file(self):
         """Test that config changes are persisted to file."""
-        from stream_checker_service import StreamCheckConfig
+        from apps.stream.stream_checker_service import StreamCheckConfig
         
         config_file = Path(self.temp_dir) / "test_config.json"
         

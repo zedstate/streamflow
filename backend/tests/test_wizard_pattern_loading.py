@@ -9,7 +9,7 @@ import sys
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
-from automated_stream_manager import RegexChannelMatcher
+from apps.automation.automated_stream_manager import RegexChannelMatcher
 
 
 class TestWizardPatternLoading(unittest.TestCase):

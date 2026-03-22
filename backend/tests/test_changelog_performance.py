@@ -31,7 +31,7 @@ class TestChangelogPerformance(unittest.TestCase):
     @patch('automated_stream_manager.assign_streams_to_channel')
     def test_changelog_limits_channels_to_50(self, mock_assign, mock_get_streams, mock_get_channels):
         """Test that changelog entries are limited to top 50 channels."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Create a scenario with 100 channels
         channels = []
@@ -97,7 +97,7 @@ class TestChangelogPerformance(unittest.TestCase):
     @patch('automated_stream_manager.assign_streams_to_channel')
     def test_changelog_sorts_by_stream_count(self, mock_assign, mock_get_streams, mock_get_channels):
         """Test that channels are sorted by stream count (descending)."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Create 10 channels
         channels = []
@@ -163,7 +163,7 @@ class TestChangelogPerformance(unittest.TestCase):
     @patch('automated_stream_manager.assign_streams_to_channel')
     def test_changelog_no_truncation_for_small_sets(self, mock_assign, mock_get_streams, mock_get_channels):
         """Test that small channel sets are not truncated."""
-        from automated_stream_manager import AutomatedStreamManager
+        from apps.automation.automated_stream_manager import AutomatedStreamManager
         
         # Create only 5 channels
         channels = []
@@ -220,7 +220,7 @@ class TestChangelogPerformance(unittest.TestCase):
     
     def test_changelog_entry_per_channel_stream_limit(self):
         """Test that each channel in changelog is limited to 20 streams."""
-        from automated_stream_manager import ChangelogManager
+        from apps.automation.automated_stream_manager import ChangelogManager
         
         # Create a changelog entry with a channel having many streams
         streams = [{'stream_id': i, 'stream_name': f'Stream {i}'} for i in range(100)]

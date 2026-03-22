@@ -37,7 +37,7 @@ class TestStreamIdKeyErrorFix(unittest.TestCase):
         This test verifies that the function makes one attempt and returns a
         complete dict with all required fields, even if the stream analysis fails.
         """
-        from stream_check_utils import analyze_stream
+        from apps.stream.stream_check_utils import analyze_stream
         
         # Call analyze_stream with retries=0
         # With the new implementation, retries=0 means 1 attempt (try once, no retries)
@@ -71,7 +71,7 @@ class TestStreamIdKeyErrorFix(unittest.TestCase):
     @patch('stream_check_utils.get_stream_info_and_bitrate')
     def test_analyze_stream_with_exception(self, mock_get_info):
         """Test that analyze_stream returns complete dict when exception occurs."""
-        from stream_check_utils import analyze_stream
+        from apps.stream.stream_check_utils import analyze_stream
         
         # Make get_stream_info_and_bitrate raise an exception
         mock_get_info.side_effect = Exception("Network error")

@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Mock dotenv before imports
 sys.modules['dotenv'] = MagicMock()
 
-from stream_session_manager import StreamSessionManager, SessionInfo, StreamInfo
+from apps.stream.stream_session_manager import StreamSessionManager, SessionInfo, StreamInfo
 
 class TestStreamRevivalReset(unittest.TestCase):
     def setUp(self):

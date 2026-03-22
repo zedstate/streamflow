@@ -44,13 +44,13 @@ class TestEPGAutoRefresh(unittest.TestCase):
         with patch('web_api.CONFIG_DIR', Path(self.temp_dir)):
             with patch('scheduling_service.CONFIG_DIR', Path(self.temp_dir)):
                 # Reload module constants with patched CONFIG_DIR
-                import scheduling_service
+                import apps.automation.scheduling_service
                 scheduling_service.CONFIG_DIR = Path(self.temp_dir)
                 scheduling_service.SCHEDULING_CONFIG_FILE = scheduling_service.CONFIG_DIR / 'scheduling_config.json'
                 scheduling_service.SCHEDULED_EVENTS_FILE = scheduling_service.CONFIG_DIR / 'scheduled_events.json'
                 scheduling_service.AUTO_CREATE_RULES_FILE = scheduling_service.CONFIG_DIR / 'auto_create_rules.json'
                 
-                from scheduling_service import get_scheduling_service, SchedulingService
+                from apps.automation.scheduling_service import get_scheduling_service, SchedulingService
                 
                 # Reset singleton
                 scheduling_service._scheduling_service = None
@@ -175,14 +175,14 @@ class TestEPGAutoRefresh(unittest.TestCase):
         """Test that multiple auto-create rules work together."""
         with patch('web_api.CONFIG_DIR', Path(self.temp_dir)):
             with patch('scheduling_service.CONFIG_DIR', Path(self.temp_dir)):
-                import scheduling_service
+                import apps.automation.scheduling_service
                 scheduling_service.CONFIG_DIR = Path(self.temp_dir)
                 scheduling_service.SCHEDULING_CONFIG_FILE = scheduling_service.CONFIG_DIR / 'scheduling_config.json'
                 scheduling_service.SCHEDULED_EVENTS_FILE = scheduling_service.CONFIG_DIR / 'scheduled_events.json'
                 scheduling_service.AUTO_CREATE_RULES_FILE = scheduling_service.CONFIG_DIR / 'auto_create_rules.json'
                 scheduling_service._scheduling_service = None
                 
-                from scheduling_service import get_scheduling_service
+                from apps.automation.scheduling_service import get_scheduling_service
                 
                 # Create mock EPG programs for different channels
                 now = datetime.now(timezone.utc)

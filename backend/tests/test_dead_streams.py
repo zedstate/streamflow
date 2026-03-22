@@ -38,7 +38,7 @@ class TestDeadStreamDetection(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_detect_dead_stream_zero_resolution(self):
         """Test that streams with resolution 0x0 are detected as dead."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         service = StreamCheckerService()
         
         stream_data = {
@@ -53,7 +53,7 @@ class TestDeadStreamDetection(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_detect_dead_stream_zero_bitrate(self):
         """Test that streams with bitrate 0 are detected as dead."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         service = StreamCheckerService()
         
         stream_data = {
@@ -68,7 +68,7 @@ class TestDeadStreamDetection(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_detect_dead_stream_both_zero(self):
         """Test that streams with both resolution and bitrate 0 are detected as dead."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         service = StreamCheckerService()
         
         stream_data = {
@@ -83,7 +83,7 @@ class TestDeadStreamDetection(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_detect_healthy_stream(self):
         """Test that healthy streams are not detected as dead."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         service = StreamCheckerService()
         
         stream_data = {
@@ -98,7 +98,7 @@ class TestDeadStreamDetection(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_detect_dead_stream_partial_zero_resolution(self):
         """Test that streams with partial zero resolution (e.g., 1920x0) are detected as dead."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         service = StreamCheckerService()
         
         stream_data = {
@@ -129,7 +129,7 @@ class TestDeadStreamTagging(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_mark_stream_as_dead(self):
         """Test marking a stream as dead in tracker."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         stream_url = 'http://example.com/stream1.m3u8'
@@ -141,7 +141,7 @@ class TestDeadStreamTagging(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_mark_already_dead_stream(self):
         """Test that already marked streams can be marked again."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         stream_url = 'http://example.com/stream1.m3u8'
@@ -154,7 +154,7 @@ class TestDeadStreamTagging(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_mark_stream_as_alive(self):
         """Test marking a revived stream as alive."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         stream_url = 'http://example.com/stream1.m3u8'
@@ -167,7 +167,7 @@ class TestDeadStreamTagging(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_mark_healthy_stream_as_alive(self):
         """Test that marking a healthy stream as alive succeeds."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         stream_url = 'http://example.com/stream1.m3u8'
@@ -235,7 +235,7 @@ class TestDeadStreamCleanup(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_cleanup_removed_streams(self):
         """Test that dead streams no longer in playlist are cleaned up."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         # Mark three streams as dead
@@ -260,7 +260,7 @@ class TestDeadStreamCleanup(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_cleanup_all_removed_streams(self):
         """Test cleanup when all dead streams are removed from playlist."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         # Mark two streams as dead
@@ -278,7 +278,7 @@ class TestDeadStreamCleanup(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_cleanup_no_removals_needed(self):
         """Test cleanup when all dead streams are still in playlist."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         # Mark two streams as dead
@@ -304,7 +304,7 @@ class TestRemoveDeadStreamsForChannel(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_remove_dead_streams_for_channel(self):
         """Test that dead streams for a specific channel are removed."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         # Mark streams from multiple channels as dead
@@ -340,7 +340,7 @@ class TestRemoveDeadStreamsForChannel(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_remove_dead_streams_for_channel_no_dead_streams(self):
         """Test removal when channel has no dead streams."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         # Mark some dead streams from other channels
@@ -363,7 +363,7 @@ class TestRemoveDeadStreamsForChannel(unittest.TestCase):
     @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_remove_dead_streams_for_empty_channel(self):
         """Test removal for a channel with no streams."""
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         tracker = DeadStreamsTracker()
         
         # Mark some dead streams

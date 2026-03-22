@@ -72,7 +72,7 @@ class TestBatchRegexOperations(unittest.TestCase):
     
     def test_delete_channel_pattern(self):
         """Test that delete_channel_pattern removes all patterns for a channel."""
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         
         matcher = RegexChannelMatcher(self.config_file)
         
@@ -89,17 +89,17 @@ class TestBatchRegexOperations(unittest.TestCase):
         self.assertTrue(matcher.has_regex_patterns("2"))
         self.assertTrue(matcher.has_regex_patterns("3"))
         
-        # Verify patterns were saved
-        with open(self.config_file, 'r') as f:
-            saved_config = json.load(f)
-        
-        self.assertNotIn("1", saved_config["patterns"])
-        self.assertIn("2", saved_config["patterns"])
-        self.assertIn("3", saved_config["patterns"])
+        # Verify patterns were deleted from the DB
+        from apps.database.manager import get_db_manager
+        db = get_db_manager()
+        configs = db.get_all_channel_regex_configs()
+        self.assertNotIn("1", configs)
+        self.assertIn("2", configs)
+        self.assertIn("3", configs)
     
     def test_delete_nonexistent_channel_pattern(self):
         """Test that deleting patterns for a non-existent channel doesn't raise an error."""
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         
         matcher = RegexChannelMatcher(self.config_file)
         
@@ -117,7 +117,7 @@ class TestBatchRegexOperations(unittest.TestCase):
         app = Flask(__name__)
         
         # Create actual matcher with temp config
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         matcher = RegexChannelMatcher(self.config_file)
         mock_matcher_func.return_value = matcher
         
@@ -157,7 +157,7 @@ class TestBatchRegexOperations(unittest.TestCase):
         app = Flask(__name__)
         
         # Create actual matcher with temp config
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         matcher = RegexChannelMatcher(self.config_file)
         mock_matcher_func.return_value = matcher
         
@@ -208,7 +208,7 @@ class TestBatchRegexOperations(unittest.TestCase):
         from web_api import bulk_edit_regex_pattern
         from flask import Flask
         import json
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         
         app = Flask(__name__)
         
@@ -286,7 +286,7 @@ class TestBatchRegexOperations(unittest.TestCase):
         from web_api import get_common_regex_patterns
         from flask import Flask
         import json
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         
         app = Flask(__name__)
         
@@ -336,7 +336,7 @@ class TestBatchRegexOperations(unittest.TestCase):
         from web_api import get_common_regex_patterns
         from flask import Flask
         import json
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         
         app = Flask(__name__)
         

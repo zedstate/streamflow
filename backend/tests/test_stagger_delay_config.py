@@ -22,7 +22,7 @@ class TestStaggerDelayConfig(unittest.TestCase):
     
     def test_default_config_has_stagger_delay(self):
         """Test that the default configuration includes stagger_delay."""
-        from stream_checker_service import StreamCheckConfig
+        from apps.stream.stream_checker_service import StreamCheckConfig
         
         config = StreamCheckConfig.DEFAULT_CONFIG
         
@@ -40,7 +40,7 @@ class TestStaggerDelayConfig(unittest.TestCase):
     
     def test_stagger_delay_default_value(self):
         """Test that the default stagger_delay is 1.0 second."""
-        from stream_checker_service import StreamCheckConfig
+        from apps.stream.stream_checker_service import StreamCheckConfig
         
         config = StreamCheckConfig.DEFAULT_CONFIG
         stagger_delay = config['concurrent_streams']['stagger_delay']
@@ -50,7 +50,7 @@ class TestStaggerDelayConfig(unittest.TestCase):
     
     def test_stagger_delay_persists_in_config(self):
         """Test that stagger_delay can be saved and loaded from config file."""
-        from stream_checker_service import StreamCheckConfig
+        from apps.stream.stream_checker_service import StreamCheckConfig
         
         # Create a temporary config file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -80,7 +80,7 @@ class TestStaggerDelayConfig(unittest.TestCase):
     
     def test_stagger_delay_missing_uses_default(self):
         """Test that missing stagger_delay falls back to default."""
-        from stream_checker_service import StreamCheckConfig
+        from apps.stream.stream_checker_service import StreamCheckConfig
         
         # Create a config without stagger_delay
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:

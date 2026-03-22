@@ -30,7 +30,7 @@ class TestSingleChannelURLChange(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Test that dead streams are cleared even when URLs change after playlist refresh."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()
@@ -154,7 +154,7 @@ class TestSingleChannelURLChange(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Test that clearing dead streams for one channel doesn't affect other channels."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()

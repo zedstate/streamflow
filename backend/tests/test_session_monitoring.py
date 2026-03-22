@@ -55,7 +55,7 @@ class TestStreamMonitoring(unittest.TestCase):
         mock_config.return_value = mock_config_instance
 
         # Import after mocking
-        from stream_session_manager import get_session_manager
+        from apps.stream.stream_session_manager import get_session_manager
 
         session_manager = get_session_manager()
 
@@ -118,7 +118,7 @@ class TestStreamMonitoring(unittest.TestCase):
         mock_config.return_value = mock_config_instance
 
         # Import after mocking
-        from stream_session_manager import get_session_manager
+        from apps.stream.stream_session_manager import get_session_manager
 
         session_manager = get_session_manager()
 
@@ -144,7 +144,7 @@ class TestStreamMonitoring(unittest.TestCase):
     def test_dictionary_iteration_fix(self):
         """Test that the dictionary iteration bug is fixed."""
         # This test verifies that we don't get RuntimeError when monitors dict changes during iteration
-        from stream_monitoring_service import StreamMonitoringService
+        from apps.stream.stream_monitoring_service import StreamMonitoringService
         
         service = StreamMonitoringService()
         

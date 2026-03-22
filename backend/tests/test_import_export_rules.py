@@ -18,8 +18,8 @@ from pathlib import Path
 # Set up test environment before imports
 os.environ['CONFIG_DIR'] = tempfile.mkdtemp()
 
-import scheduling_service
-from udi import get_udi_manager
+import apps.automation.scheduling_service
+from apps.udi import get_udi_manager
 
 
 class TestAutoCreateRulesImportExport(unittest.TestCase):

@@ -19,8 +19,9 @@ export const streamSessionsAPI = {
    * @param {string} sessionId - Session ID
    * @returns {Promise} Session details including streams
    */
-  getSession: (sessionId) => {
-    return api.get(`/stream-sessions/${sessionId}`);
+  getSession: (sessionId, sinceTimestamp = null) => {
+    const params = sinceTimestamp ? { since_timestamp: sinceTimestamp } : {};
+    return api.get(`/stream-sessions/${sessionId}`, { params });
   },
 
   /**
@@ -90,10 +91,12 @@ export const streamSessionsAPI = {
    * Get metrics history for a stream
    * @param {string} sessionId - Session ID
    * @param {number} streamId - Stream ID
+   * @param {number} sinceTimestamp - Optional unix timestamp to filter metrics
    * @returns {Promise} Metrics data
    */
-  getStreamMetrics: (sessionId, streamId) => {
-    return api.get(`/stream-sessions/${sessionId}/streams/${streamId}/metrics`);
+  getStreamMetrics: (sessionId, streamId, sinceTimestamp = null) => {
+    const params = sinceTimestamp ? { since_timestamp: sinceTimestamp } : {};
+    return api.get(`/stream-sessions/${sessionId}/streams/${streamId}/metrics`, { params });
   },
 
   /**

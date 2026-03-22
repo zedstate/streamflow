@@ -33,7 +33,7 @@ class TestTokenValidation(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_validate_token_with_valid_token(self, mock_getenv, mock_get):
         """Test that _validate_token returns True for valid tokens."""
-        from api_utils import _validate_token
+        from apps.core.api_utils import _validate_token
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -59,7 +59,7 @@ class TestTokenValidation(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_validate_token_with_invalid_token(self, mock_getenv, mock_get):
         """Test that _validate_token returns False for invalid tokens."""
-        from api_utils import _validate_token
+        from apps.core.api_utils import _validate_token
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -78,7 +78,7 @@ class TestTokenValidation(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_validate_token_with_connection_error(self, mock_getenv, mock_get):
         """Test that _validate_token returns False on connection error."""
-        from api_utils import _validate_token
+        from apps.core.api_utils import _validate_token
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -95,7 +95,7 @@ class TestTokenValidation(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_get_auth_headers_uses_existing_token(self, mock_getenv, mock_login):
         """Test that _get_auth_headers uses existing token without validating or logging in."""
-        from api_utils import _get_auth_headers
+        from apps.core.api_utils import _get_auth_headers
         
         # Mock that we have a token
         mock_getenv.return_value = 'existing_token_123'
@@ -115,7 +115,7 @@ class TestTokenValidation(unittest.TestCase):
     def test_get_auth_headers_logs_in_when_no_token(self, mock_getenv, mock_env_path, 
                                                        mock_load_dotenv, mock_login):
         """Test that _get_auth_headers logs in only when no token exists."""
-        from api_utils import _get_auth_headers
+        from apps.core.api_utils import _get_auth_headers
         
         # Mock environment: first call has no token, second call (after login) has new token
         token_calls = [None, 'new_valid_token']
@@ -142,20 +142,20 @@ class TestTokenValidationCaching(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Clear the token validation cache before each test
-        import api_utils
+        import apps.core.api_utils
         api_utils._token_validation_cache.clear()
         
     def tearDown(self):
         """Clean up after tests."""
         # Clear the token validation cache after each test
-        import api_utils
+        import apps.core.api_utils
         api_utils._token_validation_cache.clear()
     
     @patch('api_utils.requests.get')
     @patch('api_utils.os.getenv')
     def test_token_validation_cache_prevents_duplicate_api_calls(self, mock_getenv, mock_get):
         """Test that cached token validation prevents redundant API calls."""
-        from api_utils import _validate_token, _token_validation_cache
+        from apps.core.api_utils import _validate_token, _token_validation_cache
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -188,7 +188,7 @@ class TestTokenValidationCaching(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_token_validation_cache_expires(self, mock_getenv, mock_get, mock_time):
         """Test that token validation cache expires after TTL."""
-        from api_utils import _validate_token, _token_validation_cache, TOKEN_VALIDATION_TTL
+        from apps.core.api_utils import _validate_token, _token_validation_cache, TOKEN_VALIDATION_TTL
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -224,7 +224,7 @@ class TestTokenValidationCaching(unittest.TestCase):
     @patch('api_utils.os.getenv')
     def test_failed_validation_clears_cache(self, mock_getenv, mock_get, mock_time):
         """Test that failed validation clears the cache."""
-        from api_utils import _validate_token, _token_validation_cache
+        from apps.core.api_utils import _validate_token, _token_validation_cache
         
         # Mock environment variables
         mock_getenv.side_effect = lambda key: {
@@ -255,7 +255,7 @@ class TestTokenValidationCaching(unittest.TestCase):
     
     def test_clear_token_validation_cache(self):
         """Test that _clear_token_validation_cache clears all cached tokens."""
-        from api_utils import _clear_token_validation_cache, _token_validation_cache
+        from apps.core.api_utils import _clear_token_validation_cache, _token_validation_cache
         
         # Add some tokens to cache
         _token_validation_cache['token1'] = 100
@@ -285,7 +285,7 @@ class TestProgressTracking(unittest.TestCase):
     def test_progress_update_with_steps(self):
         """Test that progress update includes step information."""
         with patch('stream_checker_service.CONFIG_DIR', Path(self.temp_dir)):
-            from stream_checker_service import StreamCheckerProgress
+            from apps.stream.stream_checker_service import StreamCheckerProgress
             
             progress = StreamCheckerProgress(self.progress_file)
             
@@ -318,7 +318,7 @@ class TestProgressTracking(unittest.TestCase):
     def test_progress_update_without_steps(self):
         """Test that progress update works without step information (backward compatibility)."""
         with patch('stream_checker_service.CONFIG_DIR', Path(self.temp_dir)):
-            from stream_checker_service import StreamCheckerProgress
+            from apps.stream.stream_checker_service import StreamCheckerProgress
             
             progress = StreamCheckerProgress(self.progress_file)
             

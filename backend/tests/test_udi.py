@@ -24,10 +24,10 @@ os.environ['CONFIG_DIR'] = tempfile.mkdtemp()
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from udi.models import Channel, Stream, ChannelGroup, Logo, M3UAccount, UDIMetadata
-from udi.storage import UDIStorage
-from udi.cache import UDICache
-from udi.manager import UDIManager
+from apps.udi.models import Channel, Stream, ChannelGroup, Logo, M3UAccount, UDIMetadata
+from apps.udi.storage import UDIStorage
+from apps.udi.cache import UDICache
+from apps.udi.manager import UDIManager
 
 
 class TestModels(unittest.TestCase):

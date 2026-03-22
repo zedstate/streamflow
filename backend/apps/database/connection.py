@@ -1,0 +1,65 @@
+import os
+from pathlib import Path
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+# Configuration directory - persisted via Docker volume
+CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', str(Path(__file__).parent.parent / 'data')))
+DB_PATH = CONFIG_DIR / 'streamflow.db'
+
+# Single declarative base for the entire application
+Base = declarative_base()
+
+_engine = None
+
+def get_engine():
+    """Returns the SQLAlchemy engine, creating the directory if it doesn't exist."""
+    global _engine
+    if _engine is None:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        from sqlalchemy import create_engine, event
+        
+        # For SQLite in multi-threaded environment, check_same_thread=False is mandatory
+        _engine = create_engine(
+            f'sqlite:///{DB_PATH}', 
+            echo=False,
+            connect_args={'check_same_thread': False, 'timeout': 30}
+        )
+        
+        # Enable WAL (Write-Ahead Logging) mode to allow concurrent readers during writes
+        @event.listens_for(_engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
+            finally:
+                cursor.close()
+                
+    return _engine
+
+def get_session():
+    """Returns a new SQLAlchemy session."""
+    engine = get_engine()
+    Session = sessionmaker(bind=engine)
+    return Session()
+
+def init_db():
+    """Create all tables if they don't exist."""
+    engine = get_engine()
+    
+    # Import models here to ensure they are registered with Base
+    from apps.database.models import (
+        Channel, Stream, ChannelGroup, Logo, 
+        M3UAccount, M3UAccountProfile,
+        channel_streams, group_accounts,
+        MatchProfile, MatchProfileStep,
+        AutomationProfile, AutomationPeriod,
+        MonitoringSession, DeadStream,
+        ChannelRegexConfig, ChannelRegexPattern,
+    )
+    
+    Base.metadata.create_all(engine)
+    return True

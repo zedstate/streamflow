@@ -12,7 +12,8 @@ import {
   Calendar,
   Activity,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  TrendingUp
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
 import { ThemeToggle } from '@/components/ThemeToggle.jsx'
@@ -30,6 +31,7 @@ const menuItems = [
   { text: 'Stream Monitoring', icon: Activity, path: '/stream-monitoring' },
   { text: 'Channel Configuration', icon: ListChecks, path: '/channels' },
   { text: 'Scheduling', icon: Calendar, path: '/scheduling' },
+  { text: 'Analytics', icon: TrendingUp, path: '/stats' },
   { text: 'Settings', icon: Settings, path: '/settings' },
   { text: 'Changelog', icon: History, path: '/changelog' },
 ]

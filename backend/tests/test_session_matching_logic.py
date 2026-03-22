@@ -10,7 +10,7 @@ from pathlib import Path
 # Add backend directory to path
 sys.path.append(os.path.join(os.getcwd(), 'backend'))
 
-from stream_session_manager import StreamSessionManager, SessionInfo
+from apps.stream.stream_session_manager import StreamSessionManager, SessionInfo
 
 class TestSessionMatchingtLogic(unittest.TestCase):
     def setUp(self):

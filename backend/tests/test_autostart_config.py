@@ -19,7 +19,7 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from automated_stream_manager import AutomatedStreamManager
+from apps.automation.automated_stream_manager import AutomatedStreamManager
 
 
 class TestAutostartConfiguration(unittest.TestCase):

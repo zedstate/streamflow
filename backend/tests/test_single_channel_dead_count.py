@@ -28,7 +28,7 @@ class TestSingleChannelDeadCount(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Test that check_single_channel correctly counts dead streams that are removed."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()
@@ -122,7 +122,7 @@ class TestSingleChannelDeadCount(unittest.TestCase):
         self, mock_refresh, mock_automation_class, mock_fetch_streams, mock_udi, mock_config_class
     ):
         """Test that check_single_channel correctly handles case with no dead streams."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Mock config
         mock_config = Mock()

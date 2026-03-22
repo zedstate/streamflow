@@ -9,7 +9,7 @@ import json
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
-from automated_stream_manager import RegexChannelMatcher
+from apps.automation.automated_stream_manager import RegexChannelMatcher
 
 
 class TestRegexValidation(unittest.TestCase):
@@ -159,7 +159,7 @@ class TestRegexValidation(unittest.TestCase):
         self.assertIn("ESPN[0-9", error_msg)
     
     def test_invalid_pattern_not_saved_to_file(self):
-        """Test that invalid patterns are not saved to the config file."""
+        """Test that invalid patterns are not saved."""
         invalid_pattern = "CINEMAX(?:\\s[A-Z]+)).$"
         
         # Try to add invalid pattern
@@ -173,12 +173,10 @@ class TestRegexValidation(unittest.TestCase):
         except ValueError:
             pass  # Expected
         
-        # Reload patterns from file
-        with open(self.config_file, 'r') as f:
-            saved_config = json.load(f)
-        
-        # Verify the invalid pattern was not saved
-        self.assertNotIn("test_7", saved_config.get("patterns", {}))
+        # Verify the invalid pattern was not saved in the DB
+        from apps.database.manager import get_db_manager
+        saved_config = get_db_manager().get_all_channel_regex_configs()
+        self.assertNotIn("test_7", saved_config)
     
     def test_valid_pattern_saved_after_invalid_rejected(self):
         """Test that valid patterns can still be saved after an invalid one is rejected."""
@@ -204,12 +202,11 @@ class TestRegexValidation(unittest.TestCase):
             enabled=True
         )
         
-        # Verify only valid pattern was saved
-        with open(self.config_file, 'r') as f:
-            saved_config = json.load(f)
-        
-        self.assertNotIn("test_8", saved_config.get("patterns", {}))
-        self.assertIn("test_9", saved_config.get("patterns", {}))
+        # Verify only valid pattern was saved in the DB
+        from apps.database.manager import get_db_manager
+        saved_config = get_db_manager().get_all_channel_regex_configs()
+        self.assertNotIn("test_8", saved_config)
+        self.assertIn("test_9", saved_config)
     
     def test_validate_regex_patterns_method(self):
         """Test the validate_regex_patterns method directly."""

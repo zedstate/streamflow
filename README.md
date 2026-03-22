@@ -9,24 +9,11 @@ Automated IPTV stream management for [Dispatcharr](https://github.com/Dispatchar
 ```bash
 git clone https://github.com/krinkuto11/streamflow.git
 cd streamflow
-cp .env.template .env
-# Edit .env — set DISPATCHARR_BASE_URL, DISPATCHARR_USER, DISPATCHARR_PASS
 docker compose up -d
 ```
 
 UI available at **http://localhost:5000** (default port).
 
-## Environment variables
-
-| Variable               | Required | Default | Description                           |
-| ---------------------- | -------- | ------- | ------------------------------------- |
-| `DISPATCHARR_BASE_URL` | ✓        | —       | Dispatcharr instance URL              |
-| `DISPATCHARR_USER`     | ✓        | —       | Dispatcharr username                  |
-| `DISPATCHARR_PASS`     | ✓        | —       | Dispatcharr password                  |
-| `API_PORT`             |          | `5000`  | Port to serve on                      |
-| `DEBUG_MODE`           |          | `false` | Verbose logging                       |
-| `FFMPEG_EXTRA_ARGS`    |          | `""`    | Extra ffmpeg flags                    |
-| `TOKEN_VALIDATION_TTL` |          | `60`    | Dispatcharr token cache TTL (seconds) |
 
 ## Features
 

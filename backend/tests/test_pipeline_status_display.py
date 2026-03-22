@@ -8,7 +8,7 @@ import unittest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, Mock
-from stream_checker_service import StreamCheckerService
+from apps.stream.stream_checker_service import StreamCheckerService
 
 
 class TestPipelineStatusDisplay(unittest.TestCase):

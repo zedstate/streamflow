@@ -28,7 +28,7 @@ class TestUDIRefreshOnGlobalAction(unittest.TestCase):
     @patch('automated_stream_manager.AutomatedStreamManager')
     def test_udi_refresh_called_before_global_action(self, mock_asm_class, mock_get_udi):
         """Test that UDI refresh_all is called at the start of global action."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Setup mocks
         mock_udi = Mock()
@@ -62,7 +62,7 @@ class TestUDIRefreshOnGlobalAction(unittest.TestCase):
     @patch('automated_stream_manager.AutomatedStreamManager')
     def test_udi_refresh_happens_before_playlist_update(self, mock_asm_class, mock_get_udi):
         """Test that UDI refresh happens before M3U playlist update."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Track call order
         call_order = []
@@ -106,7 +106,7 @@ class TestUDIRefreshOnGlobalAction(unittest.TestCase):
     @patch('automated_stream_manager.AutomatedStreamManager')
     def test_global_action_continues_even_if_udi_refresh_fails(self, mock_asm_class, mock_get_udi):
         """Test that global action continues even if UDI refresh fails."""
-        from stream_checker_service import StreamCheckerService
+        from apps.stream.stream_checker_service import StreamCheckerService
         
         # Setup mocks - UDI refresh will fail
         mock_udi = Mock()

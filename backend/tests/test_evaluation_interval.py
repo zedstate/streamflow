@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 import time
-from stream_monitoring_service import StreamMonitoringService, SessionInfo
+from apps.stream.stream_monitoring_service import StreamMonitoringService, SessionInfo
 
 class TestEvaluationInterval(unittest.TestCase):
     @patch('stream_monitoring_service.get_session_manager')

@@ -20,7 +20,7 @@ class TestBulkRegexFix(unittest.TestCase):
     
     def test_udi_manager_has_get_channel_by_id(self):
         """Verify that UDI manager has get_channel_by_id method."""
-        from udi.manager import UDIManager
+        from apps.udi.manager import UDIManager
         
         # Create a UDI manager instance
         udi = UDIManager()
@@ -31,7 +31,7 @@ class TestBulkRegexFix(unittest.TestCase):
     
     def test_udi_manager_no_get_channel_method(self):
         """Verify that UDI manager does NOT have get_channel method (without _by_id)."""
-        from udi.manager import UDIManager
+        from apps.udi.manager import UDIManager
         
         # Create a UDI manager instance
         udi = UDIManager()

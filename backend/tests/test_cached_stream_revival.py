@@ -41,8 +41,8 @@ class TestCachedStreamRevival(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_cached_stream_revival_is_detected(self):
         """Test that a revived cached stream is detected and NOT removed."""
-        from stream_checker_service import StreamCheckerService
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.stream_checker_service import StreamCheckerService
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         # Create service and tracker
         service = StreamCheckerService()
@@ -113,8 +113,8 @@ class TestCachedStreamRevival(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_cached_stream_remains_dead(self):
         """Test that a cached stream that remains dead is correctly tracked."""
-        from stream_checker_service import StreamCheckerService
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.stream_checker_service import StreamCheckerService
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         # Create service and tracker
         service = StreamCheckerService()
@@ -179,8 +179,8 @@ class TestCachedStreamRevival(unittest.TestCase):
     @patch('stream_checker_service.CONFIG_DIR', Path(tempfile.mkdtemp()))
     def test_cached_stream_newly_dead(self):
         """Test that a newly-dead cached stream is correctly tracked."""
-        from stream_checker_service import StreamCheckerService
-        from dead_streams_tracker import DeadStreamsTracker
+        from apps.stream.stream_checker_service import StreamCheckerService
+        from apps.stream.dead_streams_tracker import DeadStreamsTracker
         
         # Create service and tracker
         service = StreamCheckerService()

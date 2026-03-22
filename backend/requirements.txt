@@ -10,3 +10,4 @@ imutils
 opencv-python-headless
 waitress
 m3u8
+SQLAlchemy

@@ -18,7 +18,7 @@ os.environ['CONFIG_DIR'] = tempfile.mkdtemp()
 os.environ['DISPATCHARR_URL'] = 'http://test'
 os.environ['DISPATCHARR_API_KEY'] = 'test_key'
 
-from stream_checker_service import StreamCheckerService
+from apps.stream.stream_checker_service import StreamCheckerService
 from profile_config import ProfileConfig
 
 

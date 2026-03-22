@@ -26,9 +26,10 @@ RUN mkdir -p csv logs data
 ENV CONFIG_DIR=/app/data
 ENV FLASK_ENV=development
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=.
 
 # Expose Flask port
 EXPOSE 5000
 
 # Start Flask API directly with hot-reload
-CMD ["python3", "web_api.py", "--host", "0.0.0.0", "--port", "5000", "--debug"]
+CMD ["python3", "apps/api/web_api.py", "--host", "0.0.0.0", "--port", "5000", "--debug"]

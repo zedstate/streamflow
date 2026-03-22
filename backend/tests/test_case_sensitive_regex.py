@@ -22,7 +22,7 @@ class TestCaseSensitiveRegex(unittest.TestCase):
     
     def test_default_config_is_case_sensitive(self):
         """Test that default configuration has case_sensitive=True."""
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         
         # Create a temp config file for testing
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -48,7 +48,7 @@ class TestCaseSensitiveRegex(unittest.TestCase):
     
     def test_case_sensitive_matching_logic(self):
         """Test the actual case-sensitive matching logic."""
-        from automated_stream_manager import RegexChannelMatcher
+        from apps.automation.automated_stream_manager import RegexChannelMatcher
         import re
         
         # Test the logic directly without file I/O

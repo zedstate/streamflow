@@ -18,7 +18,7 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from concurrent_stream_limiter import (
+from apps.stream.concurrent_stream_limiter import (
     AccountStreamLimiter,
     SmartStreamScheduler,
     get_account_limiter,
@@ -518,7 +518,7 @@ class TestProfileAwareStreamChecking(unittest.TestCase):
     
     def test_find_available_profile_with_free_slots(self):
         """Test finding an available profile when one has free slots."""
-        from udi import get_udi_manager
+        from apps.udi import get_udi_manager
         udi = get_udi_manager()
         
         # Mock the UDI data
@@ -552,7 +552,7 @@ class TestProfileAwareStreamChecking(unittest.TestCase):
     
     def test_find_available_profile_all_at_capacity(self):
         """Test that no profile is returned when all are at capacity."""
-        from udi import get_udi_manager
+        from apps.udi import get_udi_manager
         udi = get_udi_manager()
         
         # Mock the UDI data
@@ -585,7 +585,7 @@ class TestProfileAwareStreamChecking(unittest.TestCase):
     
     def test_check_stream_can_run_with_available_profile(self):
         """Test stream can run check when profile is available."""
-        from udi import get_udi_manager
+        from apps.udi import get_udi_manager
         udi = get_udi_manager()
         
         # Mock the UDI data
@@ -615,7 +615,7 @@ class TestProfileAwareStreamChecking(unittest.TestCase):
     
     def test_check_stream_can_run_all_profiles_at_capacity(self):
         """Test stream cannot run when all profiles are at capacity."""
-        from udi import get_udi_manager
+        from apps.udi import get_udi_manager
         udi = get_udi_manager()
         
         # Mock the UDI data

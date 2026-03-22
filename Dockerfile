@@ -36,7 +36,7 @@ ENV CONFIG_DIR=/app/data
 RUN chmod +x entrypoint.sh
 
 # Create default configuration files in the data directory
-RUN python3 create_default_configs.py
+RUN python3 apps/core/create_default_configs.py
 
 # Expose the Flask port
 EXPOSE 5000
