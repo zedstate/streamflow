@@ -35,7 +35,7 @@ def get_global_telemetry():
         return jsonify({"success": True, "data": data})
     except Exception as e:
         logger.error(f"Error fetching global telemetry: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error has occurred."}), 500
     finally:
         session.close()
 
@@ -106,7 +106,7 @@ def get_provider_telemetry():
         return jsonify({"success": True, "data": data})
     except Exception as e:
         logger.error(f"Error fetching provider telemetry: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error has occurred."}), 500
     finally:
         session.close()
 
@@ -120,7 +120,7 @@ def list_channels_for_telemetry():
         return jsonify({"success": True, "data": data})
     except Exception as e:
         logger.error(f"Error fetching channel list for telemetry: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error has occurred."}), 500
     finally:
         session.close()
 
@@ -151,6 +151,6 @@ def get_channel_telemetry(channel_id):
         return jsonify({"success": True, "data": data})
     except Exception as e:
         logger.error(f"Error fetching channel telemetry: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error has occurred."}), 500
     finally:
         session.close()
