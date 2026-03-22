@@ -224,7 +224,7 @@ class AutomationConfigManager:
             if "name" in profile_data: p.name = profile_data["name"]
             if "description" in profile_data: p.description = profile_data["description"]
             if "enabled" in profile_data: p.enabled = profile_data["enabled"]
-            current_extra = p.extra_settings or {}
+            current_extra = dict(p.extra_settings or {})
             for k,v in profile_data.items():
                 if k not in ['name', 'description', 'enabled', 'parallel_checks', 'id']:
                     current_extra[k] = v
