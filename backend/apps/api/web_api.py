@@ -5108,7 +5108,7 @@ def get_stream_session(session_id):
                     'screenshot_url': f"/api/data/screenshots/{Path(stream_info.screenshot_path).name}?t={int(stream_info.last_screenshot_time)}" if stream_info.screenshot_path else None,
                     'last_screenshot_time': stream_info.last_screenshot_time,
                     'metrics_count': len(stream_metrics_history) if stream_metrics_history else 0,
-                    'metrics_history': [asdict(m) for m in stream_metrics_history if since_timestamp is None or m.timestamp > since_timestamp] if stream_metrics_history else []
+                    'metrics_history': [asdict(m) for m in stream_metrics_history if since_timestamp is None or m.timestamp > since_timestamp][-3600:] if stream_metrics_history else []
                 }
                 
                 # Calculate review time remaining
@@ -5378,6 +5378,9 @@ def get_stream_metrics(session_id, stream_id):
                     'rank': getattr(metric, 'rank', None)
                 })
         
+        # Explicit bound to maintain equivalent sync with frontend limitations
+        metrics_data = metrics_data[-3600:]
+
         return jsonify({
             'stream_id': stream_id,
             'metrics': metrics_data
