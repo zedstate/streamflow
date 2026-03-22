@@ -12,7 +12,8 @@ sys.path.append(str(backend_dir))
 from apps.database.connection import init_db, get_session
 from apps.database.models import (
     DeadStream, AutomationProfile, AutomationPeriod,
-    ChannelRegexConfig, ChannelRegexPattern, SystemSetting
+    ChannelRegexConfig, ChannelRegexPattern, SystemSetting,
+    Run, ChannelHealth, StreamTelemetry,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -54,6 +55,63 @@ def parse_datetime(iso_str):
         logger.warning(f"Could not parse datetime value: {iso_str!r}")
         return None
 
+
+# ---------------------------------------------------------------------------
+# Telemetry sanitizer helpers (inlined from telemetry_db to avoid opening a
+# second session while the migration session is still holding a write lock)
+# ---------------------------------------------------------------------------
+
+def _sanitize_bitrate(bitrate_str):
+    if not bitrate_str:
+        return None
+    try:
+        if isinstance(bitrate_str, (int, float)):
+            return int(bitrate_str)
+        s = str(bitrate_str).lower().replace(' ', '')
+        if 'mbps' in s:
+            return int(float(s.replace('mbps', '')) * 1000)
+        elif 'kbps' in s:
+            return int(float(s.replace('kbps', '')))
+        return int(float(s))
+    except (ValueError, TypeError):
+        return None
+
+
+def _sanitize_fps(fps_str):
+    if not fps_str:
+        return None
+    try:
+        if isinstance(fps_str, (int, float)):
+            return float(fps_str)
+        return float(str(fps_str).lower().replace(' fps', '').strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _sanitize_resolution(res_str):
+    if not res_str or 'x' not in str(res_str).lower():
+        return None, None
+    try:
+        parts = str(res_str).lower().split('x')
+        return int(parts[0]), int(parts[1])
+    except (ValueError, TypeError):
+        return None, None
+
+
+def _parse_duration(value):
+    if not value:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).lower().replace('s', '').strip())
+    except (ValueError, TypeError):
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Migrators
+# ---------------------------------------------------------------------------
 
 def migrate_dead_streams(session, data_dir) -> int:
     data = load_json(data_dir / 'dead_streams.json')
@@ -106,13 +164,11 @@ def _build_cron(schedule: dict, per_item: dict) -> str:
             minutes = int(value_str)
             return f'*/{minutes} * * * *'
         except (ValueError, TypeError):
-            # value_str was not a plain integer; return as-is
             return value_str
 
     if sched_type == 'cron':
         return value_str
 
-    # Unknown type -- preserve value so nothing is lost
     logger.warning(f"Unknown schedule type {sched_type!r}; storing value verbatim: {value_str!r}")
     return value_str
 
@@ -125,8 +181,6 @@ def migrate_automation(session, data_dir) -> int:
     rows_written = 0
 
     # --- Global automation settings ---
-    # These three keys live at the top level of automation_config.json and must
-    # be written to SystemSetting individually (matching how AutomationConfigManager reads them).
     global_keys = (
         'regular_automation_enabled',
         'playlist_update_interval_minutes',
@@ -134,8 +188,7 @@ def migrate_automation(session, data_dir) -> int:
     )
     for key in global_keys:
         if key in data:
-            setting = SystemSetting(key=key, value=data[key])
-            session.merge(setting)
+            session.merge(SystemSetting(key=key, value=data[key]))
             rows_written += 1
             logger.info(f"  ✓ Migrated global automation setting: {key}")
 
@@ -167,7 +220,7 @@ def migrate_automation(session, data_dir) -> int:
             extra_settings=extra,
         )
         session.add(prof)
-        session.flush()  # populate prof.id
+        session.flush()
         json_id_to_db_id[str(p_id)] = prof.id
         count_profiles += 1
         rows_written += 1
@@ -184,13 +237,10 @@ def migrate_automation(session, data_dir) -> int:
             logger.info(f"  Automation Period '{name}' already exists in DB, skipping.")
             continue
 
-        # Resolve the correct profile FK using the JSON's profile_id field, which
-        # references the string key used in the profiles dict above.
         json_profile_id = str(per_item.get('profile_id', ''))
         target_profile_db_id = json_id_to_db_id.get(json_profile_id)
 
         if target_profile_db_id is None:
-            # Fall back: use the first available profile rather than silently drop the period
             first_prof = session.query(AutomationProfile).first()
             if not first_prof:
                 logger.warning(f"  No profiles in DB; cannot migrate period '{name}'. Skipping.")
@@ -238,11 +288,9 @@ def migrate_channel_regex(session, data_dir) -> int:
     count_configs = 0
     count_patterns = 0
 
-    # Global settings
     global_settings = data.get('global_settings', {})
     if global_settings:
-        setting = SystemSetting(key='channel_regex_global_settings', value=global_settings)
-        session.merge(setting)
+        session.merge(SystemSetting(key='channel_regex_global_settings', value=global_settings))
         rows_written += 1
 
     patterns_dict = data.get('patterns', {})
@@ -257,20 +305,17 @@ def migrate_channel_regex(session, data_dir) -> int:
         session.flush()
         count_configs += 1
 
-        # Clear existing patterns for this channel to prevent duplicates on re-run
         session.query(ChannelRegexPattern).filter(
             ChannelRegexPattern.channel_id == str(channel_id)
         ).delete()
 
-        regex_patterns = item.get('regex_patterns', [])
-        for order, p in enumerate(regex_patterns):
-            pat = ChannelRegexPattern(
+        for order, p in enumerate(item.get('regex_patterns', [])):
+            session.add(ChannelRegexPattern(
                 channel_id=str(channel_id),
                 pattern=p.get('pattern'),
                 m3u_accounts=p.get('m3u_accounts'),
                 step_order=order
-            )
-            session.add(pat)
+            ))
             count_patterns += 1
             rows_written += 1
 
@@ -298,9 +343,7 @@ def migrate_system_settings(session, data_dir) -> int:
         data = load_json(path)
         if not data:
             continue
-
-        setting = SystemSetting(key=key, value=data)
-        session.merge(setting)
+        session.merge(SystemSetting(key=key, value=data))
         rows_written += 1
         logger.info(f"✓ Migrated {filename} -> SystemSetting({key}) from {data_dir.name}")
 
@@ -309,10 +352,11 @@ def migrate_system_settings(session, data_dir) -> int:
 
 def migrate_changelog(session, data_dir) -> int:
     """
-    Migrate historical changelog entries to the relational telemetry tables.
+    Migrate historical changelog entries into the relational telemetry tables.
 
-    Reuses the same save functions as the live telemetry pipeline so the
-    resulting rows are indistinguishable from entries written at runtime.
+    Writes directly to the caller's session rather than calling telemetry_db
+    functions, which each open their own session and would deadlock against the
+    open write transaction held by main().
     """
     path = data_dir / 'changelog.json'
     if not path.exists():
@@ -321,26 +365,172 @@ def migrate_changelog(session, data_dir) -> int:
     if not data:
         return 0
 
-    # Import here to avoid circular imports at module load time
-    from apps.telemetry.telemetry_db import save_automation_run_telemetry, save_generic_telemetry
-
     count = 0
     errors = 0
+
     for entry in data:
         action     = entry.get('action')
-        details    = entry.get('details', {})
+        details    = entry.get('details', {}) or {}
         subentries = entry.get('subentries')
         timestamp  = entry.get('timestamp')
 
         try:
+            run_ts = parse_datetime(timestamp) or datetime.utcnow()
+
             if action == 'automation_run':
-                save_automation_run_telemetry(action, details, subentries, timestamp)
+                global_stats = details.get('global_stats', {})
+                run = Run(
+                    timestamp=run_ts,
+                    duration_seconds=_parse_duration(
+                        details.get('duration_seconds', details.get('duration', 0.0))
+                    ),
+                    total_channels=(
+                        details.get('total_channels_processed')
+                        or details.get('total_channels')
+                        or global_stats.get('total_channels_processed', 0)
+                    ),
+                    total_streams=details.get('total_streams', 0) or global_stats.get('total_streams', 0),
+                    global_dead_count=(
+                        details.get('total_dead_streams')
+                        or details.get('dead_streams')
+                        or global_stats.get('total_dead_streams', 0)
+                    ),
+                    global_revived_count=(
+                        details.get('total_revived_streams')
+                        or details.get('streams_revived')
+                        or global_stats.get('total_revived_streams', 0)
+                    ),
+                    run_type=action,
+                    raw_details=json.dumps(details),
+                    raw_subentries=json.dumps(subentries) if subentries else None,
+                )
+                session.add(run)
+                session.flush()
+
+                periods = details.get('periods', [])
+                if not periods and 'summary' in details:
+                    periods = details.get('summary', {}).get('periods', [])
+
+                for p in periods:
+                    for c in p.get('channels', []):
+                        channel_id = c.get('channel_id')
+                        ch_health = ChannelHealth(
+                            run_id=run.id,
+                            channel_id=channel_id,
+                            channel_name=c.get('channel_name'),
+                            offline=False,
+                            available_streams=0,
+                            dead_streams=0,
+                        )
+                        session.add(ch_health)
+                        session.flush()
+
+                        for step in c.get('steps', []):
+                            if step.get('step') == 'Quality Check':
+                                step_details = step.get('details', {})
+                                dead_streams    = step_details.get('dead_streams', [])
+                                checked_streams = step_details.get('checked_streams', [])
+
+                                ch_health.dead_streams      += len(dead_streams)
+                                ch_health.available_streams += len(checked_streams)
+                                ch_health.offline = (
+                                    ch_health.available_streams == 0
+                                    and ch_health.dead_streams > 0
+                                )
+
+                                for ds in dead_streams:
+                                    session.add(StreamTelemetry(
+                                        run_id=run.id,
+                                        channel_id=channel_id,
+                                        stream_id=ds.get('id', ds.get('stream_id', 0)),
+                                        provider_id=None,
+                                        is_dead=True,
+                                    ))
+
+                                for cs in checked_streams:
+                                    width, height = _sanitize_resolution(cs.get('resolution'))
+                                    session.add(StreamTelemetry(
+                                        run_id=run.id,
+                                        channel_id=channel_id,
+                                        stream_id=cs.get('stream_id', 0),
+                                        provider_id=None,
+                                        bitrate_kbps=_sanitize_bitrate(cs.get('bitrate')),
+                                        resolution_width=width,
+                                        resolution_height=height,
+                                        fps=_sanitize_fps(cs.get('fps')),
+                                        codec=cs.get('video_codec'),
+                                        audio_codec=cs.get('audio_codec'),
+                                        quality_score=cs.get('score'),
+                                        is_dead=False,
+                                        is_hdr=bool(cs.get('hdr_format') or cs.get('is_hdr')),
+                                    ))
+
             else:
-                save_generic_telemetry(action, details, subentries, timestamp)
+                # Generic / fallback entry (playlist updates, single checks, etc.)
+                run = Run(
+                    timestamp=run_ts,
+                    duration_seconds=_parse_duration(
+                        details.get('duration_seconds', details.get('duration', 0.0))
+                    ),
+                    total_channels=(
+                        details.get('total_channels', 0)
+                        or details.get('total_channels_processed', 0)
+                    ),
+                    total_streams=details.get('total_streams', 0),
+                    global_dead_count=(
+                        details.get('total_dead_streams', 0)
+                        or details.get('dead_streams', 0)
+                    ),
+                    global_revived_count=details.get('total_revived_streams', 0),
+                    run_type=action,
+                    raw_details=json.dumps(details),
+                    raw_subentries=json.dumps(subentries) if subentries else None,
+                )
+                session.add(run)
+                session.flush()
+
+                if subentries:
+                    for group in subentries:
+                        if group.get('group') == 'check':
+                            for item in group.get('items', []):
+                                cid   = item.get('channel_id')
+                                stats = item.get('stats', {})
+                                ch_health = ChannelHealth(
+                                    run_id=run.id,
+                                    channel_id=cid,
+                                    channel_name=item.get('channel_name'),
+                                    available_streams=(
+                                        stats.get('total_streams', 0)
+                                        - stats.get('dead_streams', 0)
+                                    ),
+                                    dead_streams=stats.get('dead_streams', 0),
+                                )
+                                session.add(ch_health)
+                                session.flush()
+
+                                for s_det in stats.get('stream_details', []):
+                                    width, height = _sanitize_resolution(s_det.get('resolution'))
+                                    session.add(StreamTelemetry(
+                                        run_id=run.id,
+                                        channel_id=cid,
+                                        stream_id=s_det.get('stream_id', 0),
+                                        provider_id=None,
+                                        bitrate_kbps=_sanitize_bitrate(s_det.get('bitrate')),
+                                        resolution_width=width,
+                                        resolution_height=height,
+                                        fps=_sanitize_fps(s_det.get('fps')),
+                                        codec=s_det.get('video_codec'),
+                                        audio_codec=s_det.get('audio_codec'),
+                                        quality_score=s_det.get('score'),
+                                        is_dead=(s_det.get('status') == 'dead'),
+                                        is_hdr=bool(s_det.get('hdr_format') or s_det.get('is_hdr')),
+                                    ))
+
             count += 1
+
         except Exception as e:
             errors += 1
-            logger.warning(f"  Changelog entry {count + errors} failed to migrate: {e}")
+            logger.warning(f"  Changelog entry {count + errors} ({action!r}) failed to migrate: {e}")
 
         if (count + errors) % 50 == 0:
             logger.debug(f"  Changelog progress: {count} migrated, {errors} errors")
@@ -374,19 +564,15 @@ def main():
 
             logger.info(f"Processing directory: {data_dir}")
 
-            # 1. Dead Streams
             if (data_dir / 'dead_streams.json').exists():
                 total_rows_written += migrate_dead_streams(session, data_dir)
 
-            # 2. Automation (profiles, periods, global settings)
             if (data_dir / 'automation_config.json').exists():
                 total_rows_written += migrate_automation(session, data_dir)
 
-            # 3. Channel Regex
             if (data_dir / 'channel_regex_config.json').exists():
                 total_rows_written += migrate_channel_regex(session, data_dir)
 
-            # 4. Generic System Settings
             system_files = [
                 'stream_checker_config.json', 'auto_create_rules.json',
                 'scheduling_config.json', 'dispatcharr_config.json', 'session_settings.json',
@@ -394,7 +580,6 @@ def main():
             if any((data_dir / f).exists() for f in system_files):
                 total_rows_written += migrate_system_settings(session, data_dir)
 
-            # 5. Changelog / historical telemetry
             if (data_dir / 'changelog.json').exists():
                 total_rows_written += migrate_changelog(session, data_dir)
 
@@ -402,8 +587,6 @@ def main():
             session.commit()
             logger.info(f"MIGRATION SUCCESSFUL! ({total_rows_written} rows written)")
 
-            # Back up and remove every migrated JSON file so this script is a no-op
-            # on the next startup rather than re-processing the same data.
             backup_dir = CONFIG_DIR / 'backup'
             backup_dir.mkdir(exist_ok=True)
 
