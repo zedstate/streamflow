@@ -2570,14 +2570,10 @@ def get_setup_wizard_status():
                 except Exception as e:
                     logger.warning(f"Error checking Dispatcharr connection: {e}")
         
-        # Setup is complete if configurations exist and Dispatcharr is configured
+        # Setup is complete if Dispatcharr is configured
         # Note: We check is_configured() rather than active connection status
         # to prevent temporary downtime triggering the wizard view.
-        status["setup_complete"] = all([
-            status["automation_config_exists"],
-            status["regex_config_exists"],
-            get_dispatcharr_config().is_configured() or test_mode
-        ])
+        status["setup_complete"] = get_dispatcharr_config().is_configured() or test_mode
         
         return jsonify(status)
     except Exception as e:
