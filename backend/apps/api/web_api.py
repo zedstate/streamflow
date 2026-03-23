@@ -48,6 +48,7 @@ from apps.stream.stream_checker_service import get_stream_checker_service
 from apps.automation.scheduling_service import get_scheduling_service
 
 from apps.config.dispatcharr_config import get_dispatcharr_config
+from apps.config.acestream_orchestrator_config import get_acestream_orchestrator_config
 from apps.channels.channel_order_manager import get_channel_order_manager
 from apps.automation.automation_config_manager import get_automation_config_manager
 
@@ -4794,6 +4795,299 @@ def invalidate_automation_events_cache():
 
 from apps.stream.stream_session_manager import get_session_manager, REVIEW_DURATION
 from apps.stream.stream_monitoring_service import get_monitoring_service
+from apps.stream.acestream_monitoring_client import AceStreamMonitoringClient, normalize_content_id
+
+
+def _get_acestream_monitoring_client() -> AceStreamMonitoringClient:
+    """Build client for external AceStream orchestrator monitoring contract."""
+    return AceStreamMonitoringClient()
+
+
+def _acestream_client_or_error():
+    client = _get_acestream_monitoring_client()
+    if not client.is_configured():
+        return None, (
+            jsonify({
+                "error": "AceStream orchestrator is not configured",
+                "required_env": [
+                    "ACESTREAM_ORCHESTRATOR_BASE_URL",
+                    "ACESTREAM_ORCHESTRATOR_API_KEY"
+                ]
+            }),
+            500,
+        )
+    return client, None
+
+
+def _parse_m3u_acestream_entries(m3u_content: str):
+    """Local parser fallback for acestream:// and /ace/getstream?id=<id> entries."""
+    items = []
+    pending_name = None
+
+    for idx, raw_line in enumerate((m3u_content or '').splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if line.startswith('#EXTINF:'):
+            if ',' in line:
+                pending_name = line.split(',', 1)[1].strip() or None
+            else:
+                pending_name = None
+            continue
+
+        content_id = normalize_content_id(line)
+        if content_id:
+            items.append({
+                'content_id': content_id,
+                'name': pending_name,
+                'line_number': str(idx),
+            })
+            pending_name = None
+
+    # Deduplicate by content_id keeping first non-empty name.
+    merged = {}
+    for item in items:
+        key = item['content_id']
+        if key not in merged:
+            merged[key] = item
+        elif not merged[key].get('name') and item.get('name'):
+            merged[key]['name'] = item['name']
+
+    return list(merged.values())
+
+
+@app.route('/api/acestream-orchestrator/config', methods=['GET'])
+def get_acestream_orchestrator_config_endpoint():
+    """Get AceStream orchestrator configuration (without exposing API key)."""
+    try:
+        cfg = get_acestream_orchestrator_config().get_config()
+        return jsonify(cfg), 200
+    except Exception as e:
+        logger.error(f"Error getting AceStream orchestrator config: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/acestream-orchestrator/config', methods=['PUT'])
+def update_acestream_orchestrator_config_endpoint():
+    """Update AceStream orchestrator host, port, and API key."""
+    try:
+        data = request.get_json() or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "No configuration data provided"}), 400
+
+        host = data.get('host')
+        port = data.get('port')
+        api_key = data.get('api_key')
+
+        cfg = get_acestream_orchestrator_config()
+        success = cfg.update_config(host=host, port=port, api_key=api_key)
+        if not success:
+            return jsonify({"error": "Failed to save configuration"}), 500
+
+        # Maintain env vars for immediate availability and compatibility.
+        base_url = cfg.get_base_url() or ''
+        if base_url:
+            os.environ['ACESTREAM_ORCHESTRATOR_BASE_URL'] = base_url
+            os.environ['ORCHESTRATOR_BASE_URL'] = base_url
+        if api_key is not None:
+            os.environ['ACESTREAM_ORCHESTRATOR_API_KEY'] = str(api_key)
+            os.environ['ORCHESTRATOR_API_KEY'] = str(api_key)
+
+        return jsonify({"message": "AceStream orchestrator configuration updated successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error updating AceStream orchestrator config: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/acestream-monitor-sessions/start', methods=['POST'])
+def start_acestream_monitor_session():
+    """Start AceStream monitoring session via external orchestrator contract."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    payload = request.get_json(silent=True) or {}
+    normalized = normalize_content_id(payload.get('content_id'))
+    if not normalized:
+        return jsonify({"error": "content_id is required and must contain a valid 40-hex AceStream ID"}), 400
+    payload['content_id'] = normalized
+    try:
+        response_data = client.start_session(payload)
+        return jsonify(response_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to start AceStream monitoring session", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions', methods=['GET'])
+def list_acestream_monitor_sessions():
+    """List AceStream monitoring sessions with optional playback correlation."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        sessions_data = client.list_sessions()
+        include_correlation = request.args.get('include_correlation', 'true').lower() != 'false'
+        if include_correlation:
+            started_streams = client.list_started_streams()
+            sessions_data['items'] = client.annotate_many_with_playback(sessions_data.get('items', []), started_streams)
+        return jsonify(sessions_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to list AceStream monitoring sessions", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/<monitor_id>', methods=['GET'])
+def get_acestream_monitor_session(monitor_id):
+    """Get one AceStream monitoring session with detailed history."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        session_data = client.get_session(monitor_id)
+        include_correlation = request.args.get('include_correlation', 'true').lower() != 'false'
+        if include_correlation:
+            started_streams = client.list_started_streams()
+            session_data = client.annotate_with_playback(session_data, started_streams)
+        return jsonify(session_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to get AceStream monitoring session", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/<monitor_id>', methods=['DELETE'])
+def stop_acestream_monitor_session(monitor_id):
+    """Stop AceStream monitoring session lifecycle."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        response_data = client.stop_session(monitor_id)
+        return jsonify(response_data if response_data is not None else {"ok": True}), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to stop AceStream monitoring session", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/<monitor_id>/entry', methods=['DELETE'])
+def delete_acestream_monitor_entry(monitor_id):
+    """Delete AceStream monitoring entry and ensure it is stopped."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        response_data = client.delete_entry(monitor_id)
+        return jsonify(response_data if response_data is not None else {"ok": True}), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to delete AceStream monitoring entry", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/parse-m3u', methods=['POST'])
+def parse_acestream_m3u():
+    """Parse M3U and extract AceStream IDs and names via orchestrator contract."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    data = request.get_json(silent=True) or {}
+    m3u_content = data.get('m3u_content', '')
+    if not isinstance(m3u_content, str):
+        return jsonify({"error": "m3u_content must be a string"}), 400
+
+    try:
+        response_data = client.parse_m3u(m3u_content)
+        parsed_items = response_data.get('items', []) if isinstance(response_data, dict) else []
+
+        # Merge with local parser to ensure /ace/getstream?id=<id> URLs are detected.
+        fallback_items = _parse_m3u_acestream_entries(m3u_content)
+        merged = {}
+        for item in parsed_items:
+            cid = normalize_content_id(item.get('content_id'))
+            if not cid:
+                continue
+            merged[cid] = {
+                'content_id': cid,
+                'name': item.get('name'),
+                'line_number': str(item.get('line_number')) if item.get('line_number') is not None else None,
+            }
+        for item in fallback_items:
+            cid = item['content_id']
+            if cid not in merged:
+                merged[cid] = item
+            elif not merged[cid].get('name') and item.get('name'):
+                merged[cid]['name'] = item['name']
+
+        response_data = {
+            'count': len(merged),
+            'items': list(merged.values()),
+        }
+        return jsonify(response_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to parse M3U for AceStream entries", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/streams/started', methods=['GET'])
+def list_acestream_started_streams():
+    """Optional playback correlation source from orchestrator proxy streams endpoint."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        response_data = client.list_started_streams()
+        return jsonify(response_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to list started streams", "detail": detail}), status_code
 
 
 @app.route('/api/stream-sessions', methods=['GET'])

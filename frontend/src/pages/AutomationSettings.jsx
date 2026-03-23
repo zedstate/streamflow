@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { Separator } from '@/components/ui/separator.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamCheckerAPI, dispatcharrAPI, sessionSettingsAPI, schedulingAPI } from '@/services/api.js'
+import { automationAPI, streamCheckerAPI, dispatcharrAPI, sessionSettingsAPI, schedulingAPI, aceStreamOrchestratorAPI } from '@/services/api.js'
 import AutomationProfileStudio from '@/components/Automation/AutomationProfileStudio.jsx'
 import AutomationPeriods from '@/components/Automation/AutomationPeriods.jsx'
 
@@ -18,6 +18,7 @@ export default function AutomationSettings() {
   const [dispatcharrConfig, setDispatcharrConfig] = useState(null)
   const [sessionConfig, setSessionConfig] = useState({ review_duration: 60 })
   const [schedulingConfig, setSchedulingConfig] = useState({ epg_refresh_interval_minutes: 60 })
+  const [orchestratorConfig, setOrchestratorConfig] = useState({ host: '', port: 8000, has_api_key: false, api_key: '' })
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionTestResult, setConnectionTestResult] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -32,18 +33,25 @@ export default function AutomationSettings() {
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const [automationResponse, streamCheckerResponse, dispatcharrResponse, sessionResponse, schedulingResponse] = await Promise.all([
+      const [automationResponse, streamCheckerResponse, dispatcharrResponse, sessionResponse, schedulingResponse, orchestratorResponse] = await Promise.all([
         automationAPI.getConfig(),
         streamCheckerAPI.getConfig(),
         dispatcharrAPI.getConfig(),
         sessionSettingsAPI.getSettings(),
-        schedulingAPI.getConfig()
+        schedulingAPI.getConfig(),
+        aceStreamOrchestratorAPI.getConfig(),
       ])
       setConfig(automationResponse.data)
       setStreamCheckerConfig(streamCheckerResponse.data)
       setDispatcharrConfig(dispatcharrResponse.data)
       setSessionConfig(sessionResponse.data)
       setSchedulingConfig(schedulingResponse.data)
+      setOrchestratorConfig({
+        host: orchestratorResponse.data?.host || '',
+        port: orchestratorResponse.data?.port ?? 8000,
+        has_api_key: !!orchestratorResponse.data?.has_api_key,
+        api_key: '',
+      })
     } catch (err) {
       console.error('Failed to load config:', err)
       toast({
@@ -64,7 +72,12 @@ export default function AutomationSettings() {
         streamCheckerAPI.updateConfig(streamCheckerConfig),
         dispatcharrAPI.updateConfig(dispatcharrConfig),
         sessionSettingsAPI.updateSettings(sessionConfig),
-        schedulingAPI.updateConfig(schedulingConfig)
+        schedulingAPI.updateConfig(schedulingConfig),
+        aceStreamOrchestratorAPI.updateConfig({
+          host: orchestratorConfig?.host,
+          port: orchestratorConfig?.port,
+          api_key: orchestratorConfig?.api_key || undefined,
+        })
       ])
       toast({
         title: "Success",
@@ -137,6 +150,13 @@ export default function AutomationSettings() {
 
   const handleSchedulingConfigChange = (field, value) => {
     setSchedulingConfig(prev => ({
+      ...prev,
+      [field]: value
+    }))
+  }
+
+  const handleOrchestratorConfigChange = (field, value) => {
+    setOrchestratorConfig(prev => ({
       ...prev,
       [field]: value
     }))
@@ -343,6 +363,61 @@ export default function AutomationSettings() {
                   </div>
                 )}
               </div>
+              <div className="flex justify-end pt-4">
+                <Button onClick={handleSave} disabled={saving}>
+                  {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>AceStream Orchestrator</CardTitle>
+              <CardDescription>
+                Configure AceStream monitoring orchestrator host, port, and API key
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="orchestrator-host">Host</Label>
+                <Input
+                  id="orchestrator-host"
+                  type="text"
+                  value={orchestratorConfig?.host || ''}
+                  onChange={(e) => handleOrchestratorConfigChange('host', e.target.value)}
+                  placeholder="orchestrator.local or http://orchestrator.local"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="orchestrator-port">Port</Label>
+                <Input
+                  id="orchestrator-port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={orchestratorConfig?.port ?? ''}
+                  onChange={(e) => handleOrchestratorConfigChange('port', parseInt(e.target.value || '0', 10) || '')}
+                  placeholder="8000"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="orchestrator-api-key">API Key</Label>
+                <Input
+                  id="orchestrator-api-key"
+                  type="password"
+                  value={orchestratorConfig?.api_key || ''}
+                  onChange={(e) => handleOrchestratorConfigChange('api_key', e.target.value)}
+                  placeholder={orchestratorConfig?.has_api_key ? '••••••••' : 'Enter API key'}
+                />
+                <p className="text-sm text-muted-foreground">
+                  Leave blank to keep the existing key.
+                </p>
+              </div>
+
               <div className="flex justify-end pt-4">
                 <Button onClick={handleSave} disabled={saving}>
                   {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
