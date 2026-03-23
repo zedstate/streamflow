@@ -2036,7 +2036,16 @@ class StreamCheckerService:
                     logger.info(f"Batch update complete: {successful} successful, {failed} failed")
                 
                 logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
-            
+
+            # Run loop probes on eligible streams (top 25% scoring >= 0.5).
+            # Called after all streams are scored and analyzed_streams is fully
+            # assembled so the complete score distribution is available.
+            analysis_params_lp = self.config.get('stream_analysis', {})
+            self._run_loop_probes(
+                analyzed_streams,
+                user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
+            )
+
             # Sort streams by score (highest first)
             self.progress.update(
                 channel_id=channel_id,
@@ -2156,7 +2165,12 @@ class StreamCheckerService:
                         stream_stat['score'] = round(analyzed.get('score', 0), 2)
                     else:
                         stream_stat['score'] = round(analyzed.get('score', 0), 2)
-                    
+
+                    # Include loop detection results if the probe ran
+                    if analyzed.get('loop_probe_ran'):
+                        stream_stat['loop_detected']      = analyzed.get('loop_detected')
+                        stream_stat['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+
                     # Clean up N/A values for cleaner JSON
                     cleaned_stat = {k: v for k, v in stream_stat.items() if v not in [None]}
                     stream_stats.append(cleaned_stat)
@@ -2666,7 +2680,15 @@ class StreamCheckerService:
                     score = self._calculate_stream_score(analyzed, priority_m3u_ids, priority_mode)
                     analyzed['score'] = score
                     analyzed_streams.append(analyzed)
-            
+
+            # Run loop probes on eligible streams — all streams scored, full
+            # distribution known for top-percentile calculation.
+            analysis_params_lp = self.config.get('stream_analysis', {})
+            self._run_loop_probes(
+                analyzed_streams,
+                user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
+            )
+
             # Sort streams by score (highest first)
             self.progress.update(
                 channel_id=channel_id,
@@ -2799,7 +2821,12 @@ class StreamCheckerService:
                             # Include original status from analysis if present
                             if 'status' in analyzed:
                                 stream_stat['analysis_status'] = analyzed.get('status')
-                        
+
+                        # Include loop detection results if the probe ran
+                        if analyzed.get('loop_probe_ran'):
+                            stream_stat['loop_detected']      = analyzed.get('loop_detected')
+                            stream_stat['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+
                         # Clean up N/A values for cleaner output
                         stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
                         stream_stats.append(stream_stat)
@@ -2904,6 +2931,96 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
+    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14') -> None:
+        """
+        Run loop detection probes on eligible streams and write results back
+        into each stream's analyzed dict.
+
+        Eligibility criteria (both must be met):
+          1. score >= LOOP_PROBE_SCORE_THRESHOLD (stream is healthy)
+          2. stream is in the top LOOP_PROBE_TOP_PERCENTILE of all scored streams
+
+        Dead streams (score == 0) and cached streams are never probed.
+
+        Results written into each analyzed dict:
+          analyzed['loop_detected']      True / False / None (not probed)
+          analyzed['loop_duration_secs'] float or None
+          analyzed['loop_probe_ran']     True / False
+
+        Args:
+            analyzed_streams: List of analyzed stream dicts, each with 'score' set.
+            user_agent:       HTTP User-Agent forwarded to FFmpeg.
+        """
+        from apps.stream.stream_check_utils import _probe_stream_for_loops
+
+        LOOP_PROBE_SCORE_THRESHOLD = 0.5
+        LOOP_PROBE_TOP_PERCENTILE  = 0.25   # top 25%
+
+        # Initialise loop fields on every stream so callers can always read them
+        for s in analyzed_streams:
+            s.setdefault('loop_detected', None)
+            s.setdefault('loop_duration_secs', None)
+            s.setdefault('loop_probe_ran', False)
+
+        # Build candidate pool: alive, scored at or above threshold, not cached
+        candidates = [
+            s for s in analyzed_streams
+            if s.get('score', 0) >= LOOP_PROBE_SCORE_THRESHOLD
+            and s.get('status') != 'cached'
+        ]
+
+        if not candidates:
+            logger.info("[loop-probe] No streams meet eligibility criteria — skipping all probes")
+            return
+
+        # Rank by score descending, take top percentile (minimum 1)
+        candidates_sorted = sorted(candidates, key=lambda s: s.get('score', 0), reverse=True)
+        cutoff  = max(1, int(len(candidates_sorted) * LOOP_PROBE_TOP_PERCENTILE))
+        eligible = candidates_sorted[:cutoff]
+
+        logger.info(
+            f"[loop-probe] {len(eligible)} stream(s) eligible for loop probe "
+            f"(top {int(LOOP_PROBE_TOP_PERCENTILE * 100)}% of {len(candidates_sorted)} "
+            f"scoring >= {LOOP_PROBE_SCORE_THRESHOLD})"
+        )
+
+        for stream in eligible:
+            stream_url  = stream.get('stream_url', '')
+            stream_name = stream.get('stream_name', 'Unknown')
+            stream_id   = stream.get('stream_id')
+            score       = stream.get('score', 0)
+
+            # Build a short readable tag for log messages
+            try:
+                from urllib.parse import urlparse as _up
+                _p    = _up(stream_url)
+                _segs = [s for s in _p.path.split('/') if s]
+                tag   = f"{_p.hostname}/{_segs[-1]}" if _segs else (_p.hostname or stream_url[:20])
+            except Exception:
+                tag = stream_url[:30]
+
+            logger.info(
+                f"[loop-probe:{tag}] Probing '{stream_name}' "
+                f"(ID: {stream_id}, score: {score:.2f})"
+            )
+
+            try:
+                loop_detected, loop_duration, frames = _probe_stream_for_loops(
+                    url=stream_url,
+                    stream_tag=tag,
+                    user_agent=user_agent,
+                )
+                stream['loop_detected']      = loop_detected
+                stream['loop_duration_secs'] = loop_duration
+                stream['loop_probe_ran']     = True
+
+            except Exception as e:
+                logger.error(
+                    f"[loop-probe:{tag}] Probe failed for '{stream_name}': {e}"
+                )
+                # loop_detected remains None — callers can distinguish probe error
+                # from a clean result (False) or detected loop (True)
+
     def _calculate_stream_score(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute', scoring_weights: Dict = None) -> float:
         """Calculate a quality score for a stream based on analysis.
         
