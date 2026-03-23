@@ -4870,6 +4870,146 @@ def _save_ace_channel_sessions_store(store):
     return bool(db.set_system_setting('acestream_channel_sessions', store))
 
 
+def _get_ace_management_settings():
+    """Load management tuning from shared session settings."""
+    from apps.database.manager import get_db_manager
+
+    db = get_db_manager()
+    session_settings = db.get_system_setting('session_settings', {})
+    if not isinstance(session_settings, dict):
+        session_settings = {}
+
+    review_duration = float(session_settings.get('review_duration', 60.0) or 60.0)
+    pass_score_threshold = 70.0
+    return {
+        'review_duration': max(0.0, review_duration),
+        'pass_score_threshold': pass_score_threshold,
+    }
+
+
+def _clamp_score(value):
+    return max(0.0, min(100.0, float(value)))
+
+
+def _compute_ace_management_score(monitor):
+    """Compute an Ace reliability-style score from orchestrator telemetry."""
+    if not isinstance(monitor, dict):
+        return 25.0
+
+    status = (monitor.get('status') or '').lower()
+    base = {
+        'running': 82.0,
+        'starting': 55.0,
+        'reconnecting': 50.0,
+        'stuck': 25.0,
+        'dead': 0.0,
+    }.get(status, 40.0)
+
+    movement = monitor.get('livepos_movement') or {}
+    latest = monitor.get('latest_status') or {}
+
+    if movement.get('is_moving'):
+        base += 10.0
+
+    speed_down = float(latest.get('speed_down') or 0.0)
+    speed_up = float(latest.get('speed_up') or 0.0)
+    peers = float(latest.get('peers') or 0.0)
+
+    base += min(8.0, speed_down / 600.0)
+    base += min(4.0, speed_up / 900.0)
+    base += min(6.0, peers / 8.0)
+
+    if monitor.get('currently_played'):
+        base += 3.0
+
+    if status == 'stuck' and movement.get('is_moving'):
+        base += 8.0
+
+    return _clamp_score(base)
+
+
+def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
+    """Derive and persist management state fields for a channel-session entry."""
+    changed = False
+
+    prev_state = (entry.get('management_state') or 'review').lower()
+    prev_since = float(entry.get('management_since') or now_ts)
+    manual_quarantine = bool(entry.get('manual_quarantine'))
+
+    score = _compute_ace_management_score(monitor)
+    reason = None
+
+    if not isinstance(monitor, dict):
+        target_state = 'review'
+        reason = 'missing-monitor'
+    else:
+        raw_status = (monitor.get('status') or 'unknown').lower()
+        movement = monitor.get('livepos_movement') or {}
+
+        if manual_quarantine:
+            target_state = 'quarantined'
+            reason = 'manual'
+        elif raw_status == 'dead':
+            target_state = 'quarantined'
+            reason = 'dead'
+        elif raw_status == 'stuck':
+            # Keep stuck as problematic but still monitored for potential recovery.
+            target_state = 'quarantined'
+            reason = 'stuck-monitoring' if movement.get('is_moving') else 'stuck'
+        elif raw_status in ('starting', 'reconnecting'):
+            target_state = 'review'
+            reason = raw_status
+        elif raw_status == 'running':
+            elapsed = max(0.0, now_ts - prev_since)
+            if prev_state == 'stable':
+                target_state = 'stable'
+            elif prev_state == 'review' and elapsed >= settings['review_duration'] and score >= settings['pass_score_threshold']:
+                target_state = 'stable'
+            else:
+                target_state = 'review'
+                reason = 'warming' if prev_state != 'stable' else None
+        else:
+            target_state = 'review'
+            reason = f'status-{raw_status}'
+
+    if target_state != prev_state:
+        entry['management_state'] = target_state
+        entry['management_since'] = now_ts
+        changed = True
+    elif 'management_state' not in entry:
+        entry['management_state'] = target_state
+        entry['management_since'] = now_ts
+        changed = True
+
+    if float(entry.get('management_score') or -1) != float(score):
+        entry['management_score'] = score
+        changed = True
+
+    if entry.get('management_reason') != reason:
+        entry['management_reason'] = reason
+        changed = True
+
+    return changed
+
+
+def _evaluate_ace_session_management(raw_session, monitors_by_id, settings):
+    """Evaluate and persist management state for every entry in one session."""
+    if not isinstance(raw_session, dict):
+        return False
+
+    changed = False
+    now_ts = time.time()
+    entries = raw_session.get('entries') or []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        monitor = monitors_by_id.get(entry.get('monitor_id'))
+        if _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
+            changed = True
+
+    return changed
+
+
 def _ace_status_buckets(monitor_items):
     active_states = {'starting', 'running', 'stuck', 'reconnecting'}
     running = 0
@@ -4878,15 +5018,13 @@ def _ace_status_buckets(monitor_items):
 
     for item in monitor_items:
         status = (item.get('status') or '').lower()
-        movement = item.get('livepos_movement') if isinstance(item, dict) else None
-        # Treat "stuck" as effectively running when live position still advances.
-        if status == 'stuck' and isinstance(movement, dict) and movement.get('is_moving'):
-            status = 'running'
-
         if status == 'running':
             running += 1
         elif status == 'stuck':
             stuck += 1
+            # Keep stuck in the dead/problem section for UI grouping,
+            # but still treat it as active for continued monitoring.
+            dead += 1
         elif status == 'dead':
             dead += 1
 
@@ -4898,7 +5036,21 @@ def _build_ace_channel_session_summary(raw_session, monitors_by_id):
     monitor_items = [monitors_by_id.get(entry.get('monitor_id')) for entry in raw_session.get('entries', [])]
     monitor_items = [item for item in monitor_items if isinstance(item, dict)]
 
-    running, stuck, dead, is_active = _ace_status_buckets(monitor_items)
+    stable = 0
+    review = 0
+    quarantined = 0
+    for entry in raw_session.get('entries', []):
+        if not isinstance(entry, dict):
+            continue
+        state = (entry.get('management_state') or 'review').lower()
+        if state == 'stable':
+            stable += 1
+        elif state == 'quarantined':
+            quarantined += 1
+        else:
+            review += 1
+
+    _, _, _, is_active = _ace_status_buckets(monitor_items)
     return {
         'session_id': raw_session.get('session_id'),
         'source_type': 'acestream',
@@ -4907,9 +5059,9 @@ def _build_ace_channel_session_summary(raw_session, monitors_by_id):
         'channel_logo_url': raw_session.get('channel_logo_url'),
         'created_at': raw_session.get('created_at'),
         'is_active': is_active,
-        'stable_count': running,
-        'review_count': stuck,
-        'quarantined_count': dead,
+        'stable_count': stable,
+        'review_count': review,
+        'quarantined_count': quarantined,
         'stream_count': len(raw_session.get('entries', [])),
         'sample_count': sum(int(item.get('sample_count') or 0) for item in monitor_items),
         'played_count': sum(1 for item in monitor_items if item.get('currently_played')),
@@ -4977,20 +5129,27 @@ def list_acestream_channel_sessions():
     try:
         status_filter = (request.args.get('status') or '').lower()
         store = _ace_channel_sessions_store()
+        mgmt_settings = _get_ace_management_settings()
         monitor_payload = client.list_sessions()
         monitor_items = monitor_payload.get('items', []) if isinstance(monitor_payload, dict) else []
         monitors_by_id = {item.get('monitor_id'): item for item in monitor_items if isinstance(item, dict) and item.get('monitor_id')}
         _annotate_monitors_with_playback(client, monitors_by_id)
 
         sessions = []
+        store_changed = False
         for session_id, raw in store.items():
             if not isinstance(raw, dict):
                 continue
             raw['session_id'] = session_id
+            if _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings):
+                store_changed = True
             summary = _build_ace_channel_session_summary(raw, monitors_by_id)
             if status_filter == 'active' and not summary.get('is_active'):
                 continue
             sessions.append(summary)
+
+        if store_changed:
+            _save_ace_channel_sessions_store(store)
 
         sessions.sort(key=lambda s: s.get('created_at') or 0, reverse=True)
         return jsonify(sessions), 200
@@ -5156,10 +5315,14 @@ def get_acestream_channel_session(session_id):
         if not isinstance(raw, dict):
             return jsonify({'error': 'Session not found'}), 404
 
+        mgmt_settings = _get_ace_management_settings()
         monitor_payload = client.list_sessions()
         monitor_items = monitor_payload.get('items', []) if isinstance(monitor_payload, dict) else []
         monitors_by_id = {item.get('monitor_id'): item for item in monitor_items if isinstance(item, dict) and item.get('monitor_id')}
         _annotate_monitors_with_playback(client, monitors_by_id)
+        if _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings):
+            store[session_id] = raw
+            _save_ace_channel_sessions_store(store)
 
         summary = _build_ace_channel_session_summary(raw, monitors_by_id)
         entries = []
@@ -5255,6 +5418,70 @@ def delete_acestream_channel_session(session_id):
         return jsonify({'message': 'AceStream channel session deleted'}), 200
     except Exception as e:
         logger.error(f"Error deleting AceStream channel session {session_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-channel-sessions/<session_id>/streams/<int:stream_id>/quarantine', methods=['POST'])
+def quarantine_acestream_channel_stream(session_id, stream_id):
+    """Manually quarantine one Ace stream entry within a channel session."""
+    try:
+        store = _ace_channel_sessions_store()
+        raw = store.get(session_id)
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Session not found'}), 404
+
+        entries = raw.get('entries') or []
+        target = None
+        for entry in entries:
+            if int(entry.get('stream_id') or -1) == int(stream_id):
+                target = entry
+                break
+
+        if not isinstance(target, dict):
+            return jsonify({'error': 'Stream not found in session'}), 404
+
+        now_ts = time.time()
+        target['manual_quarantine'] = True
+        target['management_state'] = 'quarantined'
+        target['management_reason'] = 'manual'
+        target['management_since'] = now_ts
+
+        _save_ace_channel_sessions_store(store)
+        return jsonify({'message': 'Ace stream quarantined'}), 200
+    except Exception as e:
+        logger.error(f"Error quarantining Ace stream {stream_id} in session {session_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-channel-sessions/<session_id>/streams/<int:stream_id>/revive', methods=['POST'])
+def revive_acestream_channel_stream(session_id, stream_id):
+    """Revive one manually quarantined Ace stream entry back to review."""
+    try:
+        store = _ace_channel_sessions_store()
+        raw = store.get(session_id)
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Session not found'}), 404
+
+        entries = raw.get('entries') or []
+        target = None
+        for entry in entries:
+            if int(entry.get('stream_id') or -1) == int(stream_id):
+                target = entry
+                break
+
+        if not isinstance(target, dict):
+            return jsonify({'error': 'Stream not found in session'}), 404
+
+        now_ts = time.time()
+        target['manual_quarantine'] = False
+        target['management_state'] = 'review'
+        target['management_reason'] = 'manual-revive'
+        target['management_since'] = now_ts
+
+        _save_ace_channel_sessions_store(store)
+        return jsonify({'message': 'Ace stream moved to review'}), 200
+    except Exception as e:
+        logger.error(f"Error reviving Ace stream {stream_id} in session {session_id}: {e}", exc_info=True)
         return jsonify({'error': 'Internal Server Error'}), 500
 
 

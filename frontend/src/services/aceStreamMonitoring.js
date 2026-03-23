@@ -12,6 +12,12 @@ export const aceStreamMonitoringAPI = {
 
   getChannelSession: (sessionId) => api.get(`/acestream-channel-sessions/${sessionId}`),
 
+  quarantineChannelSessionStream: (sessionId, streamId) =>
+    api.post(`/acestream-channel-sessions/${sessionId}/streams/${streamId}/quarantine`),
+
+  reviveChannelSessionStream: (sessionId, streamId) =>
+    api.post(`/acestream-channel-sessions/${sessionId}/streams/${streamId}/revive`),
+
   stopChannelSession: (sessionId) => api.post(`/acestream-channel-sessions/${sessionId}/stop`),
 
   deleteChannelSession: (sessionId) => api.delete(`/acestream-channel-sessions/${sessionId}`),
