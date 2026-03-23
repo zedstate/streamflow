@@ -1087,7 +1087,9 @@ def analyze_stream(
         'audio_channels': None,
         'channel_layout': None,
         'audio_bitrate': None,
-        'status': 'Error'
+        'status': 'Error',
+        'elapsed_time': 0,
+        'ffmpeg_duration': ffmpeg_duration,
     }
 
     try:
@@ -1128,7 +1130,9 @@ def analyze_stream(
                     'audio_channels': result_data['audio_channels'],
                     'channel_layout': result_data['channel_layout'],
                     'audio_bitrate': result_data['audio_bitrate'],
-                    'status': result_data['status']
+                    'status': result_data['status'],
+                    'elapsed_time': result_data.get('elapsed_time', 0),
+                    'ffmpeg_duration': ffmpeg_duration,
                 }
 
                 if logger.isEnabledFor(logging.DEBUG):
