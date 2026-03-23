@@ -72,13 +72,17 @@ export default function Scheduling() {
   const [runSeconds, setRunSeconds] = useState(0)
   const [perSampleTimeoutS, setPerSampleTimeoutS] = useState(1.0)
   const [engineContainerId, setEngineContainerId] = useState('')
-  
+  const [aceRegexFilter, setAceRegexFilter] = useState('')
+  const [aceMatchByTvgId, setAceMatchByTvgId] = useState(false)
+
   // Rule AceStream Config
   const [ruleSessionType, setRuleSessionType] = useState('standard')
   const [ruleIntervalS, setRuleIntervalS] = useState(1.0)
   const [ruleRunSeconds, setRuleRunSeconds] = useState(0)
   const [rulePerSampleTimeoutS, setRulePerSampleTimeoutS] = useState(1.0)
   const [ruleEngineContainerId, setRuleEngineContainerId] = useState('')
+  const [ruleAceRegexFilter, setRuleAceRegexFilter] = useState('')
+  const [ruleAceMatchByTvgId, setRuleAceMatchByTvgId] = useState(false)
 
   const [testingRegex, setTestingRegex] = useState(false)
   const [regexMatches, setRegexMatches] = useState([])
@@ -208,7 +212,9 @@ export default function Scheduling() {
         interval_s: intervalS,
         run_seconds: runSeconds,
         per_sample_timeout_s: perSampleTimeoutS,
-        engine_container_id: engineContainerId
+        engine_container_id: engineContainerId,
+        regex_filter: aceRegexFilter,
+        match_by_tvg_id: aceMatchByTvgId,
       }
 
       await schedulingAPI.createEvent(eventData)
@@ -376,6 +382,8 @@ export default function Scheduling() {
         run_seconds: ruleRunSeconds,
         per_sample_timeout_s: rulePerSampleTimeoutS,
         engine_container_id: ruleEngineContainerId,
+        regex_filter: ruleAceRegexFilter,
+        match_by_tvg_id: ruleAceMatchByTvgId,
         enable_looping_detection: ruleEnableLoopingDetection,
         enable_logo_detection: ruleEnableLogoDetection
       }
@@ -929,6 +937,26 @@ export default function Scheduling() {
                             value={engineContainerId}
                             onChange={(e) => setEngineContainerId(e.target.value)}
                           />
+                        </div>
+                        <div className="space-y-2 col-span-2">
+                          <Label htmlFor="ace-regex-filter">Stream Discovery Filter (Regex)</Label>
+                          <Input
+                            id="ace-regex-filter"
+                            placeholder="e.g. CHANNEL_NAME|MyProvider — leave blank to use channel streams"
+                            value={aceRegexFilter}
+                            onChange={(e) => setAceRegexFilter(e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground">Applied to all UDI streams — same as Standard session discovery. CHANNEL_NAME is substituted automatically.</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            id="ace-match-tvg-id"
+                            type="checkbox"
+                            className="rounded border"
+                            checked={aceMatchByTvgId}
+                            onChange={(e) => setAceMatchByTvgId(e.target.checked)}
+                          />
+                          <Label htmlFor="ace-match-tvg-id">Match by TVG-ID</Label>
                         </div>
                       </div>
                     )}
@@ -1718,6 +1746,26 @@ export default function Scheduling() {
                                     value={ruleEngineContainerId}
                                     onChange={(e) => setRuleEngineContainerId(e.target.value)}
                                   />
+                                </div>
+                                <div className="space-y-2 col-span-2">
+                                  <Label htmlFor="rule-ace-regex-filter">Stream Discovery Filter (Regex)</Label>
+                                  <Input
+                                    id="rule-ace-regex-filter"
+                                    placeholder="e.g. CHANNEL_NAME|MyProvider — leave blank to use channel streams"
+                                    value={ruleAceRegexFilter}
+                                    onChange={(e) => setRuleAceRegexFilter(e.target.value)}
+                                  />
+                                  <p className="text-xs text-muted-foreground">Applied to all UDI streams. CHANNEL_NAME is substituted automatically.</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    id="rule-ace-match-tvg-id"
+                                    type="checkbox"
+                                    className="rounded border"
+                                    checked={ruleAceMatchByTvgId}
+                                    onChange={(e) => setRuleAceMatchByTvgId(e.target.checked)}
+                                  />
+                                  <Label htmlFor="rule-ace-match-tvg-id">Match by TVG-ID</Label>
                                 </div>
                               </div>
                             )}

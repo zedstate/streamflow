@@ -5124,6 +5124,18 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
             target_state = 'review'
             reason = f'status-{raw_status}'
 
+    # Auto-revive from quarantine after cooldown (mirrors standard QUARANTINE_DURATION of 15 min).
+    # Only applies to automatic quarantines — manual quarantines persist until explicitly revived.
+    QUARANTINE_DURATION = 900.0
+    if target_state == 'quarantined' and not manual_quarantine:
+        time_in_quarantine = now_ts - prev_since
+        if prev_state == 'quarantined' and time_in_quarantine >= QUARANTINE_DURATION:
+            target_state = 'review'
+            reason = 'auto-revive'
+            logger.info(
+                f"Ace stream {entry.get('stream_id')} auto-revived after {time_in_quarantine:.0f}s in quarantine"
+            )
+
     if target_state != prev_state:
         entry['management_state'] = target_state
         entry['management_since'] = now_ts
@@ -5194,6 +5206,116 @@ def _evaluate_ace_session_management(raw_session, monitors_by_id, settings):
             changed = True
 
     return changed
+
+
+def _check_ace_session_epg_auto_stop(raw_session, client):
+    """Stop Orchestrator monitors for a session when its EPG event end time has passed.
+
+    Uses a 'epg_auto_stopped' flag to avoid issuing stop calls on every poll tick.
+    Returns True if the store needs to be persisted.
+    """
+    if not isinstance(raw_session, dict):
+        return False
+    if raw_session.get('epg_auto_stopped'):
+        return False
+
+    epg_end = raw_session.get('epg_event_end')
+    if not epg_end:
+        return False
+
+    try:
+        from datetime import datetime, timezone
+        end_time = datetime.fromisoformat(str(epg_end).replace('Z', '+00:00'))
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if now < end_time:
+            return False
+    except Exception:
+        return False
+
+    session_id = raw_session.get('session_id', '?')
+    logger.info(f"Ace session {session_id}: EPG event ended, auto-stopping Orchestrator monitors")
+
+    for entry in raw_session.get('entries') or []:
+        monitor_id = entry.get('monitor_id') if isinstance(entry, dict) else None
+        if not monitor_id:
+            continue
+        try:
+            client.stop_session(monitor_id)
+        except Exception:
+            pass
+
+    raw_session['epg_auto_stopped'] = True
+    return True
+
+
+def _apply_ace_dispatcharr_sync(raw_session):
+    """Enforce Dispatcharr channel stream order based on AceStream management states.
+
+    Order: stable entries (desc score) → review entries (desc score).
+    Quarantined entries are excluded from the channel.
+    Mirrors the _update_monitoring_ranks / _execute_sync logic of the standard monitoring service.
+    Returns True if a sync was attempted (store does NOT need extra save; update_channel_streams is async).
+    """
+    if not isinstance(raw_session, dict):
+        return False
+
+    channel_id = raw_session.get('channel_id')
+    if not channel_id:
+        return False
+
+    entries = [e for e in (raw_session.get('entries') or []) if isinstance(e, dict)]
+    if not entries:
+        return False
+
+    stable = sorted(
+        [e for e in entries if (e.get('management_state') or 'review').lower() == 'stable'],
+        key=lambda e: float(e.get('management_score') or 0),
+        reverse=True,
+    )
+    review = sorted(
+        [e for e in entries if (e.get('management_state') or 'review').lower() == 'review'],
+        key=lambda e: float(e.get('management_score') or 0),
+        reverse=True,
+    )
+
+    desired_ids = [int(e['stream_id']) for e in (stable + review) if e.get('stream_id') is not None]
+
+    if not desired_ids:
+        return False
+
+    try:
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(int(channel_id))
+        current_ids = channel.get('streams', []) if isinstance(channel, dict) else []
+
+        if desired_ids == current_ids:
+            return False
+
+        from apps.core.api_utils import update_channel_streams
+
+        def _do_sync():
+            try:
+                success = update_channel_streams(int(channel_id), desired_ids)
+                if success:
+                    udi.refresh_channel_by_id(int(channel_id))
+                    logger.debug(
+                        f"Ace session {raw_session.get('session_id')}: synced channel {channel_id} "
+                        f"stream order → {desired_ids}"
+                    )
+                else:
+                    logger.warning(f"Ace Dispatcharr sync failed for channel {channel_id}")
+            except Exception as exc:
+                logger.error(f"Ace Dispatcharr sync error for channel {channel_id}: {exc}")
+
+        import threading
+        threading.Thread(target=_do_sync, daemon=True, name=f"AceSync-{channel_id}").start()
+        return True
+
+    except Exception as exc:
+        logger.error(f"_apply_ace_dispatcharr_sync error: {exc}")
+        return False
 
 
 def _save_ace_session_telemetry_snapshot(raw_session, monitors_by_id):
@@ -5453,6 +5575,14 @@ def list_acestream_channel_sessions():
                 store_changed = True
             if _save_ace_session_telemetry_snapshot(raw, monitors_by_id):
                 store_changed = True
+            if _check_ace_session_epg_auto_stop(raw, client):
+                store_changed = True
+            # Discover new matching streams and start monitors for them (mirrors standard refresh)
+            if not raw.get('epg_auto_stopped'):
+                if _refresh_ace_session_streams(raw, client):
+                    store_changed = True
+                    _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings)
+            _apply_ace_dispatcharr_sync(raw)
             summary = _build_ace_channel_session_summary(raw, monitors_by_id)
             if status_filter == 'active' and not summary.get('is_active'):
                 continue
@@ -5477,34 +5607,174 @@ def list_acestream_channel_sessions():
         return jsonify({'error': 'Internal Server Error'}), 500
 
 
+def _refresh_ace_session_streams(raw_session, client, interval_s=1.0, run_seconds=0, per_sample_timeout_s=1.0):
+    """Discover new streams matching the session filter and start monitors for them.
+
+    Mirrors StreamSessionManager._refresh_session_streams: on each poll cycle the full UDI
+    stream list is re-evaluated against the stored regex / TVG-ID filter so that streams
+    added to the M3U source after session creation are automatically picked up.
+    Returns True if new entries were added (store must be persisted by caller).
+    """
+    if not isinstance(raw_session, dict):
+        return False
+
+    channel_id = raw_session.get('channel_id')
+    if not channel_id:
+        return False
+
+    resolved_regex = raw_session.get('regex_filter', '')
+    match_by_tvg_id = bool(raw_session.get('match_by_tvg_id'))
+    channel_tvg_id = raw_session.get('channel_tvg_id')
+    channel_name = raw_session.get('channel_name', '')
+
+    # Nothing to refresh if session used the channel-streams fallback
+    if not resolved_regex and not (match_by_tvg_id and channel_tvg_id):
+        return False
+
+    import re as _re
+
+    compiled_regex = None
+    if resolved_regex:
+        try:
+            pattern = resolved_regex.replace('CHANNEL_NAME', _re.escape(channel_name))
+            pattern = _re.sub(r'(?<!\\) +', r'\\s+', pattern)
+            compiled_regex = _re.compile(pattern, _re.IGNORECASE)
+        except _re.error:
+            return False
+
+    udi = get_udi_manager()
+    all_streams = udi.get_streams() or []
+
+    # Build set of content_ids already being monitored
+    existing_content_ids = {
+        e.get('content_id')
+        for e in (raw_session.get('entries') or [])
+        if isinstance(e, dict) and e.get('content_id')
+    }
+
+    new_entries = []
+    for s in all_streams:
+        matched = False
+        if match_by_tvg_id and channel_tvg_id:
+            if s.get('tvg_id') == channel_tvg_id:
+                matched = True
+        if not matched and compiled_regex:
+            if compiled_regex.search((s.get('name') or '')[:1000]):
+                matched = True
+        if not matched:
+            continue
+
+        content_id = normalize_content_id(s.get('url'))
+        if not content_id or content_id in existing_content_ids:
+            continue
+
+        try:
+            payload = {
+                'content_id': content_id,
+                'stream_name': s.get('name') or channel_name,
+                'interval_s': float(interval_s),
+                'run_seconds': int(run_seconds),
+                'per_sample_timeout_s': float(per_sample_timeout_s),
+            }
+            started = client.start_session(payload)
+            monitor_id = started.get('monitor_id') if isinstance(started, dict) else None
+            if not monitor_id:
+                continue
+            new_entries.append({
+                'stream_id': s.get('id'),
+                'stream_name': s.get('name'),
+                'content_id': content_id,
+                'monitor_id': monitor_id,
+                'ffprobe_stats': extract_stream_stats(s),
+            })
+            existing_content_ids.add(content_id)
+            logger.info(
+                f"Ace session {raw_session.get('session_id')}: discovered new stream "
+                f"{s.get('name')} ({content_id})"
+            )
+        except Exception as exc:
+            logger.warning(f"Ace refresh: failed to start monitor for {content_id}: {exc}")
+
+    if new_entries:
+        raw_session.setdefault('entries', []).extend(new_entries)
+        return True
+    return False
+
+
 def create_acestream_channel_session_impl(
-    channel_id, 
-    interval_s=1.0, 
-    run_seconds=0, 
-    per_sample_timeout_s=1.0, 
+    channel_id,
+    interval_s=1.0,
+    run_seconds=0,
+    per_sample_timeout_s=1.0,
     engine_container_id=None,
     epg_event_title=None,
     epg_event_description=None,
     epg_event_start=None,
     epg_event_end=None,
-    epg_event_id=None
+    epg_event_id=None,
+    regex_filter='',
+    match_by_tvg_id=False,
 ):
-    """Core logic to create and start an AceStream channel session."""
+    """Core logic to create and start an AceStream channel session.
+
+    Stream discovery mirrors standard sessions: regex / TVG-ID filter applied
+    over the full UDI stream list so new streams are found automatically.
+    """
     client, error_response = _acestream_client_or_error()
     if error_response:
-        # error_response is (jsonify(...), status_code). We want to just return dict and code.
         return {'error': 'AceStream backend orchestrator is not configured.'}, 503
 
     try:
         udi = get_udi_manager()
+
+        # Always refresh this channel to get up-to-date metadata
+        udi.refresh_channel_by_id(int(channel_id))
         channel = udi.get_channel_by_id(int(channel_id))
         if not channel:
             return {'error': 'Channel not found'}, 404
 
+        channel_name = channel.get('name') or f'Channel {channel_id}'
+        channel_tvg_id = channel.get('tvg_id')
+        logo_id = channel.get('logo_id')
+        channel_logo_url = f"/api/channels/logos/{logo_id}/cache" if logo_id else channel.get('logo_url')
+
+        # ── Stream discovery (same logic as StreamSessionManager._discover_streams) ──
+        resolved_regex = (regex_filter or '').strip()
+
+        compiled_regex = None
+        if resolved_regex:
+            import re as _re
+            try:
+                pattern = resolved_regex.replace('CHANNEL_NAME', _re.escape(channel_name))
+                # Convert literal spaces to flexible whitespace (mirrors _WHITESPACE_PATTERN)
+                pattern = _re.sub(r'(?<!\\) +', r'\\s+', pattern)
+                compiled_regex = _re.compile(pattern, _re.IGNORECASE)
+            except _re.error as exc:
+                logger.error(f"Invalid regex_filter for AceStream session: {exc}")
+                return {'error': f'Invalid regex_filter: {exc}'}, 400
+
+        all_streams = udi.get_streams() or []
+        candidate_stream_ids = []
+        for s in all_streams:
+            matched = False
+            if match_by_tvg_id and channel_tvg_id:
+                if s.get('tvg_id') == channel_tvg_id:
+                    matched = True
+            if not matched and compiled_regex:
+                stream_name = (s.get('name') or '')[:1000]
+                if compiled_regex.search(stream_name):
+                    matched = True
+            if matched:
+                candidate_stream_ids.append(s.get('id'))
+
+        # Fallback: if no filter specified at all, use channel's pre-assigned streams
+        if not candidate_stream_ids and not resolved_regex and not (match_by_tvg_id and channel_tvg_id):
+            candidate_stream_ids = channel.get('streams', [])
+
         entries = []
         seen_content_ids = set()
-        for stream_id in channel.get('streams', []):
-            stream = udi.get_stream_by_id(int(stream_id))
+        for stream_id in candidate_stream_ids:
+            stream = udi.get_stream_by_id(int(stream_id)) if stream_id else None
             if not stream:
                 continue
             content_id = normalize_content_id(stream.get('url'))
@@ -5514,7 +5784,7 @@ def create_acestream_channel_session_impl(
 
             payload = {
                 'content_id': content_id,
-                'stream_name': stream.get('name') or channel.get('name'),
+                'stream_name': stream.get('name') or channel_name,
                 'interval_s': float(interval_s),
                 'run_seconds': int(run_seconds),
                 'per_sample_timeout_s': float(per_sample_timeout_s),
@@ -5533,15 +5803,18 @@ def create_acestream_channel_session_impl(
             })
 
         if not entries:
-            return {'error': 'No AceStream-compatible streams found in channel'}, 400
+            return {'error': 'No AceStream-compatible streams found matching the discovery criteria'}, 400
 
         session_id = f"ace_channel_{int(channel_id)}_{int(time.time())}"
         store = _ace_channel_sessions_store()
         store[session_id] = {
             'session_id': session_id,
             'channel_id': int(channel_id),
-            'channel_name': channel.get('name'),
-            'channel_logo_url': channel.get('logo_url'),
+            'channel_name': channel_name,
+            'channel_logo_url': channel_logo_url,
+            'channel_tvg_id': channel_tvg_id,
+            'regex_filter': resolved_regex,
+            'match_by_tvg_id': bool(match_by_tvg_id),
             'epg_event_title': epg_event_title,
             'epg_event_description': epg_event_description,
             'epg_event_start': epg_event_start,
@@ -5552,6 +5825,11 @@ def create_acestream_channel_session_impl(
         }
         _save_ace_channel_sessions_store(store)
 
+        logger.info(
+            f"Created AceStream session {session_id} for channel {channel_id} "
+            f"with {len(entries)} stream(s) "
+            f"(filter: '{resolved_regex or 'channel-streams-fallback'}', tvg_id: {match_by_tvg_id})"
+        )
         return {'session_id': session_id, 'message': 'AceStream channel session created', 'monitor_count': len(entries)}, 201
     except requests.RequestException as exc:
         status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
@@ -5585,7 +5863,9 @@ def create_acestream_channel_session():
         epg_event_description=data.get('epg_event_description'),
         epg_event_start=data.get('epg_event_start'),
         epg_event_end=data.get('epg_event_end'),
-        epg_event_id=data.get('epg_event_id')
+        epg_event_id=data.get('epg_event_id'),
+        regex_filter=data.get('regex_filter', ''),
+        match_by_tvg_id=bool(data.get('match_by_tvg_id', False)),
     )
     return jsonify(result), status_code
 
@@ -5622,6 +5902,8 @@ def create_acestream_group_sessions():
                 'epg_event_start': data.get('epg_event_start'),
                 'epg_event_end': data.get('epg_event_end'),
                 'epg_event_id': data.get('epg_event_id'),
+                'regex_filter': data.get('regex_filter', ''),
+                'match_by_tvg_id': bool(data.get('match_by_tvg_id', False)),
             }
 
             with app.test_request_context('/api/acestream-channel-sessions', method='POST', json=payload):
@@ -5670,10 +5952,16 @@ def get_acestream_channel_session(session_id):
         monitor_items = monitor_payload.get('items', []) if isinstance(monitor_payload, dict) else []
         monitors_by_id = {item.get('monitor_id'): item for item in monitor_items if isinstance(item, dict) and item.get('monitor_id')}
         _annotate_monitors_with_playback(client, monitors_by_id)
+
+        store_changed = False
         if _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings):
-            store[session_id] = raw
-            _save_ace_channel_sessions_store(store)
+            store_changed = True
         if _save_ace_session_telemetry_snapshot(raw, monitors_by_id):
+            store_changed = True
+        if _check_ace_session_epg_auto_stop(raw, client):
+            store_changed = True
+        _apply_ace_dispatcharr_sync(raw)
+        if store_changed:
             store[session_id] = raw
             _save_ace_channel_sessions_store(store)
 

@@ -90,7 +90,17 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
 
   useEffect(() => {
     loadSession(true)
-    const timer = setInterval(() => loadSession(false), 1000)
+    const timer = setInterval(() => {
+      setSession(current => {
+        // Stop polling once the session is no longer active (mirrors standard view behaviour)
+        if (current && !current.is_active) {
+          clearInterval(timer)
+          return current
+        }
+        loadSession(false)
+        return current
+      })
+    }, 1000)
     return () => clearInterval(timer)
   }, [sessionId])
 
@@ -175,6 +185,10 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const totalSamples = streamRows.reduce((acc, row) => acc + Number(row.sample_count || 0), 0)
   const playedCount = streamRows.filter((r) => r.currently_played).length
   const isActive = streamRows.some((r) => ACTIVE_STATUSES.has((r.status || '').toLowerCase()))
+  const activeRows = streamRows.filter((r) => (r.management_state || '').toLowerCase() !== 'quarantined')
+  const avgScore = activeRows.length > 0
+    ? Math.round(activeRows.reduce((sum, r) => sum + Number(r.management_score || 0), 0) / activeRows.length)
+    : 0
 
   const stableStreams = streamRows
     .filter((r) => (r.management_state || '').toLowerCase() === 'stable')
@@ -275,10 +289,11 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
       )}
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-5">
         <StatsCard title="Total Streams" value={formatNumber(streamRows.length)} icon={Activity} />
         <StatsCard title="Active Streams" value={runningCount} icon={Activity} variant="success" />
         <StatsCard title="Quarantined" value={quarantinedCount} icon={ShieldAlert} variant="warning" />
+        <StatsCard title="Avg Score" value={`${avgScore}%`} icon={Activity} />
         <StatsCard title="Played Streams" value={formatNumber(playedCount)} icon={Activity} />
       </div>
 
