@@ -9,6 +9,15 @@ import { aceStreamMonitoringAPI } from '@/services/aceStreamMonitoring'
 
 const ACTIVE_STATUSES = new Set(['starting', 'running', 'stuck', 'reconnecting'])
 
+function getEffectiveStatus(monitor) {
+  const raw = (monitor?.status || '').toLowerCase()
+  const moving = monitor?.livepos_movement?.is_moving
+  if (raw === 'stuck' && moving) {
+    return 'running'
+  }
+  return raw || 'unknown'
+}
+
 function getStatusVariant(status) {
   const value = (status || '').toLowerCase()
   if (value === 'dead') return 'destructive'
@@ -19,6 +28,10 @@ function getStatusVariant(status) {
 
 function formatTime(value) {
   if (!value) return '-'
+  if (typeof value === 'number') {
+    const ms = value > 1e12 ? value : value * 1000
+    return new Date(ms).toLocaleString()
+  }
   const parsed = Date.parse(value)
   if (Number.isNaN(parsed)) return value
   return new Date(parsed).toLocaleString()
@@ -29,7 +42,7 @@ function formatNumber(value) {
   return Number(value).toLocaleString()
 }
 
-function AceSessionMonitorView({ monitorId, onBack, onStop, onDelete }) {
+function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState(null)
@@ -37,7 +50,7 @@ function AceSessionMonitorView({ monitorId, onBack, onStop, onDelete }) {
   const loadSession = async (showLoading = false) => {
     try {
       if (showLoading) setLoading(true)
-      const response = await aceStreamMonitoringAPI.getSession(monitorId, true)
+      const response = await aceStreamMonitoringAPI.getChannelSession(sessionId)
       setSession(response.data)
     } catch (err) {
       console.error('Failed to load AceStream monitor session', err)
@@ -55,15 +68,49 @@ function AceSessionMonitorView({ monitorId, onBack, onStop, onDelete }) {
     loadSession(true)
     const timer = setInterval(() => loadSession(false), 1000)
     return () => clearInterval(timer)
-  }, [monitorId])
+  }, [sessionId])
 
-  const latestStatusRows = useMemo(() => {
-    if (!session?.latest_status || typeof session.latest_status !== 'object') return []
-    return Object.entries(session.latest_status)
+  const streamRows = useMemo(() => {
+    const entries = Array.isArray(session?.entries) ? session.entries : []
+    return entries.map((entry) => {
+      const monitor = entry.monitor || {}
+      const latest = monitor.latest_status || {}
+      const movement = monitor.livepos_movement || {}
+      const effectiveStatus = getEffectiveStatus(monitor)
+      return {
+        ...entry,
+        status: monitor.status || 'unknown',
+        effective_status: effectiveStatus,
+        sample_count: monitor.sample_count || 0,
+        currently_played: !!monitor.currently_played,
+        monitor_id: monitor.monitor_id || entry.monitor_id,
+        started_at: monitor.started_at,
+        last_collected_at: monitor.last_collected_at,
+        speed_down: latest.speed_down,
+        speed_up: latest.speed_up,
+        peers: latest.peers,
+        progress: latest.progress,
+        direction: movement.direction || 'unknown',
+        is_moving: !!movement.is_moving,
+        pos_delta: movement.pos_delta,
+        last_ts_delta: movement.last_ts_delta,
+        downloaded_delta: movement.downloaded_delta,
+        movement_events: movement.movement_events,
+        infohash: monitor?.session?.resolved_infohash,
+        engine_host: monitor?.engine?.host,
+        engine_port: monitor?.engine?.port,
+        last_error: monitor.last_error || null,
+        latest_status: latest,
+      }
+    })
   }, [session])
 
-  const recentRows = Array.isArray(session?.recent_status) ? session.recent_status : []
-  const isActive = ACTIVE_STATUSES.has((session?.status || '').toLowerCase())
+  const runningCount = streamRows.filter((r) => (r.effective_status || '').toLowerCase() === 'running').length
+  const stuckCount = streamRows.filter((r) => (r.effective_status || '').toLowerCase() === 'stuck').length
+  const deadCount = streamRows.filter((r) => (r.effective_status || '').toLowerCase() === 'dead').length
+  const totalSamples = streamRows.reduce((acc, row) => acc + Number(row.sample_count || 0), 0)
+  const playedCount = streamRows.filter((r) => r.currently_played).length
+  const isActive = streamRows.some((r) => ACTIVE_STATUSES.has((r.status || '').toLowerCase()))
 
   if (loading || !session) {
     return (
@@ -82,14 +129,14 @@ function AceSessionMonitorView({ monitorId, onBack, onStop, onDelete }) {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div className="min-w-0">
-            <h1 className="text-3xl font-bold tracking-tight truncate">{session.stream_name || session.content_id}</h1>
-            <p className="text-muted-foreground mt-1 truncate">AceStream Session Monitor</p>
+            <h1 className="text-3xl font-bold tracking-tight truncate">{session.channel_name || `Channel ${session.channel_id}`}</h1>
+            <p className="text-muted-foreground mt-1 truncate">AceStream Channel Session Monitor</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <Badge variant="outline">AceStream</Badge>
-          <Badge variant={getStatusVariant(session.status)}>{session.status || 'unknown'}</Badge>
+          <Badge variant={isActive ? 'default' : 'secondary'}>{isActive ? 'Active' : 'Inactive'}</Badge>
           {isActive && (
             <Button variant="outline" onClick={onStop}>
               <Square className="h-4 w-4 mr-2" />
@@ -103,75 +150,81 @@ function AceSessionMonitorView({ monitorId, onBack, onStop, onDelete }) {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatsCard title="Samples" value={formatNumber(session.sample_count)} icon={Activity} />
-        <StatsCard title="Reconnect Attempts" value={formatNumber(session.reconnect_attempts)} icon={Radio} />
-        <StatsCard title="Last Error" value={session.last_error || '-'} icon={AlertCircle} />
-        <StatsCard title="Currently Played" value={session.currently_played ? 'Yes' : 'No'} icon={Activity} />
+      <div className="grid gap-4 md:grid-cols-5">
+        <StatsCard title="Streams" value={formatNumber(streamRows.length)} icon={Activity} />
+        <StatsCard title="Running / Stuck / Dead" value={`${runningCount} / ${stuckCount} / ${deadCount}`} icon={Radio} />
+        <StatsCard title="Played Streams" value={formatNumber(playedCount)} icon={Activity} />
+        <StatsCard title="Total Samples" value={formatNumber(totalSamples)} icon={Activity} />
+        <StatsCard title="Channel ID" value={formatNumber(session.channel_id)} icon={AlertCircle} />
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Lifecycle</CardTitle>
-          <CardDescription>AceStream monitor lifecycle and engine/session binding</CardDescription>
+          <CardTitle>Session Lifecycle</CardTitle>
+          <CardDescription>Channel-level AceStream session metadata</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <InfoItem label="Monitor ID" value={session.monitor_id} />
-            <InfoItem label="Content ID" value={session.content_id} />
-            <InfoItem label="Stream Name" value={session.stream_name || '-'} />
-            <InfoItem label="Started" value={formatTime(session.started_at)} />
-            <InfoItem label="Last Collected" value={formatTime(session.last_collected_at)} />
-            <InfoItem label="Ended" value={formatTime(session.ended_at)} />
-            <InfoItem label="Dead Reason" value={session.dead_reason || '-'} />
-            <InfoItem label="Interval (s)" value={formatNumber(session.interval_s)} />
-            <InfoItem label="Run Seconds" value={formatNumber(session.run_seconds)} />
+            <InfoItem label="Session ID" value={session.session_id} />
+            <InfoItem label="Channel" value={session.channel_name || '-'} />
+            <InfoItem label="Created" value={formatTime(session.created_at)} />
+            <InfoItem label="Monitor Count" value={formatNumber(session.monitor_count)} />
+            <InfoItem label="Total Streams" value={formatNumber(session.stream_count)} />
+            <InfoItem label="Total Samples" value={formatNumber(session.sample_count)} />
           </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Movement</CardTitle>
-          <CardDescription>Live position movement analysis</CardDescription>
+          <CardTitle>Monitored Streams</CardTitle>
+          <CardDescription>Per-stream orchestrator telemetry for this channel session</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
-            <InfoItem label="Is Moving" value={session.livepos_movement?.is_moving ? 'Yes' : 'No'} />
-            <InfoItem label="Direction" value={session.livepos_movement?.direction || 'unknown'} />
-            <InfoItem label="Sample Points" value={formatNumber(session.livepos_movement?.sample_points)} />
-            <InfoItem label="Movement Events" value={formatNumber(session.livepos_movement?.movement_events)} />
-            <InfoItem label="Current Pos" value={formatNumber(session.livepos_movement?.current_pos)} />
-            <InfoItem label="Current Last TS" value={formatNumber(session.livepos_movement?.current_last_ts)} />
-            <InfoItem label="Pos Delta" value={formatNumber(session.livepos_movement?.pos_delta)} />
-            <InfoItem label="Last TS Delta" value={formatNumber(session.livepos_movement?.last_ts_delta)} />
-            <InfoItem label="Downloaded Delta" value={formatNumber(session.livepos_movement?.downloaded_delta)} />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Latest Telemetry</CardTitle>
-          <CardDescription>Most recent sample from latest_status</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {latestStatusRows.length === 0 ? (
-            <p className="text-muted-foreground">No latest telemetry available.</p>
+          {streamRows.length === 0 ? (
+            <p className="text-muted-foreground">No stream monitors attached.</p>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Field</TableHead>
-                    <TableHead>Value</TableHead>
+                    <TableHead>Stream</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Samples</TableHead>
+                    <TableHead>Played</TableHead>
+                    <TableHead>Engine</TableHead>
+                    <TableHead>Speed Down</TableHead>
+                    <TableHead>Speed Up</TableHead>
+                    <TableHead>Peers</TableHead>
+                    <TableHead>Movement</TableHead>
+                    <TableHead>Movement Delta</TableHead>
+                    <TableHead>Infohash</TableHead>
+                    <TableHead>Last Collected</TableHead>
+                    <TableHead>Last Error</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {latestStatusRows.map(([key, value]) => (
-                    <TableRow key={key}>
-                      <TableCell className="font-medium">{key}</TableCell>
-                      <TableCell>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</TableCell>
+                  {streamRows.map((row) => (
+                    <TableRow key={row.monitor_id}>
+                      <TableCell className="font-medium">{row.stream_name || row.content_id}</TableCell>
+                      <TableCell>
+                        <Badge variant={getStatusVariant(row.effective_status)}>
+                          {row.status === row.effective_status ? row.status : `${row.status} -> ${row.effective_status}`}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{formatNumber(row.sample_count)}</TableCell>
+                      <TableCell>{row.currently_played ? 'Yes' : 'No'}</TableCell>
+                      <TableCell>{row.engine_host ? `${row.engine_host}:${row.engine_port || '-'}` : '-'}</TableCell>
+                      <TableCell>{formatNumber(row.speed_down)}</TableCell>
+                      <TableCell>{formatNumber(row.speed_up)}</TableCell>
+                      <TableCell>{formatNumber(row.peers)}</TableCell>
+                      <TableCell>{row.is_moving ? `${row.direction} (moving)` : row.direction}</TableCell>
+                      <TableCell>
+                        pos {formatNumber(row.pos_delta)} / ts {formatNumber(row.last_ts_delta)} / dl {formatNumber(row.downloaded_delta)}
+                      </TableCell>
+                      <TableCell>{row.infohash || '-'}</TableCell>
+                      <TableCell>{formatTime(row.last_collected_at)}</TableCell>
+                      <TableCell>{row.last_error || '-'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -181,19 +234,6 @@ function AceSessionMonitorView({ monitorId, onBack, onStop, onDelete }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Telemetry</CardTitle>
-          <CardDescription>Short recent history from recent_status</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {recentRows.length === 0 ? (
-            <p className="text-muted-foreground">No recent telemetry available.</p>
-          ) : (
-            <pre className="text-xs bg-muted rounded-md p-3 overflow-auto">{JSON.stringify(recentRows, null, 2)}</pre>
-          )}
-        </CardContent>
-      </Card>
     </div>
   )
 }

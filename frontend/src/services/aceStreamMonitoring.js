@@ -1,6 +1,21 @@
 import { api } from './api'
 
 export const aceStreamMonitoringAPI = {
+  createChannelSession: (payload) => api.post('/acestream-channel-sessions', payload),
+
+  createGroupChannelSessions: (payload) => api.post('/acestream-channel-sessions/group/start', payload),
+
+  getChannelSessions: (status = null) => {
+    const params = status ? { status } : {}
+    return api.get('/acestream-channel-sessions', { params })
+  },
+
+  getChannelSession: (sessionId) => api.get(`/acestream-channel-sessions/${sessionId}`),
+
+  stopChannelSession: (sessionId) => api.post(`/acestream-channel-sessions/${sessionId}/stop`),
+
+  deleteChannelSession: (sessionId) => api.delete(`/acestream-channel-sessions/${sessionId}`),
+
   startSession: (payload) => api.post('/acestream-monitor-sessions/start', payload),
 
   getSessions: (includeCorrelation = true) =>

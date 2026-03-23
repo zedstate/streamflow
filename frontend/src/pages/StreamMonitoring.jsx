@@ -13,35 +13,10 @@ import CreateSessionDialog from '@/components/stream-monitoring/CreateSessionDia
 import SessionMonitorView from '@/components/stream-monitoring/SessionMonitorView';
 import AceSessionMonitorView from '@/components/stream-monitoring/AceSessionMonitorView';
 
-const ACESTREAM_ACTIVE_STATUSES = new Set(['starting', 'running', 'stuck', 'reconnecting']);
-
-function toUnixTimestamp(value) {
-  if (!value) return Math.floor(Date.now() / 1000);
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return Math.floor(Date.now() / 1000);
-  return Math.floor(parsed / 1000);
-}
-
 function normalizeAceSession(item) {
-  const isActive = ACESTREAM_ACTIVE_STATUSES.has((item.status || '').toLowerCase());
   return {
-    session_id: `ace:${item.monitor_id}`,
+    ...item,
     source_type: 'acestream',
-    monitor_id: item.monitor_id,
-    channel_name: item.stream_name || item.content_id,
-    channel_logo_url: null,
-    epg_event_title: null,
-    created_at: toUnixTimestamp(item.started_at || item.last_collected_at),
-    is_active: isActive,
-    stable_count: item.status === 'running' ? 1 : 0,
-    review_count: item.status === 'stuck' ? 1 : 0,
-    quarantined_count: item.status === 'dead' ? 1 : 0,
-    stream_count: 1,
-    status: item.status,
-    sample_count: item.sample_count || 0,
-    currently_played: !!item.currently_played,
-    content_id: item.content_id,
-    stream_name: item.stream_name,
   };
 }
 
@@ -81,7 +56,7 @@ function StreamMonitoring() {
       const [allResult, activeResult, aceResult] = await Promise.allSettled([
         streamSessionsAPI.getSessions(),
         streamSessionsAPI.getSessions('active'),
-        aceStreamMonitoringAPI.getSessions(true),
+        aceStreamMonitoringAPI.getChannelSessions(),
       ]);
 
       if (allResult.status !== 'fulfilled' || activeResult.status !== 'fulfilled') {
@@ -90,7 +65,7 @@ function StreamMonitoring() {
 
       const standardAll = allResult.value.data || [];
       const standardActive = activeResult.value.data || [];
-      const aceItems = aceResult.status === 'fulfilled' ? (aceResult.value?.data?.items || []) : [];
+      const aceItems = aceResult.status === 'fulfilled' ? (aceResult.value?.data || []) : [];
       const aceSessions = aceItems.map(normalizeAceSession);
       const aceActive = aceSessions.filter((s) => s.is_active);
 
@@ -114,7 +89,7 @@ function StreamMonitoring() {
     if (session.source_type === 'acestream') {
       toast({
         title: 'Info',
-        description: 'Use AceStream start workflow to create a new monitoring session for content IDs.',
+        description: 'AceStream sessions are created from channels or groups in the creation dialog.',
       });
       return;
     }
@@ -139,7 +114,7 @@ function StreamMonitoring() {
   const handleStopSession = async (session) => {
     try {
       if (session.source_type === 'acestream') {
-        await aceStreamMonitoringAPI.stopSession(session.monitor_id);
+        await aceStreamMonitoringAPI.stopChannelSession(session.session_id);
       } else {
         await streamSessionsAPI.stopSession(session.session_id);
       }
@@ -168,7 +143,7 @@ function StreamMonitoring() {
 
     try {
       if (sessionToDelete.source_type === 'acestream') {
-        await aceStreamMonitoringAPI.deleteEntry(sessionToDelete.monitor_id);
+        await aceStreamMonitoringAPI.deleteChannelSession(sessionToDelete.session_id);
       } else {
         await streamSessionsAPI.deleteSession(sessionToDelete.session_id);
       }
@@ -205,19 +180,32 @@ function StreamMonitoring() {
   const handleCreateSession = async (sessionData) => {
     try {
       if (sessionData.session_type === 'acestream') {
-        await aceStreamMonitoringAPI.startSession({
-          content_id: sessionData.content_id,
-          stream_name: sessionData.stream_name,
-          interval_s: sessionData.interval_s,
-          run_seconds: sessionData.run_seconds,
-          per_sample_timeout_s: sessionData.per_sample_timeout_s,
-          engine_container_id: sessionData.engine_container_id || null,
-        });
+        if (sessionData.group_id) {
+          const response = await aceStreamMonitoringAPI.createGroupChannelSessions({
+            group_id: sessionData.group_id,
+            interval_s: sessionData.interval_s,
+            run_seconds: sessionData.run_seconds,
+            per_sample_timeout_s: sessionData.per_sample_timeout_s,
+            engine_container_id: sessionData.engine_container_id || null,
+          })
+          toast({
+            title: 'Success',
+            description: response.data.message || 'AceStream group sessions started successfully'
+          })
+        } else {
+          await aceStreamMonitoringAPI.createChannelSession({
+            channel_id: sessionData.channel_id,
+            interval_s: sessionData.interval_s,
+            run_seconds: sessionData.run_seconds,
+            per_sample_timeout_s: sessionData.per_sample_timeout_s,
+            engine_container_id: sessionData.engine_container_id || null,
+          })
+          toast({
+            title: 'Success',
+            description: 'AceStream channel session started successfully'
+          })
+        }
 
-        toast({
-          title: 'Success',
-          description: 'AceStream session started successfully'
-        });
       } else if (sessionData.group_id) {
         // Group Monitoring
         const response = await streamSessionsAPI.createGroupSession(sessionData);
@@ -298,13 +286,13 @@ function StreamMonitoring() {
     try {
       const selected = sessions.filter((s) => selectedSessions.has(s.session_id));
       const standardIds = selected.filter((s) => s.source_type !== 'acestream').map((s) => s.session_id);
-      const aceIds = selected.filter((s) => s.source_type === 'acestream').map((s) => s.monitor_id);
+      const aceIds = selected.filter((s) => s.source_type === 'acestream').map((s) => s.session_id);
 
       if (standardIds.length > 0) {
         await streamSessionsAPI.batchStopSessions(standardIds);
       }
       if (aceIds.length > 0) {
-        await Promise.all(aceIds.map((id) => aceStreamMonitoringAPI.stopSession(id)));
+        await Promise.all(aceIds.map((id) => aceStreamMonitoringAPI.stopChannelSession(id)));
       }
 
       toast({
@@ -333,13 +321,13 @@ function StreamMonitoring() {
     try {
       const selected = sessions.filter((s) => selectedSessions.has(s.session_id));
       const standardIds = selected.filter((s) => s.source_type !== 'acestream').map((s) => s.session_id);
-      const aceIds = selected.filter((s) => s.source_type === 'acestream').map((s) => s.monitor_id);
+      const aceIds = selected.filter((s) => s.source_type === 'acestream').map((s) => s.session_id);
 
       if (standardIds.length > 0) {
         await streamSessionsAPI.batchDeleteSessions(standardIds);
       }
       if (aceIds.length > 0) {
-        await Promise.all(aceIds.map((id) => aceStreamMonitoringAPI.deleteEntry(id)));
+        await Promise.all(aceIds.map((id) => aceStreamMonitoringAPI.deleteChannelSession(id)));
       }
 
       toast({
@@ -364,7 +352,7 @@ function StreamMonitoring() {
       {selectedSession ? (
         selectedSession?.source_type === 'acestream' ? (
           <AceSessionMonitorView
-            monitorId={selectedSession.monitor_id}
+            sessionId={selectedSession.session_id}
             onBack={handleBackToList}
             onStop={() => handleStopSession(selectedSession)}
             onDelete={() => handleDeleteSession(selectedSession)}
@@ -699,10 +687,10 @@ function SessionCard({ session, onView, onStart, onStop, onDelete, selected, onT
 
           {session.source_type === 'acestream' && (
             <div className="flex gap-2 flex-wrap">
-              <Badge variant="outline">status: {session.status || 'unknown'}</Badge>
+              <Badge variant="outline">monitors: {session.monitor_count || 0}</Badge>
               <Badge variant="outline">samples: {session.sample_count || 0}</Badge>
-              <Badge variant={session.currently_played ? 'default' : 'secondary'}>
-                {session.currently_played ? 'Played' : 'Not Played'}
+              <Badge variant={(session.played_count || 0) > 0 ? 'default' : 'secondary'}>
+                played: {session.played_count || 0}
               </Badge>
             </div>
           )}
