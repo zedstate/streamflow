@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Square, Trash2, Activity, AlertCircle, Radio, ShieldAlert, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Square, Trash2, Activity, Radio, ShieldAlert, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
 import { aceStreamMonitoringAPI } from '@/services/aceStreamMonitoring'
@@ -38,6 +39,11 @@ function formatTime(value) {
 function formatNumber(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
   return Number(value).toLocaleString()
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
+  return `${Math.round(Number(value) * 100)}%`
 }
 
 function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
@@ -99,14 +105,24 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
       const monitor = entry.monitor || {}
       const latest = monitor.latest_status || {}
       const movement = monitor.livepos_movement || {}
+      const ffprobe = entry.ffprobe_stats || {}
       return {
         ...entry,
         status: monitor.status || 'unknown',
         management_state: entry.management_state || 'review',
         management_score: Number(entry.management_score || 0),
         management_reason: entry.management_reason || '-',
+        management_plateau_ratio: Number(entry.management_plateau_ratio || 0),
+        management_ffprobe_rating: entry.management_ffprobe_rating || 'unknown',
+        management_ffprobe_bonus: Number(entry.management_ffprobe_bonus || 0),
         management_since: entry.management_since,
         manual_quarantine: !!entry.manual_quarantine,
+        ffprobe_stats: ffprobe,
+        resolution: ffprobe.resolution || '-',
+        video_codec: ffprobe.video_codec || '-',
+        audio_codec: ffprobe.audio_codec || '-',
+        hdr_format: ffprobe.hdr_format || '-',
+        fps: ffprobe.fps,
         sample_count: monitor.sample_count || 0,
         currently_played: !!monitor.currently_played,
         monitor_id: monitor.monitor_id || entry.monitor_id,
@@ -140,6 +156,16 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const totalSamples = streamRows.reduce((acc, row) => acc + Number(row.sample_count || 0), 0)
   const playedCount = streamRows.filter((r) => r.currently_played).length
   const isActive = streamRows.some((r) => ACTIVE_STATUSES.has((r.status || '').toLowerCase()))
+
+  const stableStreams = streamRows
+    .filter((r) => (r.management_state || '').toLowerCase() === 'stable')
+    .sort((a, b) => b.management_score - a.management_score)
+  const reviewStreams = streamRows
+    .filter((r) => (r.management_state || '').toLowerCase() === 'review')
+    .sort((a, b) => b.management_score - a.management_score)
+  const quarantinedStreams = streamRows
+    .filter((r) => (r.management_state || '').toLowerCase() === 'quarantined')
+    .sort((a, b) => b.management_score - a.management_score)
 
   if (loading || !session) {
     return (
@@ -209,92 +235,156 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
       <Card>
         <CardHeader>
           <CardTitle>Monitored Streams</CardTitle>
-          <CardDescription>Per-stream orchestrator telemetry for this channel session</CardDescription>
+          <CardDescription>Management structure aligned with Standard Monitoring sessions</CardDescription>
         </CardHeader>
         <CardContent>
           {streamRows.length === 0 ? (
             <p className="text-muted-foreground">No stream monitors attached.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Stream</TableHead>
-                    <TableHead>Management</TableHead>
-                    <TableHead>Score</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>Raw Status</TableHead>
-                    <TableHead>Samples</TableHead>
-                    <TableHead>Played</TableHead>
-                    <TableHead>Engine</TableHead>
-                    <TableHead>Speed Down</TableHead>
-                    <TableHead>Speed Up</TableHead>
-                    <TableHead>Peers</TableHead>
-                    <TableHead>Movement</TableHead>
-                    <TableHead>Movement Delta</TableHead>
-                    <TableHead>Infohash</TableHead>
-                    <TableHead>Last Collected</TableHead>
-                    <TableHead>Last Error</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {streamRows.map((row) => (
-                    <TableRow key={row.monitor_id}>
-                      <TableCell className="font-medium">{row.stream_name || row.content_id}</TableCell>
-                      <TableCell>
-                        <Badge variant={getManagementVariant(row.management_state)}>{row.management_state}</Badge>
-                      </TableCell>
-                      <TableCell>{Math.round(row.management_score)}</TableCell>
-                      <TableCell>{row.management_reason || '-'}</TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusVariant(row.status)}>{row.status}</Badge>
-                      </TableCell>
-                      <TableCell>{formatNumber(row.sample_count)}</TableCell>
-                      <TableCell>{row.currently_played ? 'Yes' : 'No'}</TableCell>
-                      <TableCell>{row.engine_host ? `${row.engine_host}:${row.engine_port || '-'}` : '-'}</TableCell>
-                      <TableCell>{formatNumber(row.speed_down)}</TableCell>
-                      <TableCell>{formatNumber(row.speed_up)}</TableCell>
-                      <TableCell>{formatNumber(row.peers)}</TableCell>
-                      <TableCell>{row.is_moving ? `${row.direction} (moving)` : row.direction}</TableCell>
-                      <TableCell>
-                        pos {formatNumber(row.pos_delta)} / ts {formatNumber(row.last_ts_delta)} / dl {formatNumber(row.downloaded_delta)}
-                      </TableCell>
-                      <TableCell>{row.infohash || '-'}</TableCell>
-                      <TableCell>{formatTime(row.last_collected_at)}</TableCell>
-                      <TableCell>{row.last_error || '-'}</TableCell>
-                      <TableCell>
-                        {(row.management_state || '').toLowerCase() === 'quarantined' ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => updateManagementState(row.stream_id, 'revive')}
-                            disabled={actionStreamId === row.stream_id}
-                          >
-                            <RotateCcw className="h-3 w-3 mr-1" />
-                            Revive
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => updateManagementState(row.stream_id, 'quarantine')}
-                            disabled={actionStreamId === row.stream_id}
-                          >
-                            <ShieldAlert className="h-3 w-3 mr-1" />
-                            Quarantine
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <Tabs defaultValue="stable" className="w-full">
+              <TabsList>
+                <TabsTrigger value="stable">Stable ({stableStreams.length})</TabsTrigger>
+                <TabsTrigger value="review">Under Review ({reviewStreams.length})</TabsTrigger>
+                <TabsTrigger value="quarantined">Quarantined ({quarantinedStreams.length})</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="stable" className="pt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Stable Streams</CardTitle>
+                    <CardDescription>Streams with consistent behavior and passing management score.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {stableStreams.length === 0 ? (
+                      <p className="text-muted-foreground">No stable streams</p>
+                    ) : (
+                      <AceStreamsTable rows={stableStreams} actionStreamId={actionStreamId} onAction={updateManagementState} />
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="review" className="pt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Under Review</CardTitle>
+                    <CardDescription>
+                      Streams in warm-up or with degraded continuity. last_ts plateaus reduce score.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {reviewStreams.length === 0 ? (
+                      <p className="text-muted-foreground">No streams under review</p>
+                    ) : (
+                      <AceStreamsTable rows={reviewStreams} actionStreamId={actionStreamId} onAction={updateManagementState} />
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="quarantined" className="pt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Quarantined Streams</CardTitle>
+                    <CardDescription>
+                      Dead or stuck streams remain monitored for recovery and can be manually revived.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {quarantinedStreams.length === 0 ? (
+                      <p className="text-muted-foreground">No quarantined streams</p>
+                    ) : (
+                      <AceStreamsTable rows={quarantinedStreams} actionStreamId={actionStreamId} onAction={updateManagementState} />
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
           )}
         </CardContent>
       </Card>
 
+    </div>
+  )
+}
+
+function AceStreamsTable({ rows, actionStreamId, onAction }) {
+  return (
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Stream</TableHead>
+            <TableHead>State</TableHead>
+            <TableHead>Score</TableHead>
+            <TableHead>Reason</TableHead>
+            <TableHead>Raw Status</TableHead>
+            <TableHead>Plateau</TableHead>
+            <TableHead>FFProbe</TableHead>
+            <TableHead>Samples</TableHead>
+            <TableHead>Played</TableHead>
+            <TableHead>Speed Down</TableHead>
+            <TableHead>Peers</TableHead>
+            <TableHead>Last Collected</TableHead>
+            <TableHead>Action</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.monitor_id}>
+              <TableCell className="font-medium">{row.stream_name || row.content_id}</TableCell>
+              <TableCell>
+                <Badge variant={getManagementVariant(row.management_state)}>{row.management_state}</Badge>
+              </TableCell>
+              <TableCell>{Math.round(row.management_score)}</TableCell>
+              <TableCell>{row.management_reason || '-'}</TableCell>
+              <TableCell>
+                <Badge variant={getStatusVariant(row.status)}>{row.status}</Badge>
+              </TableCell>
+              <TableCell>{formatPercent(row.management_plateau_ratio)}</TableCell>
+              <TableCell>
+                <div className="text-xs leading-5">
+                  <div>{row.resolution}</div>
+                  <div>{row.video_codec}/{row.audio_codec}</div>
+                  <div>{row.hdr_format !== '-' ? row.hdr_format : 'SDR'}</div>
+                  <div>
+                    {row.management_ffprobe_rating} ({row.management_ffprobe_bonus > 0 ? '+' : ''}
+                    {Math.round(row.management_ffprobe_bonus)})
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>{formatNumber(row.sample_count)}</TableCell>
+              <TableCell>{row.currently_played ? 'Yes' : 'No'}</TableCell>
+              <TableCell>{formatNumber(row.speed_down)}</TableCell>
+              <TableCell>{formatNumber(row.peers)}</TableCell>
+              <TableCell>{formatTime(row.last_collected_at)}</TableCell>
+              <TableCell>
+                {(row.management_state || '').toLowerCase() === 'quarantined' ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onAction(row.stream_id, 'revive')}
+                    disabled={actionStreamId === row.stream_id}
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Revive
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onAction(row.stream_id, 'quarantine')}
+                    disabled={actionStreamId === row.stream_id}
+                  >
+                    <ShieldAlert className="h-3 w-3 mr-1" />
+                    Quarantine
+                  </Button>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   )
 }

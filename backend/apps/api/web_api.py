@@ -4891,10 +4891,146 @@ def _clamp_score(value):
     return max(0.0, min(100.0, float(value)))
 
 
-def _compute_ace_management_score(monitor):
-    """Compute an Ace reliability-style score from orchestrator telemetry."""
+def _coerce_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _parse_resolution_pixels(resolution):
+    if not isinstance(resolution, str):
+        return 0
+    match = re.match(r'^(\d{2,5})x(\d{2,5})$', resolution.strip())
+    if not match:
+        return 0
+    return int(match.group(1)) * int(match.group(2))
+
+
+def _score_ffprobe_quality(ffprobe_stats):
+    """Compute quality bonus from cached FFProbe-like stream stats."""
+    if not isinstance(ffprobe_stats, dict):
+        return 0.0, 'unknown'
+
+    bonus = 0.0
+    resolution = ffprobe_stats.get('resolution')
+    pixels = _parse_resolution_pixels(resolution)
+    if pixels >= 1920 * 1080:
+        bonus += 8.0
+    elif pixels >= 1280 * 720:
+        bonus += 5.0
+    elif pixels >= 960 * 540:
+        bonus += 2.0
+    elif pixels > 0:
+        bonus -= 2.0
+
+    video_codec = str(ffprobe_stats.get('video_codec') or '').lower()
+    if video_codec in ('hevc', 'h265', 'av1'):
+        bonus += 3.0
+    elif video_codec in ('h264', 'avc'):
+        bonus += 2.0
+    elif video_codec and video_codec != 'n/a':
+        bonus += 1.0
+
+    audio_codec = str(ffprobe_stats.get('audio_codec') or '').lower()
+    if audio_codec and audio_codec != 'n/a':
+        bonus += 1.0
+
+    fps = _coerce_float(ffprobe_stats.get('fps'))
+    if fps is not None:
+        if fps >= 50.0:
+            bonus += 2.0
+        elif fps >= 23.0:
+            bonus += 1.0
+
+    bitrate_kbps = _coerce_float(ffprobe_stats.get('bitrate_kbps'))
+    if bitrate_kbps is not None:
+        if bitrate_kbps >= 4000.0:
+            bonus += 2.0
+        elif bitrate_kbps >= 1500.0:
+            bonus += 1.0
+
+    if ffprobe_stats.get('hdr_format'):
+        bonus += 2.0
+
+    if bonus >= 14.0:
+        rating = 'excellent'
+    elif bonus >= 9.0:
+        rating = 'good'
+    elif bonus >= 4.0:
+        rating = 'fair'
+    else:
+        rating = 'basic'
+
+    return bonus, rating
+
+
+def _extract_last_ts_values(monitor):
+    values = []
     if not isinstance(monitor, dict):
-        return 25.0
+        return values
+
+    recent_status = monitor.get('recent_status')
+    if isinstance(recent_status, list):
+        for item in recent_status:
+            if not isinstance(item, dict):
+                continue
+            last_ts = _coerce_float(item.get('last_ts'))
+            if last_ts is not None:
+                values.append(last_ts)
+
+    latest = monitor.get('latest_status')
+    if isinstance(latest, dict):
+        latest_last_ts = _coerce_float(latest.get('last_ts'))
+        if latest_last_ts is not None and (not values or values[-1] != latest_last_ts):
+            values.append(latest_last_ts)
+
+    return values
+
+
+def _compute_last_ts_plateau_penalty(monitor):
+    """Penalize frequent last_ts plateaus (limited progression between samples)."""
+    values = _extract_last_ts_values(monitor)
+    if len(values) < 3:
+        return 0.0, 0.0
+
+    deltas = []
+    for i in range(1, len(values)):
+        deltas.append(values[i] - values[i - 1])
+
+    if not deltas:
+        return 0.0, 0.0
+
+    plateau_steps = sum(1 for d in deltas if d <= 0.0)
+    plateau_ratio = float(plateau_steps) / float(len(deltas))
+    penalty = min(18.0, plateau_ratio * 18.0)
+
+    # Extra penalty if there is a long consecutive plateau streak.
+    longest = 0
+    current = 0
+    for d in deltas:
+        if d <= 0.0:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    if longest >= 3:
+        penalty = min(22.0, penalty + 4.0)
+
+    return penalty, plateau_ratio
+
+
+def _compute_ace_management_score(monitor, entry=None):
+    """Compute Ace reliability score using status, plateau behavior, and FFProbe quality."""
+    if not isinstance(monitor, dict):
+        return 25.0, {
+            'plateau_penalty': 0.0,
+            'plateau_ratio': 0.0,
+            'ffprobe_bonus': 0.0,
+            'ffprobe_rating': 'unknown',
+        }
 
     status = (monitor.get('status') or '').lower()
     base = {
@@ -4905,11 +5041,7 @@ def _compute_ace_management_score(monitor):
         'dead': 0.0,
     }.get(status, 40.0)
 
-    movement = monitor.get('livepos_movement') or {}
     latest = monitor.get('latest_status') or {}
-
-    if movement.get('is_moving'):
-        base += 10.0
 
     speed_down = float(latest.get('speed_down') or 0.0)
     speed_up = float(latest.get('speed_up') or 0.0)
@@ -4922,10 +5054,17 @@ def _compute_ace_management_score(monitor):
     if monitor.get('currently_played'):
         base += 3.0
 
-    if status == 'stuck' and movement.get('is_moving'):
-        base += 8.0
+    plateau_penalty, plateau_ratio = _compute_last_ts_plateau_penalty(monitor)
+    ffprobe_stats = entry.get('ffprobe_stats') if isinstance(entry, dict) else None
+    ffprobe_bonus, ffprobe_rating = _score_ffprobe_quality(ffprobe_stats)
 
-    return _clamp_score(base)
+    score = _clamp_score(base - plateau_penalty + ffprobe_bonus)
+    return score, {
+        'plateau_penalty': plateau_penalty,
+        'plateau_ratio': plateau_ratio,
+        'ffprobe_bonus': ffprobe_bonus,
+        'ffprobe_rating': ffprobe_rating,
+    }
 
 
 def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
@@ -4936,7 +5075,7 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
     prev_since = float(entry.get('management_since') or now_ts)
     manual_quarantine = bool(entry.get('manual_quarantine'))
 
-    score = _compute_ace_management_score(monitor)
+    score, score_meta = _compute_ace_management_score(monitor, entry)
     reason = None
 
     if not isinstance(monitor, dict):
@@ -4944,7 +5083,6 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
         reason = 'missing-monitor'
     else:
         raw_status = (monitor.get('status') or 'unknown').lower()
-        movement = monitor.get('livepos_movement') or {}
 
         if manual_quarantine:
             target_state = 'quarantined'
@@ -4955,7 +5093,7 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
         elif raw_status == 'stuck':
             # Keep stuck as problematic but still monitored for potential recovery.
             target_state = 'quarantined'
-            reason = 'stuck-monitoring' if movement.get('is_moving') else 'stuck'
+            reason = 'stuck'
         elif raw_status in ('starting', 'reconnecting'):
             target_state = 'review'
             reason = raw_status
@@ -4967,7 +5105,12 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
                 target_state = 'stable'
             else:
                 target_state = 'review'
-                reason = 'warming' if prev_state != 'stable' else None
+                if score_meta.get('plateau_ratio', 0.0) >= 0.5:
+                    reason = 'plateau'
+                elif prev_state != 'stable':
+                    reason = 'warming'
+                else:
+                    reason = 'low-score'
         else:
             target_state = 'review'
             reason = f'status-{raw_status}'
@@ -4985,6 +5128,21 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
         entry['management_score'] = score
         changed = True
 
+    plateau_ratio = float(score_meta.get('plateau_ratio') or 0.0)
+    if float(entry.get('management_plateau_ratio') or -1.0) != plateau_ratio:
+        entry['management_plateau_ratio'] = plateau_ratio
+        changed = True
+
+    ffprobe_rating = score_meta.get('ffprobe_rating')
+    if entry.get('management_ffprobe_rating') != ffprobe_rating:
+        entry['management_ffprobe_rating'] = ffprobe_rating
+        changed = True
+
+    ffprobe_bonus = float(score_meta.get('ffprobe_bonus') or 0.0)
+    if float(entry.get('management_ffprobe_bonus') or -999.0) != ffprobe_bonus:
+        entry['management_ffprobe_bonus'] = ffprobe_bonus
+        changed = True
+
     if entry.get('management_reason') != reason:
         entry['management_reason'] = reason
         changed = True
@@ -4999,10 +5157,29 @@ def _evaluate_ace_session_management(raw_session, monitors_by_id, settings):
 
     changed = False
     now_ts = time.time()
+    udi = get_udi_manager()
+    ffprobe_cache = {}
     entries = raw_session.get('entries') or []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
+
+        if not isinstance(entry.get('ffprobe_stats'), dict):
+            stream_id = entry.get('stream_id')
+            stream = None
+            if stream_id not in ffprobe_cache:
+                try:
+                    stream = udi.get_stream_by_id(int(stream_id)) if stream_id is not None else None
+                except Exception:
+                    stream = None
+                ffprobe_cache[stream_id] = stream
+            else:
+                stream = ffprobe_cache.get(stream_id)
+
+            if isinstance(stream, dict):
+                entry['ffprobe_stats'] = extract_stream_stats(stream)
+                changed = True
+
         monitor = monitors_by_id.get(entry.get('monitor_id'))
         if _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
             changed = True
@@ -5213,6 +5390,7 @@ def create_acestream_channel_session():
                 'stream_name': stream.get('name'),
                 'content_id': content_id,
                 'monitor_id': monitor_id,
+                'ffprobe_stats': extract_stream_stats(stream),
             })
 
         if not entries:
