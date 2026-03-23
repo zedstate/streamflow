@@ -47,7 +47,8 @@ const DEFAULT_PROFILE = {
         resolution: 0.35,
         fps: 0.15,
         codec: 0.10,
-        prefer_h265: true
+        prefer_h265: true,
+        loop_penalty: 0
     }
 }
 
@@ -686,6 +687,23 @@ export default function AutomationProfileEditor() {
                                                     min={0}
                                                     max={1}
                                                 />
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <Label htmlFor="loop_penalty" className="text-xs">Looping Punishment</Label>
+                                                <Input
+                                                    id="loop_penalty"
+                                                    type="number"
+                                                    step="0.01"
+                                                    value={profile.scoring_weights.loop_penalty ?? 0}
+                                                    onChange={(e) => {
+                                                        const val = parseFloat(e.target.value) || 0
+                                                        updateProfile('scoring_weights.loop_penalty', Math.min(0, Math.max(-0.25, val)))
+                                                    }}
+                                                    min={-0.25}
+                                                    max={0}
+                                                />
+                                                <p className="text-[10px] text-muted-foreground">Score penalty for looping streams (0 = disabled, min -0.25)</p>
                                             </div>
                                         </div>
 
