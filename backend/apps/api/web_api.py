@@ -5360,6 +5360,11 @@ def _build_ace_channel_session_summary(raw_session, monitors_by_id):
         'channel_id': raw_session.get('channel_id'),
         'channel_name': raw_session.get('channel_name'),
         'channel_logo_url': raw_session.get('channel_logo_url'),
+        'epg_event_title': raw_session.get('epg_event_title'),
+        'epg_event_description': raw_session.get('epg_event_description'),
+        'epg_event_start': raw_session.get('epg_event_start'),
+        'epg_event_end': raw_session.get('epg_event_end'),
+        'epg_event_id': raw_session.get('epg_event_id'),
         'created_at': raw_session.get('created_at'),
         'is_active': is_active,
         'stable_count': stable,
@@ -5472,23 +5477,29 @@ def list_acestream_channel_sessions():
         return jsonify({'error': 'Internal Server Error'}), 500
 
 
-@app.route('/api/acestream-channel-sessions', methods=['POST'])
-def create_acestream_channel_session():
-    """Create and start AceStream monitoring for all AceStream streams in a channel."""
+def create_acestream_channel_session_impl(
+    channel_id, 
+    interval_s=1.0, 
+    run_seconds=0, 
+    per_sample_timeout_s=1.0, 
+    engine_container_id=None,
+    epg_event_title=None,
+    epg_event_description=None,
+    epg_event_start=None,
+    epg_event_end=None,
+    epg_event_id=None
+):
+    """Core logic to create and start an AceStream channel session."""
     client, error_response = _acestream_client_or_error()
     if error_response:
-        return error_response
+        # error_response is (jsonify(...), status_code). We want to just return dict and code.
+        return {'error': 'AceStream backend orchestrator is not configured.'}, 503
 
     try:
-        data = request.get_json(silent=True) or {}
-        channel_id = data.get('channel_id')
-        if not channel_id:
-            return jsonify({'error': 'channel_id is required'}), 400
-
         udi = get_udi_manager()
         channel = udi.get_channel_by_id(int(channel_id))
         if not channel:
-            return jsonify({'error': 'Channel not found'}), 404
+            return {'error': 'Channel not found'}, 404
 
         entries = []
         seen_content_ids = set()
@@ -5504,10 +5515,10 @@ def create_acestream_channel_session():
             payload = {
                 'content_id': content_id,
                 'stream_name': stream.get('name') or channel.get('name'),
-                'interval_s': float(data.get('interval_s', 1.0)),
-                'run_seconds': int(data.get('run_seconds', 0)),
-                'per_sample_timeout_s': float(data.get('per_sample_timeout_s', 1.0)),
-                'engine_container_id': data.get('engine_container_id') if data.get('engine_container_id') else None,
+                'interval_s': float(interval_s),
+                'run_seconds': int(run_seconds),
+                'per_sample_timeout_s': float(per_sample_timeout_s),
+                'engine_container_id': engine_container_id if engine_container_id else None,
             }
             started = client.start_session(payload)
             monitor_id = started.get('monitor_id') if isinstance(started, dict) else None
@@ -5522,7 +5533,7 @@ def create_acestream_channel_session():
             })
 
         if not entries:
-            return jsonify({'error': 'No AceStream-compatible streams found in channel'}), 400
+            return {'error': 'No AceStream-compatible streams found in channel'}, 400
 
         session_id = f"ace_channel_{int(channel_id)}_{int(time.time())}"
         store = _ace_channel_sessions_store()
@@ -5531,12 +5542,17 @@ def create_acestream_channel_session():
             'channel_id': int(channel_id),
             'channel_name': channel.get('name'),
             'channel_logo_url': channel.get('logo_url'),
+            'epg_event_title': epg_event_title,
+            'epg_event_description': epg_event_description,
+            'epg_event_start': epg_event_start,
+            'epg_event_end': epg_event_end,
+            'epg_event_id': epg_event_id,
             'created_at': time.time(),
             'entries': entries,
         }
         _save_ace_channel_sessions_store(store)
 
-        return jsonify({'session_id': session_id, 'message': 'AceStream channel session created', 'monitor_count': len(entries)}), 201
+        return {'session_id': session_id, 'message': 'AceStream channel session created', 'monitor_count': len(entries)}, 201
     except requests.RequestException as exc:
         status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
         detail = None
@@ -5545,10 +5561,33 @@ def create_acestream_channel_session():
                 detail = exc.response.json()
             except Exception:
                 detail = exc.response.text
-        return jsonify({'error': 'Failed to create AceStream channel session', 'detail': detail}), status_code
+        return {'error': 'Failed to create AceStream channel session', 'detail': detail}, status_code
     except Exception as e:
         logger.error(f"Error creating AceStream channel session: {e}", exc_info=True)
-        return jsonify({'error': 'Internal Server Error'}), 500
+        return {'error': 'Internal Server Error'}, 500
+
+
+@app.route('/api/acestream-channel-sessions', methods=['POST'])
+def create_acestream_channel_session():
+    """Create and start AceStream monitoring for all AceStream streams in a channel."""
+    data = request.get_json(silent=True) or {}
+    channel_id = data.get('channel_id')
+    if not channel_id:
+        return jsonify({'error': 'channel_id is required'}), 400
+
+    result, status_code = create_acestream_channel_session_impl(
+        channel_id=channel_id,
+        interval_s=data.get('interval_s', 1.0),
+        run_seconds=data.get('run_seconds', 0),
+        per_sample_timeout_s=data.get('per_sample_timeout_s', 1.0),
+        engine_container_id=data.get('engine_container_id'),
+        epg_event_title=data.get('epg_event_title'),
+        epg_event_description=data.get('epg_event_description'),
+        epg_event_start=data.get('epg_event_start'),
+        epg_event_end=data.get('epg_event_end'),
+        epg_event_id=data.get('epg_event_id')
+    )
+    return jsonify(result), status_code
 
 
 @app.route('/api/acestream-channel-sessions/group/start', methods=['POST'])
@@ -5578,6 +5617,11 @@ def create_acestream_group_sessions():
                 'run_seconds': data.get('run_seconds', 0),
                 'per_sample_timeout_s': data.get('per_sample_timeout_s', 1.0),
                 'engine_container_id': data.get('engine_container_id'),
+                'epg_event_title': data.get('epg_event_title'),
+                'epg_event_description': data.get('epg_event_description'),
+                'epg_event_start': data.get('epg_event_start'),
+                'epg_event_end': data.get('epg_event_end'),
+                'epg_event_id': data.get('epg_event_id'),
             }
 
             with app.test_request_context('/api/acestream-channel-sessions', method='POST', json=payload):

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Square, Trash2, Activity, Radio, ShieldAlert, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Square, Trash2, Activity, Radio, ShieldAlert, RotateCcw, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -7,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
 import { aceStreamMonitoringAPI } from '@/services/aceStreamMonitoring'
+
+const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_';
 
 const ACTIVE_STATUSES = new Set(['starting', 'running', 'stuck', 'reconnecting'])
 
@@ -51,6 +53,23 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState(null)
   const [actionStreamId, setActionStreamId] = useState(null)
+  const [logoUrl, setLogoUrl] = useState(null)
+
+  // Cache channel logo from localStorage
+  useEffect(() => {
+    if (session && session.channel_id) {
+      const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${session.channel_id}`);
+      if (cachedLogo) {
+        setLogoUrl(cachedLogo);
+      }
+
+      // If session has a logo URL, use it and cache it
+      if (session.channel_logo_url) {
+        setLogoUrl(session.channel_logo_url);
+        localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${session.channel_id}`, session.channel_logo_url);
+      }
+    }
+  }, [session?.channel_id, session?.channel_logo_url]);
 
   const loadSession = async (showLoading = false) => {
     try {
@@ -183,9 +202,21 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
           <Button variant="ghost" size="icon" onClick={onBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
+          {logoUrl && (
+            <div className="flex-shrink-0">
+              <img
+                src={logoUrl}
+                alt={session.channel_name}
+                className="h-16 w-16 object-contain rounded-md bg-white/5 p-1"
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            </div>
+          )}
           <div className="min-w-0">
             <h1 className="text-3xl font-bold tracking-tight truncate">{session.channel_name || `Channel ${session.channel_id}`}</h1>
-            <p className="text-muted-foreground mt-1 truncate">AceStream Channel Session Monitor</p>
+            <p className="text-muted-foreground mt-1 truncate">
+              AceStream Monitor - {isActive ? 'Active' : 'Inactive'}
+            </p>
           </div>
         </div>
 
@@ -205,12 +236,50 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
-        <StatsCard title="Streams" value={formatNumber(streamRows.length)} icon={Activity} />
-        <StatsCard title="Stable / Review / Quarantined" value={`${stableCount} / ${reviewCount} / ${quarantinedCount}`} icon={ShieldAlert} />
-        <StatsCard title="Raw Running / Stuck / Dead" value={`${runningCount} / ${stuckCount} / ${deadCount}`} icon={Radio} />
+      {/* EPG Event Information */}
+      {(session.epg_event_title || session.epg_event_description) && (
+        <Card className="bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
+          <CardHeader>
+            <div className="flex items-start justify-between">
+              <div className="space-y-1 flex-1">
+                <CardTitle className="text-xl">{session.epg_event_title || 'Current Program'}</CardTitle>
+                {session.epg_event_description && (
+                  <CardDescription className="text-base mt-2">
+                    {session.epg_event_description}
+                  </CardDescription>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          {(session.epg_event_start || session.epg_event_end) && (
+            <CardContent>
+              <div className="flex gap-6 text-sm">
+                {session.epg_event_start && (
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Start:</span>
+                    <span className="font-medium">{new Date(session.epg_event_start).toLocaleString()}</span>
+                  </div>
+                )}
+                {session.epg_event_end && (
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">End:</span>
+                    <span className="font-medium">{new Date(session.epg_event_end).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {/* Stats Cards */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <StatsCard title="Total Streams" value={formatNumber(streamRows.length)} icon={Activity} />
+        <StatsCard title="Active Streams" value={runningCount} icon={Activity} variant="success" />
+        <StatsCard title="Quarantined" value={quarantinedCount} icon={ShieldAlert} variant="warning" />
         <StatsCard title="Played Streams" value={formatNumber(playedCount)} icon={Activity} />
-        <StatsCard title="Total Samples" value={formatNumber(totalSamples)} icon={Activity} />
       </div>
 
       <Card>
@@ -389,7 +458,13 @@ function AceStreamsTable({ rows, actionStreamId, onAction }) {
   )
 }
 
-function StatsCard({ title, value, icon: Icon }) {
+function StatsCard({ title, value, icon: Icon, variant = 'default' }) {
+  const variantColors = {
+    default: 'text-foreground',
+    success: 'text-green-600 dark:text-green-400',
+    warning: 'text-yellow-600 dark:text-yellow-400',
+  }
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -397,7 +472,9 @@ function StatsCard({ title, value, icon: Icon }) {
         <Icon className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
-        <div className="text-xl font-bold break-words">{value}</div>
+        <div className={`text-2xl font-bold break-words ${variantColors[variant]}`}>
+          {value}
+        </div>
       </CardContent>
     </Card>
   )
