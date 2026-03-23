@@ -1599,6 +1599,7 @@ class StreamCheckerService:
         stream_limit = 0
         allow_revive = True
         grace_period = False
+        loop_check_enabled = False
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -1621,6 +1622,7 @@ class StreamCheckerService:
                 priority_m3u_ids = profile_stream_checking.get('m3u_priority', [])
                 priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
                 grace_period = profile_stream_checking.get('grace_period', False)
+                loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
                 scoring_weights = profile.get('scoring_weights', None)
                 
                 # Also check if checking is enabled at all for this profile
@@ -2040,11 +2042,15 @@ class StreamCheckerService:
             # Run loop probes on eligible streams (top 25% scoring >= 0.5).
             # Called after all streams are scored and analyzed_streams is fully
             # assembled so the complete score distribution is available.
-            analysis_params_lp = self.config.get('stream_analysis', {})
-            self._run_loop_probes(
-                analyzed_streams,
-                user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
-            )
+            # Gated on the per-profile loop_check_enabled flag.
+            if loop_check_enabled:
+                analysis_params_lp = self.config.get('stream_analysis', {})
+                self._run_loop_probes(
+                    analyzed_streams,
+                    user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
+                )
+            else:
+                logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
 
             # Sort streams by score (highest first)
             self.progress.update(
@@ -2331,6 +2337,7 @@ class StreamCheckerService:
                 priority_m3u_ids = profile_stream_checking.get('m3u_priority', [])
                 priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
                 grace_period = profile_stream_checking.get('grace_period', False)
+                loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
                 scoring_weights = profile.get('scoring_weights', None)
                 
                 # Also check if checking is enabled at all for this profile
@@ -2683,11 +2690,15 @@ class StreamCheckerService:
 
             # Run loop probes on eligible streams — all streams scored, full
             # distribution known for top-percentile calculation.
-            analysis_params_lp = self.config.get('stream_analysis', {})
-            self._run_loop_probes(
-                analyzed_streams,
-                user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
-            )
+            # Gated on the per-profile loop_check_enabled flag.
+            if loop_check_enabled:
+                analysis_params_lp = self.config.get('stream_analysis', {})
+                self._run_loop_probes(
+                    analyzed_streams,
+                    user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
+                )
+            else:
+                logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
 
             # Sort streams by score (highest first)
             self.progress.update(
