@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Settings2, ShieldCheck, Play, MonitorPlay } from 'lucide-react';
 import { channelsAPI } from '@/services/api';
+import { aceStreamMonitoringAPI } from '@/services/aceStreamMonitoring';
 import { useToast } from '@/hooks/use-toast';
 
 function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
@@ -17,6 +18,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
   const [channels, setChannels] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     interval_s: 1.0,
     run_seconds: 0,
@@ -61,7 +63,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (mode === 'channel' && !formData.channel_id) {
@@ -83,6 +85,30 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
     }
 
     if (sessionType === 'acestream') {
+      // Verify the AceStream orchestrator is ready before creating the session
+      try {
+        setSubmitting(true);
+        const readyRes = await aceStreamMonitoringAPI.checkOrchestratorReady();
+        const readyData = readyRes.data || {};
+        if (!readyData.ready) {
+          toast({
+            title: 'Orchestrator Not Ready',
+            description: readyData.error || readyData.detail || 'AceStream orchestrator is not reachable. Please check your configuration.',
+            variant: 'destructive',
+          });
+          return;
+        }
+      } catch (err) {
+        toast({
+          title: 'Orchestrator Check Failed',
+          description: err.response?.data?.error || 'Could not verify AceStream orchestrator status.',
+          variant: 'destructive',
+        });
+        return;
+      } finally {
+        setSubmitting(false);
+      }
+
       onCreateSession({
         session_type: 'acestream',
         channel_id: mode === 'channel' ? formData.channel_id : undefined,
@@ -389,11 +415,11 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
             </Button>
             <Button
               type="submit"
-              disabled={loading || (mode === 'channel' ? !formData.channel_id : !formData.group_id)}
+              disabled={loading || submitting || (mode === 'channel' ? !formData.channel_id : !formData.group_id)}
               className="gap-2"
             >
               <MonitorPlay className="h-4 w-4" />
-              {sessionType === 'acestream' ? 'Start AceStream Monitoring' : (mode === 'group' ? 'Start Group Monitoring' : 'Create Session')}
+              {submitting ? 'Checking orchestrator...' : sessionType === 'acestream' ? 'Start AceStream Monitoring' : (mode === 'group' ? 'Start Group Monitoring' : 'Create Session')}
             </Button>
           </DialogFooter>
         </form>

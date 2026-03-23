@@ -22,6 +22,8 @@ export const aceStreamMonitoringAPI = {
 
   deleteChannelSession: (sessionId) => api.delete(`/acestream-channel-sessions/${sessionId}`),
 
+  checkOrchestratorReady: () => api.get('/acestream-orchestrator/ready'),
+
   startSession: (payload) => api.post('/acestream-monitor-sessions/start', payload),
 
   getSessions: (includeCorrelation = true) =>

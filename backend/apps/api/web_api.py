@@ -4819,6 +4819,40 @@ def _acestream_client_or_error():
     return client, None
 
 
+def _ping_orchestrator_ready(client=None):
+    """Ping the orchestrator /version endpoint to verify it is running and reachable.
+
+    Returns (True, version_str) on success, (False, error_msg) on failure.
+    The response must be a JSON object with a 'title' field containing 'AceStream Orchestrator'.
+    """
+    if client is None:
+        client = _get_acestream_monitoring_client()
+    if not client.is_configured():
+        return False, "AceStream orchestrator is not configured"
+
+    base_url = client.base_url
+    version_url = f"{base_url.rstrip('/')}/version"
+    try:
+        resp = requests.get(version_url, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return False, "Orchestrator /version returned unexpected format"
+        title = str(data.get('title') or '')
+        if 'AceStream Orchestrator' not in title:
+            return False, f"Unexpected orchestrator title: '{title}'"
+        version = data.get('version', 'unknown')
+        return True, str(version)
+    except requests.exceptions.ConnectionError:
+        return False, f"Cannot connect to AceStream orchestrator at {base_url}"
+    except requests.exceptions.Timeout:
+        return False, f"Timeout connecting to AceStream orchestrator at {base_url}"
+    except requests.exceptions.HTTPError as exc:
+        return False, f"Orchestrator /version returned HTTP {exc.response.status_code}"
+    except Exception as exc:
+        return False, f"Error pinging orchestrator: {exc}"
+
+
 def _parse_m3u_acestream_entries(m3u_content: str):
     """Local parser fallback for acestream:// and /ace/getstream?id=<id> entries."""
     items = []
@@ -5171,6 +5205,87 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
     return changed
 
 
+def _is_ace_ffprobe_stats_empty(ffprobe_stats):
+    """Return True if ffprobe stats have no useful data (all N/A or missing)."""
+    if not isinstance(ffprobe_stats, dict):
+        return True
+    return (
+        (ffprobe_stats.get('resolution') or 'N/A') in ('N/A', '0x0', '') and
+        (ffprobe_stats.get('video_codec') or 'N/A') == 'N/A'
+    )
+
+
+_ACE_FFPROBE_RECHECK_THROTTLE_S = 300   # seconds between automatic recheck attempts
+_ACE_FFPROBE_PROBE_DURATION_S = 5       # seconds of stream to analyse per recheck
+_ACE_FFPROBE_PROBE_TIMEOUT_S = 15       # subprocess timeout for each recheck
+
+
+def _schedule_ace_ffprobe_recheck(entry, monitor):
+    """Schedule a background ffprobe recheck on the engine HTTP URL for a running stream.
+
+    Only triggers when:
+    - Current ffprobe stats are empty/N/A
+    - The monitor is in 'running' status
+    - The engine host and port are known
+    - The last attempt was more than _ACE_FFPROBE_RECHECK_THROTTLE_S seconds ago
+    """
+    if not _is_ace_ffprobe_stats_empty(entry.get('ffprobe_stats')):
+        return
+
+    monitor_status = (monitor.get('status') or '').lower() if isinstance(monitor, dict) else ''
+    if monitor_status != 'running':
+        return
+
+    # Throttle: avoid hammering the engine
+    last_attempt = entry.get('_ffprobe_attempt_ts')
+    if last_attempt and time.time() - float(last_attempt) < _ACE_FFPROBE_RECHECK_THROTTLE_S:
+        return
+
+    engine = (monitor.get('engine') or {}) if isinstance(monitor, dict) else {}
+    host = engine.get('host')
+    port = engine.get('port')
+    content_id = entry.get('content_id')
+
+    if not host or not port or not content_id:
+        return
+
+    url = f"http://{host}:{port}/ace/getstream?id={content_id}"
+    entry['_ffprobe_attempt_ts'] = time.time()
+    thread_name = f"ace-ffprobe-{content_id[:8] if content_id else 'unknown'}"
+
+    def _run():
+        try:
+            from apps.stream.stream_check_utils import get_stream_info_and_bitrate
+            stats = get_stream_info_and_bitrate(
+                url,
+                duration=_ACE_FFPROBE_PROBE_DURATION_S,
+                timeout=_ACE_FFPROBE_PROBE_TIMEOUT_S,
+            )
+            if stats and (stats.get('resolution', 'N/A') not in ('N/A', '0x0', '') or
+                         stats.get('video_codec', 'N/A') != 'N/A'):
+                entry['ffprobe_stats'] = {
+                    'resolution': stats.get('resolution'),
+                    'fps': stats.get('fps'),
+                    'bitrate_kbps': stats.get('bitrate_kbps'),
+                    'video_codec': stats.get('video_codec', 'N/A'),
+                    'audio_codec': stats.get('audio_codec', 'N/A'),
+                    'hdr_format': stats.get('hdr_format'),
+                    'pixel_format': stats.get('pixel_format'),
+                    'audio_sample_rate': stats.get('audio_sample_rate'),
+                    'audio_channels': stats.get('audio_channels'),
+                    'channel_layout': stats.get('channel_layout'),
+                    'audio_bitrate': stats.get('audio_bitrate'),
+                }
+                logger.info(f"AceStream ffprobe recheck succeeded for {content_id}: {entry['ffprobe_stats'].get('resolution')}")
+            else:
+                logger.debug(f"AceStream ffprobe recheck yielded no useful data for {content_id}")
+        except Exception as exc:
+            logger.debug(f"AceStream ffprobe recheck failed for {content_id}: {exc}")
+
+    t = threading.Thread(target=_run, daemon=True, name=thread_name)
+    t.start()
+
+
 def _evaluate_ace_session_management(raw_session, monitors_by_id, settings):
     """Evaluate and persist management state for every entry in one session."""
     if not isinstance(raw_session, dict):
@@ -5202,6 +5317,8 @@ def _evaluate_ace_session_management(raw_session, monitors_by_id, settings):
                 changed = True
 
         monitor = monitors_by_id.get(entry.get('monitor_id'))
+        # Schedule a background ffprobe recheck via the engine HTTP URL when stats are empty
+        _schedule_ace_ffprobe_recheck(entry, monitor)
         if _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
             changed = True
 
@@ -5722,6 +5839,14 @@ def create_acestream_channel_session_impl(
     if error_response:
         return {'error': 'AceStream backend orchestrator is not configured.'}, 503
 
+    # Verify the orchestrator is actually reachable and ready before starting
+    ready, ready_detail = _ping_orchestrator_ready(client)
+    if not ready:
+        return {
+            'error': 'AceStream orchestrator is not ready',
+            'detail': ready_detail,
+        }, 503
+
     try:
         udi = get_udi_manager()
 
@@ -5888,6 +6013,14 @@ def create_acestream_group_sessions():
     client, error_response = _acestream_client_or_error()
     if error_response:
         return error_response
+
+    # Verify the orchestrator is reachable before starting any sessions
+    ready, ready_detail = _ping_orchestrator_ready(client)
+    if not ready:
+        return jsonify({
+            'error': 'AceStream orchestrator is not ready',
+            'detail': ready_detail,
+        }), 503
 
     try:
         data = request.get_json(silent=True) or {}
@@ -6177,6 +6310,27 @@ def update_acestream_orchestrator_config_endpoint():
     except Exception as e:
         logger.error(f"Error updating AceStream orchestrator config: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/acestream-orchestrator/ready', methods=['GET'])
+def check_acestream_orchestrator_ready():
+    """Check if the AceStream orchestrator is configured and reachable."""
+    try:
+        client = _get_acestream_monitoring_client()
+        if not client.is_configured():
+            return jsonify({
+                "ready": False,
+                "error": "AceStream orchestrator is not configured",
+            }), 200
+
+        ready, detail = _ping_orchestrator_ready(client)
+        return jsonify({
+            "ready": ready,
+            "detail": detail,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error checking AceStream orchestrator readiness: {e}")
+        return jsonify({"ready": False, "error": "Internal Server Error"}), 500
 
 
 @app.route('/api/acestream-monitor-sessions/start', methods=['POST'])
