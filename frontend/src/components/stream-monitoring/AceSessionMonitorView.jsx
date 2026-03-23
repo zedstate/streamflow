@@ -1,14 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Square, Trash2, Activity, Radio, ShieldAlert, RotateCcw, Clock } from 'lucide-react'
+import * as React from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, Square, Trash2, Activity, Radio, ShieldAlert, RotateCcw, Clock, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
 import { aceStreamMonitoringAPI } from '@/services/aceStreamMonitoring'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
+import { TimelineControl } from './TimelineControl'
 
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_';
+// Maximum number of per-stream metric snapshots retained client-side (1 hour at 1-second poll rate)
+const MAX_METRICS_HISTORY = 3600
 
 const ACTIVE_STATUSES = new Set(['starting', 'running', 'stuck', 'reconnecting'])
 
@@ -54,6 +60,19 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const [session, setSession] = useState(null)
   const [actionStreamId, setActionStreamId] = useState(null)
   const [logoUrl, setLogoUrl] = useState(null)
+  const [cursorTime, setCursorTime] = useState(null)
+  const [isLive, setIsLive] = useState(true)
+  const [zoomLevel, setZoomLevel] = useState(60)
+  const [showTimeline, setShowTimeline] = useState(true)
+  const [expandedStreamId, setExpandedStreamId] = useState(null)
+
+  // Client-side metrics history: { [stream_id]: [{timestamp, speed_down, peers, management_score, management_state, management_reason}] }
+  const metricsHistoryRef = useRef({})
+  const isLiveRef = useRef(true)
+
+  useEffect(() => {
+    isLiveRef.current = isLive
+  }, [isLive])
 
   // Cache channel logo from localStorage
   useEffect(() => {
@@ -75,7 +94,32 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
     try {
       if (showLoading) setLoading(true)
       const response = await aceStreamMonitoringAPI.getChannelSession(sessionId)
-      setSession(response.data)
+      const data = response.data
+
+      // Accumulate per-stream metrics history client-side
+      const now = Math.floor(Date.now() / 1000)
+      const entries = Array.isArray(data?.entries) ? data.entries : []
+      entries.forEach((entry) => {
+        const streamId = entry.stream_id
+        if (!streamId) return
+        const monitor = entry.monitor || {}
+        const latest = monitor.latest_status || {}
+        const snapshot = {
+          timestamp: now,
+          speed_down: latest.speed_down != null ? Number(latest.speed_down) : null,
+          peers: latest.peers != null ? Number(latest.peers) : null,
+          management_score: Number(entry.management_score || 0),
+          management_state: entry.management_state || 'review',
+          management_reason: entry.management_reason || null,
+        }
+        const history = metricsHistoryRef.current[streamId] || []
+        // Avoid duplicate timestamps
+        if (history.length === 0 || history[history.length - 1].timestamp < now) {
+          metricsHistoryRef.current[streamId] = [...history, snapshot].slice(-MAX_METRICS_HISTORY)
+        }
+      })
+
+      setSession(data)
     } catch (err) {
       console.error('Failed to load AceStream monitor session', err)
       toast({
@@ -199,6 +243,56 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const quarantinedStreams = streamRows
     .filter((r) => (r.management_state || '').toLowerCase() === 'quarantined')
     .sort((a, b) => b.management_score - a.management_score)
+
+  // Build streams in the format TimelineControl expects (using accumulated client-side history)
+  const streamsForTimeline = useMemo(() => {
+    return streamRows.map((row) => {
+      const history = metricsHistoryRef.current[row.stream_id] || []
+      return {
+        stream_id: row.stream_id,
+        name: row.stream_name || row.content_id,
+        status: row.management_state || 'review',
+        status_reason: row.management_reason || null,
+        metrics_history: history.map((h) => ({
+          timestamp: h.timestamp,
+          status: h.management_state || 'review',
+          status_reason: h.management_reason || null,
+        })),
+      }
+    })
+  }, [streamRows])
+
+  const minTime = useMemo(() => {
+    if (!session) return 0
+    let min = session.created_at ? Math.floor(new Date(session.created_at).getTime() / 1000) : Math.floor(Date.now() / 1000)
+    Object.values(metricsHistoryRef.current).forEach((history) => {
+      if (history.length > 0 && history[0].timestamp < min) min = history[0].timestamp
+    })
+    return min
+  }, [session, streamRows])
+
+  const maxTime = useMemo(() => {
+    if (!session) return Math.floor(Date.now() / 1000)
+    if (session.is_active) return Math.floor(Date.now() / 1000)
+    let max = session.created_at ? Math.floor(new Date(session.created_at).getTime() / 1000) : 0
+    Object.values(metricsHistoryRef.current).forEach((history) => {
+      if (history.length > 0) {
+        const last = history[history.length - 1]
+        if (last.timestamp > max) max = last.timestamp
+      }
+    })
+    return max
+  }, [session, streamRows])
+
+  const handleTimeChange = (newTime) => {
+    setCursorTime(typeof newTime === 'function' ? newTime(cursorTime || maxTime) : newTime)
+    setIsLive(false)
+  }
+
+  const handleLiveClick = () => {
+    setIsLive(true)
+    setCursorTime(null)
+  }
 
   if (loading || !session) {
     return (
@@ -342,7 +436,7 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
                     {stableStreams.length === 0 ? (
                       <p className="text-muted-foreground">No stable streams</p>
                     ) : (
-                      <AceStreamsTable rows={stableStreams} actionStreamId={actionStreamId} onAction={updateManagementState} />
+                      <AceStreamsTable rows={stableStreams} actionStreamId={actionStreamId} onAction={updateManagementState} metricsHistoryRef={metricsHistoryRef} expandedStreamId={expandedStreamId} onToggleExpand={(id) => setExpandedStreamId(prev => prev === id ? null : id)} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
                     )}
                   </CardContent>
                 </Card>
@@ -360,7 +454,7 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
                     {reviewStreams.length === 0 ? (
                       <p className="text-muted-foreground">No streams under review</p>
                     ) : (
-                      <AceStreamsTable rows={reviewStreams} actionStreamId={actionStreamId} onAction={updateManagementState} />
+                      <AceStreamsTable rows={reviewStreams} actionStreamId={actionStreamId} onAction={updateManagementState} metricsHistoryRef={metricsHistoryRef} expandedStreamId={expandedStreamId} onToggleExpand={(id) => setExpandedStreamId(prev => prev === id ? null : id)} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
                     )}
                   </CardContent>
                 </Card>
@@ -378,7 +472,7 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
                     {quarantinedStreams.length === 0 ? (
                       <p className="text-muted-foreground">No quarantined streams</p>
                     ) : (
-                      <AceStreamsTable rows={quarantinedStreams} actionStreamId={actionStreamId} onAction={updateManagementState} />
+                      <AceStreamsTable rows={quarantinedStreams} actionStreamId={actionStreamId} onAction={updateManagementState} metricsHistoryRef={metricsHistoryRef} expandedStreamId={expandedStreamId} onToggleExpand={(id) => setExpandedStreamId(prev => prev === id ? null : id)} cursorTime={cursorTime} isLive={isLive} zoomLevel={zoomLevel} />
                     )}
                   </CardContent>
                 </Card>
@@ -388,87 +482,344 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
         </CardContent>
       </Card>
 
+      {/* Floating Timeline Button (shown when timeline is hidden) */}
+      {!showTimeline && (
+        <div className="fixed bottom-6 right-6 z-[60] animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <Button
+            onClick={() => setShowTimeline(true)}
+            className="group relative overflow-hidden bg-zinc-950 hover:bg-zinc-900 text-white border border-white/10 rounded-full h-12 px-6 shadow-[0_8px_30px_rgb(0,0,0,0.4)] flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="relative flex items-center gap-2">
+              <span className="text-sm font-semibold tracking-wide">Show Timeline</span>
+              <ChevronUp className="h-4 w-4 text-primary" />
+            </div>
+          </Button>
+        </div>
+      )}
+
+      {/* Timeline Control */}
+      {session && streamsForTimeline.length > 0 && (
+        <TimelineControl
+          className={!showTimeline ? 'hidden' : ''}
+          minTime={minTime}
+          maxTime={maxTime}
+          currentTime={cursorTime || maxTime}
+          onTimeChange={handleTimeChange}
+          isLive={isLive}
+          onLiveClick={handleLiveClick}
+          events={[]}
+          streams={streamsForTimeline}
+          zoomLevel={zoomLevel}
+          onZoomChange={setZoomLevel}
+          adPeriods={[]}
+          showTimeline={showTimeline}
+          onToggleTimeline={() => setShowTimeline(!showTimeline)}
+        />
+      )}
+
     </div>
   )
 }
 
-function AceStreamsTable({ rows, actionStreamId, onAction }) {
+// Thresholds for speed_down and peers color coding
+const SPEED_DOWN_GOOD = 1000   // kB/s - green above this
+const SPEED_DOWN_OK = 200      // kB/s - yellow above this, red below
+const PEERS_GOOD = 5           // green at or above this
+const PEERS_OK = 2             // yellow at or above this, red below
+
+function getSpeedColor(kbps) {
+  if (kbps > SPEED_DOWN_GOOD) return 'text-green-600 dark:text-green-400'
+  if (kbps > SPEED_DOWN_OK) return 'text-yellow-600 dark:text-yellow-400'
+  return 'text-red-600 dark:text-red-400'
+}
+
+function getPeersColor(peers) {
+  if (peers >= PEERS_GOOD) return 'text-green-600 dark:text-green-400'
+  if (peers >= PEERS_OK) return 'text-yellow-600 dark:text-yellow-400'
+  return 'text-red-600 dark:text-red-400'
+}
+
+function AceStreamsTable({ rows, actionStreamId, onAction, metricsHistoryRef, expandedStreamId, onToggleExpand, cursorTime, isLive, zoomLevel }) {
   return (
     <div className="overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8"></TableHead>
             <TableHead>Stream</TableHead>
             <TableHead>State</TableHead>
             <TableHead>Score</TableHead>
-            <TableHead>Reason</TableHead>
             <TableHead>Raw Status</TableHead>
-            <TableHead>Plateau</TableHead>
             <TableHead>FFProbe</TableHead>
-            <TableHead>Samples</TableHead>
-            <TableHead>Played</TableHead>
             <TableHead>Speed Down</TableHead>
             <TableHead>Peers</TableHead>
+            <TableHead>Samples</TableHead>
             <TableHead>Last Collected</TableHead>
             <TableHead>Action</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row.monitor_id}>
-              <TableCell className="font-medium">{row.stream_name || row.content_id}</TableCell>
-              <TableCell>
-                <Badge variant={getManagementVariant(row.management_state)}>{row.management_state}</Badge>
-              </TableCell>
-              <TableCell>{Math.round(row.management_score)}</TableCell>
-              <TableCell>{row.management_reason || '-'}</TableCell>
-              <TableCell>
-                <Badge variant={getStatusVariant(row.status)}>{row.status}</Badge>
-              </TableCell>
-              <TableCell>{formatPercent(row.management_plateau_ratio)}</TableCell>
-              <TableCell>
-                <div className="text-xs leading-5">
-                  <div>{row.resolution}</div>
-                  <div>{row.video_codec}/{row.audio_codec}</div>
-                  <div>{row.hdr_format !== '-' ? row.hdr_format : 'SDR'}</div>
-                  <div>
-                    {row.management_ffprobe_rating} ({row.management_ffprobe_bonus > 0 ? '+' : ''}
-                    {Math.round(row.management_ffprobe_bonus)})
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell>{formatNumber(row.sample_count)}</TableCell>
-              <TableCell>{row.currently_played ? 'Yes' : 'No'}</TableCell>
-              <TableCell>{formatNumber(row.speed_down)}</TableCell>
-              <TableCell>{formatNumber(row.peers)}</TableCell>
-              <TableCell>{formatTime(row.last_collected_at)}</TableCell>
-              <TableCell>
-                {(row.management_state || '').toLowerCase() === 'quarantined' ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onAction(row.stream_id, 'revive')}
-                    disabled={actionStreamId === row.stream_id}
-                  >
-                    <RotateCcw className="h-3 w-3 mr-1" />
-                    Revive
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onAction(row.stream_id, 'quarantine')}
-                    disabled={actionStreamId === row.stream_id}
-                  >
-                    <ShieldAlert className="h-3 w-3 mr-1" />
-                    Quarantine
-                  </Button>
+          {rows.map((row) => {
+            const isExpanded = expandedStreamId === row.stream_id
+            const speedValue = row.speed_down != null ? Number(row.speed_down) : null
+            return (
+              <React.Fragment key={row.monitor_id || row.stream_id}>
+                <TableRow
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => onToggleExpand(row.stream_id)}
+                >
+                  <TableCell className="text-muted-foreground">
+                    {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </TableCell>
+                  <TableCell className="font-medium max-w-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate" title={row.stream_name || row.content_id}>
+                        {row.stream_name || row.content_id}
+                      </span>
+                      {row.currently_played && (
+                        <div className="flex items-center justify-center bg-green-100 dark:bg-green-900/30 p-1 rounded-full" title="Currently Played">
+                          <Radio className="h-3 w-3 text-green-600 dark:text-green-400" />
+                        </div>
+                      )}
+                    </div>
+                    {row.management_reason && row.management_reason !== '-' && (
+                      <div className="text-xs text-muted-foreground mt-1 truncate" title={row.management_reason}>
+                        {row.management_reason}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={getManagementVariant(row.management_state)}>{row.management_state}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2 min-w-[100px]">
+                      <Progress value={row.management_score} className="w-16 h-2" />
+                      <span className={`text-sm font-medium ${row.management_score >= 70 ? 'text-green-600 dark:text-green-400' : row.management_score >= 40 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {Math.round(row.management_score)}%
+                      </span>
+                    </div>
+                    {row.management_plateau_ratio > 0 && (
+                      <div className="text-xs text-orange-500 mt-1">
+                        Plateau: {formatPercent(row.management_plateau_ratio)}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={getStatusVariant(row.status)}>{row.status}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-xs leading-5">
+                      {row.resolution !== '-' && <div className="font-medium">{row.resolution}</div>}
+                      {(row.video_codec !== '-' || row.audio_codec !== '-') && (
+                        <div className="text-muted-foreground">{row.video_codec}/{row.audio_codec}</div>
+                      )}
+                      {row.hdr_format && row.hdr_format !== '-' ? (
+                        <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-[10px] px-1 h-4 mt-0.5">
+                          {row.hdr_format}
+                        </Badge>
+                      ) : null}
+                      {row.management_ffprobe_rating && row.management_ffprobe_rating !== 'unknown' && (
+                        <div className="text-muted-foreground">
+                          {row.management_ffprobe_rating}
+                          {row.management_ffprobe_bonus !== 0 && (
+                            <span className={row.management_ffprobe_bonus > 0 ? 'text-green-500 ml-1' : 'text-red-500 ml-1'}>
+                              ({row.management_ffprobe_bonus > 0 ? '+' : ''}{Math.round(row.management_ffprobe_bonus)})
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {speedValue != null ? (
+                      <span className={`font-mono font-medium ${getSpeedColor(speedValue)}`}>
+                        {speedValue >= SPEED_DOWN_GOOD ? `${(speedValue / 1024).toFixed(1)} MB/s` : `${speedValue} kB/s`}
+                      </span>
+                    ) : '-'}
+                  </TableCell>
+                  <TableCell>
+                    {row.peers != null ? (
+                      <span className={`font-medium ${getPeersColor(Number(row.peers))}`}>
+                        {formatNumber(row.peers)}
+                      </span>
+                    ) : '-'}
+                  </TableCell>
+                  <TableCell className="tabular-nums">{formatNumber(row.sample_count)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{formatTime(row.last_collected_at)}</TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    {(row.management_state || '').toLowerCase() === 'quarantined' ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onAction(row.stream_id, 'revive')}
+                        disabled={actionStreamId === row.stream_id}
+                      >
+                        <RotateCcw className="h-3 w-3 mr-1" />
+                        Revive
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onAction(row.stream_id, 'quarantine')}
+                        disabled={actionStreamId === row.stream_id}
+                        className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950"
+                      >
+                        <ShieldAlert className="h-3 w-3 mr-1" />
+                        Quarantine
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+                {isExpanded && (
+                  <TableRow>
+                    <TableCell colSpan={11} className="bg-muted/30 p-3">
+                      <AceSpeedChart
+                        streamId={row.stream_id}
+                        metricsHistoryRef={metricsHistoryRef}
+                        cursorTime={cursorTime}
+                        isLive={isLive}
+                        zoomLevel={zoomLevel}
+                      />
+                    </TableCell>
+                  </TableRow>
                 )}
-              </TableCell>
-            </TableRow>
-          ))}
+              </React.Fragment>
+            )
+          })}
         </TableBody>
       </Table>
+    </div>
+  )
+}
+
+// Speed chart for a single AceStream stream using client-side accumulated history
+function AceSpeedChart({ streamId, metricsHistoryRef, cursorTime, isLive, zoomLevel }) {
+  const [, forceUpdate] = useState(0)
+
+  // Re-render when metrics are updated (every few seconds)
+  useEffect(() => {
+    const interval = setInterval(() => forceUpdate((n) => n + 1), 3000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const allMetrics = metricsHistoryRef.current[streamId] || []
+
+  const referenceTime = useMemo(() => {
+    if (isLive) {
+      const last = allMetrics[allMetrics.length - 1]
+      return last ? last.timestamp : Math.floor(Date.now() / 1000)
+    }
+    if (cursorTime) return cursorTime
+    const last = allMetrics[allMetrics.length - 1]
+    return last ? last.timestamp : Math.floor(Date.now() / 1000)
+  }, [allMetrics, cursorTime, isLive])
+
+  const endTimestamp = Math.ceil(referenceTime)
+  const startTime = referenceTime - zoomLevel
+
+  const chartData = useMemo(() => {
+    return allMetrics
+      .filter((m) => m.timestamp >= startTime && m.timestamp <= endTimestamp)
+      .map((m) => {
+        const date = new Date(m.timestamp * 1000)
+        const h = date.getHours().toString().padStart(2, '0')
+        const min = date.getMinutes().toString().padStart(2, '0')
+        const s = date.getSeconds().toString().padStart(2, '0')
+        return {
+          time: `${h}:${min}:${s}`,
+          timestamp: m.timestamp,
+          speed_down: m.speed_down != null ? Number(m.speed_down) : 0,
+          peers: m.peers != null ? Number(m.peers) : 0,
+        }
+      })
+  }, [allMetrics, startTime, endTimestamp])
+
+  const formatTimeTick = (ts) => {
+    const d = new Date(ts * 1000)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
+
+  if (allMetrics.length === 0) {
+    return (
+      <div className="h-24 flex items-center justify-center text-muted-foreground text-sm">
+        No metrics recorded yet — data accumulates while the session is active
+      </div>
+    )
+  }
+
+  if (chartData.length === 0) {
+    return (
+      <div className="h-24 flex flex-col items-center justify-center text-muted-foreground text-sm">
+        <span>No data in this time range</span>
+        <span className="text-xs opacity-70">
+          ({formatTimeTick(startTime)} – {formatTimeTick(endTimestamp)})
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground font-medium px-2">Speed Down (kB/s)</div>
+          <ResponsiveContainer width="100%" height={80}>
+            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis
+                dataKey="timestamp"
+                tickFormatter={formatTimeTick}
+                tick={{ fontSize: 10 }}
+                domain={[startTime, endTimestamp]}
+                type="number"
+                interval="preserveStartEnd"
+              />
+              <YAxis tick={{ fontSize: 10 }} width={40} domain={[0, 'auto']} />
+              <RechartsTooltip
+                contentStyle={{
+                  backgroundColor: 'hsl(var(--background))',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                }}
+                labelFormatter={(value) => formatTimeTick(value)}
+                formatter={(value) => [`${value.toFixed(0)} kB/s`, 'Speed Down']}
+              />
+              <Line type="monotone" dataKey="speed_down" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} animationDuration={300} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground font-medium px-2">Peers</div>
+          <ResponsiveContainer width="100%" height={80}>
+            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis
+                dataKey="timestamp"
+                tickFormatter={formatTimeTick}
+                tick={{ fontSize: 10 }}
+                domain={[startTime, endTimestamp]}
+                type="number"
+                interval="preserveStartEnd"
+              />
+              <YAxis tick={{ fontSize: 10 }} width={30} domain={[0, 'auto']} />
+              <RechartsTooltip
+                contentStyle={{
+                  backgroundColor: 'hsl(var(--background))',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                }}
+                labelFormatter={(value) => formatTimeTick(value)}
+                formatter={(value) => [`${value}`, 'Peers']}
+              />
+              <Line type="monotone" dataKey="peers" stroke="hsl(142 76% 36%)" strokeWidth={2} dot={false} animationDuration={300} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
     </div>
   )
 }
