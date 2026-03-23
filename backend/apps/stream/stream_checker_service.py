@@ -1268,6 +1268,10 @@ class StreamCheckerService:
             "channel_layout": stream_data.get("channel_layout"),
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
+            "quality_score": stream_data.get("score"),
+            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else None,
+            "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
+            "loop_score_penalty": stream_data.get("loop_score_penalty"),
         }
         
         # Clean up the payload, removing any None values or N/A values
@@ -1600,6 +1604,7 @@ class StreamCheckerService:
         allow_revive = True
         grace_period = False
         loop_check_enabled = False
+        loop_penalty = 0.0
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -1624,6 +1629,11 @@ class StreamCheckerService:
                 grace_period = profile_stream_checking.get('grace_period', False)
                 loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
                 scoring_weights = profile.get('scoring_weights', None)
+                loop_penalty = float(
+                    (scoring_weights or {}).get('loop_penalty', 0.0)
+                )
+                # Clamp to valid range: -0.25 to 0.0
+                loop_penalty = max(-0.25, min(0.0, loop_penalty))
                 
                 # Also check if checking is enabled at all for this profile
                 if not profile_stream_checking.get('enabled', False):
@@ -2032,11 +2042,6 @@ class StreamCheckerService:
                     analyzed_streams.extend(cached_analyzed_streams)
                     logger.info(f"Merged {len(cached_analyzed_streams)} cached streams with {len(results)} new results. Total candidates: {len(analyzed_streams)}")
 
-                if batch_enabled and batch_stats_list:
-                    logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
-                    successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
-                    logger.info(f"Batch update complete: {successful} successful, {failed} failed")
-                
                 logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
 
             # Run loop probes on eligible streams (top 25% scoring >= 0.5).
@@ -2048,9 +2053,24 @@ class StreamCheckerService:
                 self._run_loop_probes(
                     analyzed_streams,
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
+                    loop_penalty=loop_penalty,
                 )
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
+
+            # Batch stats write after probes so the persisted score and loop
+            # fields reflect the penalised score from this run.
+            if batch_enabled and batch_stats_list:
+                # Rebuild batch list with updated scores post-penalty
+                batch_stats_list = []
+                for analyzed in analyzed_streams:
+                    stats_item = self._prepare_stream_stats_for_batch(analyzed)
+                    if stats_item:
+                        batch_stats_list.append(stats_item)
+            if batch_enabled and batch_stats_list:
+                logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
+                successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
+                logger.info(f"Batch update complete: {successful} successful, {failed} failed")
 
             # Sort streams by score (highest first)
             self.progress.update(
@@ -2315,6 +2335,8 @@ class StreamCheckerService:
         stream_limit = 0
         allow_revive = True
         grace_period = False
+        loop_check_enabled = False
+        loop_penalty = 0.0
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -2339,6 +2361,11 @@ class StreamCheckerService:
                 grace_period = profile_stream_checking.get('grace_period', False)
                 loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
                 scoring_weights = profile.get('scoring_weights', None)
+                loop_penalty = float(
+                    (scoring_weights or {}).get('loop_penalty', 0.0)
+                )
+                # Clamp to valid range: -0.25 to 0.0
+                loop_penalty = max(-0.25, min(0.0, loop_penalty))
                 
                 # Also check if checking is enabled at all for this profile
                 if not profile_stream_checking.get('enabled', False):
@@ -2696,7 +2723,13 @@ class StreamCheckerService:
                 self._run_loop_probes(
                     analyzed_streams,
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
+                    loop_penalty=loop_penalty,
                 )
+                # Second targeted stats write for streams whose score changed
+                # due to the loop penalty — persists the penalised score.
+                for analyzed in analyzed_streams:
+                    if analyzed.get('loop_score_penalty') is not None:
+                        self._update_stream_stats(analyzed)
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
 
@@ -2942,7 +2975,7 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
-    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14') -> None:
+    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0) -> None:
         """
         Run loop detection probes on eligible streams in parallel with
         per-account concurrent limits, then write results back into each
@@ -2969,9 +3002,15 @@ class StreamCheckerService:
           analyzed['loop_duration_secs'] float or None
           analyzed['loop_probe_ran']     True / False
 
+        After all probes complete, applies loop_penalty to the score of any
+        confirmed looping stream (loop_detected is True). Score is floored at
+        0.0 — a looping stream is still better than no stream.
+
         Args:
             analyzed_streams: List of analyzed stream dicts, each with 'score' set.
             user_agent:       HTTP User-Agent forwarded to FFmpeg.
+            loop_penalty:     Negative float (e.g. -0.25) subtracted from score
+                              of looping streams. 0.0 = no penalty.
         """
         import threading
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -3097,6 +3136,24 @@ class StreamCheckerService:
                     )
 
         logger.info(f"[loop-probe] Parallel probe complete — {completed[0]}/{total} streams probed")
+
+        # Apply score penalty to confirmed looping streams.
+        # Only fires when loop_penalty is non-zero and loop_detected is True.
+        # Score is floored at 0.0 — looping is bad but the stream still exists.
+        if loop_penalty < 0.0:
+            penalised = 0
+            for stream in analyzed_streams:
+                if stream.get('loop_detected') is True:
+                    original = stream.get('score', 0.0)
+                    stream['score'] = round(max(0.0, original + loop_penalty), 2)
+                    stream['loop_score_penalty'] = loop_penalty
+                    logger.info(
+                        f"[loop-probe] Penalty applied to '{stream.get('stream_name', 'Unknown')}': "
+                        f"{original:.2f} → {stream['score']:.2f} (penalty={loop_penalty:+.2f})"
+                    )
+                    penalised += 1
+            if penalised:
+                logger.info(f"[loop-probe] Score penalty applied to {penalised} looping stream(s)")
 
     def _calculate_stream_score(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute', scoring_weights: Dict = None) -> float:
         """Calculate a quality score for a stream based on analysis.
