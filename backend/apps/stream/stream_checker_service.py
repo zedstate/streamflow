@@ -2933,8 +2933,9 @@ class StreamCheckerService:
     
     def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14') -> None:
         """
-        Run loop detection probes on eligible streams and write results back
-        into each stream's analyzed dict.
+        Run loop detection probes on eligible streams in parallel with
+        per-account concurrent limits, then write results back into each
+        stream's analyzed dict.
 
         Eligibility criteria (both must be met):
           1. score >= LOOP_PROBE_SCORE_THRESHOLD (stream is healthy)
@@ -2942,8 +2943,18 @@ class StreamCheckerService:
 
         Dead streams (score == 0) and cached streams are never probed.
 
-        Results written into each analyzed dict:
-          analyzed['loop_detected']      True / False / None (not probed)
+        Parallelism uses AccountStreamLimiter directly rather than
+        SmartStreamScheduler to avoid:
+          - URL double-transformation (analyzed dicts already carry the
+            transformed URL used by quality analysis)
+          - Progress/start callback conflicts with the quality analysis UI
+          - Result-shape mismatch (probe returns a tuple, not a dict)
+
+        Account ID comes from the UDI stream record ('m3u_account_id' column,
+        mapped to 'm3u_account' integer expected by AccountStreamLimiter).
+
+        Results written into each analyzed dict (always present after this call):
+          analyzed['loop_detected']      True / False / None (not probed / error)
           analyzed['loop_duration_secs'] float or None
           analyzed['loop_probe_ran']     True / False
 
@@ -2951,7 +2962,10 @@ class StreamCheckerService:
             analyzed_streams: List of analyzed stream dicts, each with 'score' set.
             user_agent:       HTTP User-Agent forwarded to FFmpeg.
         """
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         from apps.stream.stream_check_utils import _probe_stream_for_loops
+        from apps.stream.concurrent_stream_limiter import get_account_limiter
 
         LOOP_PROBE_SCORE_THRESHOLD = 0.5
         LOOP_PROBE_TOP_PERCENTILE  = 0.25   # top 25%
@@ -2978,33 +2992,64 @@ class StreamCheckerService:
         cutoff  = max(1, int(len(candidates_sorted) * LOOP_PROBE_TOP_PERCENTILE))
         eligible = candidates_sorted[:cutoff]
 
+        total = len(eligible)
         logger.info(
-            f"[loop-probe] {len(eligible)} stream(s) eligible for loop probe "
+            f"[loop-probe] {total} stream(s) eligible for loop probe "
             f"(top {int(LOOP_PROBE_TOP_PERCENTILE * 100)}% of {len(candidates_sorted)} "
-            f"scoring >= {LOOP_PROBE_SCORE_THRESHOLD})"
+            f"scoring >= {LOOP_PROBE_SCORE_THRESHOLD}) — running in parallel"
         )
 
-        for stream in eligible:
+        global_limit = self.config.get('concurrent_streams.global_limit', 10)
+        account_limiter = get_account_limiter()
+        udi = get_udi_manager()
+        results_lock = threading.Lock()
+        completed = [0]
+
+        def _probe_one(stream: dict) -> None:
+            """Run one loop probe with account slot acquire/release."""
             stream_url  = stream.get('stream_url', '')
             stream_name = stream.get('stream_name', 'Unknown')
             stream_id   = stream.get('stream_id')
             score       = stream.get('score', 0)
 
+            # Resolve numeric account ID from UDI.
+            # analyzed dicts carry stream_id from quality analysis — use that
+            # to look up the raw stream record which has m3u_account_id.
+            account_id = None
+            try:
+                raw_stream = udi.get_stream_by_id(int(stream_id)) if stream_id else None
+                if raw_stream:
+                    # SQL storage uses m3u_account_id; AccountStreamLimiter
+                    # expects the integer under the key 'm3u_account'
+                    account_id = raw_stream.get('m3u_account_id') or raw_stream.get('m3u_account')
+            except Exception:
+                pass
+
             # Build a short readable tag for log messages
             try:
                 from urllib.parse import urlparse as _up
                 _p    = _up(stream_url)
-                _segs = [s for s in _p.path.split('/') if s]
+                _segs = [seg for seg in _p.path.split('/') if seg]
                 tag   = f"{_p.hostname}/{_segs[-1]}" if _segs else (_p.hostname or stream_url[:20])
             except Exception:
                 tag = stream_url[:30]
 
-            logger.info(
-                f"[loop-probe:{tag}] Probing '{stream_name}' "
-                f"(ID: {stream_id}, score: {score:.2f})"
-            )
+            # Acquire account slot — same mechanism used by quality analysis.
+            # Timeout of 60s: if the account is saturated (e.g. live viewers
+            # consuming all slots) we skip rather than block indefinitely.
+            acquired, reason = account_limiter.acquire(account_id, timeout=60)
+            if not acquired:
+                logger.info(
+                    f"[loop-probe:{tag}] Skipping '{stream_name}' — "
+                    f"account slot unavailable ({reason})"
+                )
+                return
 
             try:
+                logger.info(
+                    f"[loop-probe:{tag}] Probing '{stream_name}' "
+                    f"(ID: {stream_id}, score: {score:.2f})"
+                )
                 loop_detected, loop_duration, frames = _probe_stream_for_loops(
                     url=stream_url,
                     stream_tag=tag,
@@ -3018,8 +3063,29 @@ class StreamCheckerService:
                 logger.error(
                     f"[loop-probe:{tag}] Probe failed for '{stream_name}': {e}"
                 )
-                # loop_detected remains None — callers can distinguish probe error
-                # from a clean result (False) or detected loop (True)
+                # loop_detected remains None — distinguishable from clean (False)
+                # or detected (True)
+            finally:
+                account_limiter.release(account_id)
+                with results_lock:
+                    completed[0] += 1
+                    logger.info(
+                        f"[loop-probe] Completed {completed[0]}/{total}: {stream_name}"
+                    )
+
+        with ThreadPoolExecutor(max_workers=global_limit) as executor:
+            futures = {executor.submit(_probe_one, stream): stream for stream in eligible}
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    stream = futures[future]
+                    logger.error(
+                        f"[loop-probe] Unhandled error for stream "
+                        f"{stream.get('stream_name', 'Unknown')}: {e}"
+                    )
+
+        logger.info(f"[loop-probe] Parallel probe complete — {completed[0]}/{total} streams probed")
 
     def _calculate_stream_score(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute', scoring_weights: Dict = None) -> float:
         """Calculate a quality score for a stream based on analysis.
