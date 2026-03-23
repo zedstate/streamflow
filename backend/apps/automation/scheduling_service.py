@@ -529,8 +529,6 @@ class SchedulingService:
                         epg_event_title=program_title,
                         epg_event_start=program_start_time,
                         epg_event_end=event.get('program_end_time'),
-                        regex_filter=event.get('regex_filter', ''),
-                        match_by_tvg_id=bool(event.get('match_by_tvg_id', False)),
                     )
                     if status_code in (200, 201):
                         logger.info(f"Started AceStream monitoring session {result.get('session_id')} for event {event_id}")

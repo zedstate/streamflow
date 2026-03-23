@@ -5712,13 +5712,11 @@ def create_acestream_channel_session_impl(
     epg_event_start=None,
     epg_event_end=None,
     epg_event_id=None,
-    regex_filter='',
-    match_by_tvg_id=False,
 ):
     """Core logic to create and start an AceStream channel session.
 
-    Stream discovery mirrors standard sessions: regex / TVG-ID filter applied
-    over the full UDI stream list so new streams are found automatically.
+    Stream discovery always uses the channel's automation profile settings
+    (regex filter and TVG-ID matching), the same as FFmpeg-based sessions.
     """
     client, error_response = _acestream_client_or_error()
     if error_response:
@@ -5738,8 +5736,24 @@ def create_acestream_channel_session_impl(
         logo_id = channel.get('logo_id')
         channel_logo_url = f"/api/channels/logos/{logo_id}/cache" if logo_id else channel.get('logo_url')
 
-        # ── Stream discovery (same logic as StreamSessionManager._discover_streams) ──
-        resolved_regex = (regex_filter or '').strip()
+        # ── Stream discovery: always load from channel's automation profile ──
+        # Mirrors what create_session_from_event does for FFmpeg-based sessions.
+        resolved_regex = ''
+        resolved_match_by_tvg_id = False
+        try:
+            from apps.automation.automated_stream_manager import RegexChannelMatcher
+            regex_matcher = RegexChannelMatcher()
+            match_config = regex_matcher.get_channel_match_config(str(channel_id))
+            resolved_match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+            channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=None)
+            if channel_regex:
+                resolved_regex = channel_regex
+            logger.info(
+                f"AceStream session for channel {channel_id}: channel profile "
+                f"(regex='{resolved_regex}', match_by_tvg_id={resolved_match_by_tvg_id})"
+            )
+        except Exception as _e:
+            logger.debug(f"Could not load channel automation profile for AceStream session: {_e}")
 
         compiled_regex = None
         if resolved_regex:
@@ -5750,14 +5764,14 @@ def create_acestream_channel_session_impl(
                 pattern = _re.sub(r'(?<!\\) +', r'\\s+', pattern)
                 compiled_regex = _re.compile(pattern, _re.IGNORECASE)
             except _re.error as exc:
-                logger.error(f"Invalid regex_filter for AceStream session: {exc}")
-                return {'error': f'Invalid regex_filter: {exc}'}, 400
+                logger.error(f"Invalid regex for channel {channel_id} automation profile: {exc}")
+                compiled_regex = None
 
         all_streams = udi.get_streams() or []
         candidate_stream_ids = []
         for s in all_streams:
             matched = False
-            if match_by_tvg_id and channel_tvg_id:
+            if resolved_match_by_tvg_id and channel_tvg_id:
                 if s.get('tvg_id') == channel_tvg_id:
                     matched = True
             if not matched and compiled_regex:
@@ -5768,7 +5782,7 @@ def create_acestream_channel_session_impl(
                 candidate_stream_ids.append(s.get('id'))
 
         # Fallback: if no filter specified at all, use channel's pre-assigned streams
-        if not candidate_stream_ids and not resolved_regex and not (match_by_tvg_id and channel_tvg_id):
+        if not candidate_stream_ids and not resolved_regex and not (resolved_match_by_tvg_id and channel_tvg_id):
             candidate_stream_ids = channel.get('streams', [])
 
         entries = []
@@ -5814,7 +5828,7 @@ def create_acestream_channel_session_impl(
             'channel_logo_url': channel_logo_url,
             'channel_tvg_id': channel_tvg_id,
             'regex_filter': resolved_regex,
-            'match_by_tvg_id': bool(match_by_tvg_id),
+            'match_by_tvg_id': bool(resolved_match_by_tvg_id),
             'epg_event_title': epg_event_title,
             'epg_event_description': epg_event_description,
             'epg_event_start': epg_event_start,
@@ -5828,7 +5842,7 @@ def create_acestream_channel_session_impl(
         logger.info(
             f"Created AceStream session {session_id} for channel {channel_id} "
             f"with {len(entries)} stream(s) "
-            f"(filter: '{resolved_regex or 'channel-streams-fallback'}', tvg_id: {match_by_tvg_id})"
+            f"(filter: '{resolved_regex or 'channel-streams-fallback'}', tvg_id: {resolved_match_by_tvg_id})"
         )
         return {'session_id': session_id, 'message': 'AceStream channel session created', 'monitor_count': len(entries)}, 201
     except requests.RequestException as exc:
@@ -5864,8 +5878,6 @@ def create_acestream_channel_session():
         epg_event_start=data.get('epg_event_start'),
         epg_event_end=data.get('epg_event_end'),
         epg_event_id=data.get('epg_event_id'),
-        regex_filter=data.get('regex_filter', ''),
-        match_by_tvg_id=bool(data.get('match_by_tvg_id', False)),
     )
     return jsonify(result), status_code
 
@@ -5902,8 +5914,6 @@ def create_acestream_group_sessions():
                 'epg_event_start': data.get('epg_event_start'),
                 'epg_event_end': data.get('epg_event_end'),
                 'epg_event_id': data.get('epg_event_id'),
-                'regex_filter': data.get('regex_filter', ''),
-                'match_by_tvg_id': bool(data.get('match_by_tvg_id', False)),
             }
 
             with app.test_request_context('/api/acestream-channel-sessions', method='POST', json=payload):
