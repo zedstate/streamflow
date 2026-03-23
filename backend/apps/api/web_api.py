@@ -4909,6 +4909,15 @@ def _parse_resolution_pixels(resolution):
     return int(match.group(1)) * int(match.group(2))
 
 
+def _parse_resolution_parts(resolution):
+    if not isinstance(resolution, str):
+        return None, None
+    match = re.match(r'^(\d{2,5})x(\d{2,5})$', resolution.strip())
+    if not match:
+        return None, None
+    return int(match.group(1)), int(match.group(2))
+
+
 def _score_ffprobe_quality(ffprobe_stats):
     """Compute quality bonus from cached FFProbe-like stream stats."""
     if not isinstance(ffprobe_stats, dict):
@@ -5187,6 +5196,123 @@ def _evaluate_ace_session_management(raw_session, monitors_by_id, settings):
     return changed
 
 
+def _save_ace_session_telemetry_snapshot(raw_session, monitors_by_id):
+    """Persist Ace monitoring telemetry to DB, deduped by latest monitor sample key."""
+    if not isinstance(raw_session, dict):
+        return False
+
+    entries = raw_session.get('entries') or []
+    if not isinstance(entries, list) or not entries:
+        return False
+
+    pending_entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        monitor = monitors_by_id.get(entry.get('monitor_id'))
+        if not isinstance(monitor, dict):
+            continue
+
+        sample_key = str(monitor.get('last_collected_at') or monitor.get('sample_count') or '')
+        if not sample_key:
+            continue
+        if entry.get('last_telemetry_key') == sample_key:
+            continue
+
+        pending_entries.append((entry, monitor, sample_key))
+
+    if not pending_entries:
+        return False
+
+    from apps.database.connection import get_session as get_db_session
+    from apps.database.models import Run, ChannelHealth, StreamTelemetry
+
+    db_session = get_db_session()
+    try:
+        run_ts = datetime.utcnow()
+        channel_id = int(raw_session.get('channel_id') or 0)
+        channel_name = raw_session.get('channel_name')
+
+        all_monitors = []
+        quarantined_count = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            monitor = monitors_by_id.get(entry.get('monitor_id'))
+            if isinstance(monitor, dict):
+                all_monitors.append(monitor)
+            if (entry.get('management_state') or '').lower() == 'quarantined':
+                quarantined_count += 1
+
+        run = Run(
+            timestamp=run_ts,
+            duration_seconds=0.0,
+            total_channels=1,
+            total_streams=len(entries),
+            global_dead_count=quarantined_count,
+            global_revived_count=0,
+            run_type='acestream_monitor',
+            raw_details=json.dumps({
+                'source_type': 'acestream',
+                'session_id': raw_session.get('session_id'),
+                'channel_id': channel_id,
+                'channel_name': channel_name,
+                'pending_streams': len(pending_entries),
+            }),
+            raw_subentries=None,
+        )
+        db_session.add(run)
+        db_session.flush()
+
+        channel_health = ChannelHealth(
+            run_id=run.id,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            offline=len(all_monitors) == 0,
+            available_streams=max(0, len(entries) - quarantined_count),
+            dead_streams=quarantined_count,
+        )
+        db_session.add(channel_health)
+
+        udi = get_udi_manager()
+        stream_cache = {}
+        for entry, monitor, sample_key in pending_entries:
+            stream_id = int(entry.get('stream_id') or 0)
+            if stream_id not in stream_cache:
+                stream_cache[stream_id] = udi.get_stream_by_id(stream_id) if stream_id else None
+            stream = stream_cache.get(stream_id)
+
+            ffprobe_stats = entry.get('ffprobe_stats') if isinstance(entry.get('ffprobe_stats'), dict) else {}
+            width, height = _parse_resolution_parts(ffprobe_stats.get('resolution'))
+
+            row = StreamTelemetry(
+                run_id=run.id,
+                channel_id=channel_id,
+                provider_id=(stream or {}).get('m3u_account_id') if isinstance(stream, dict) else None,
+                stream_id=stream_id,
+                bitrate_kbps=int(_coerce_float(ffprobe_stats.get('bitrate_kbps')) or 0) or None,
+                resolution_width=width,
+                resolution_height=height,
+                fps=_coerce_float(ffprobe_stats.get('fps')),
+                codec=ffprobe_stats.get('video_codec'),
+                audio_codec=ffprobe_stats.get('audio_codec'),
+                quality_score=_coerce_float(entry.get('management_score')),
+                is_dead=((entry.get('management_state') or '').lower() == 'quarantined'),
+                is_hdr=bool(ffprobe_stats.get('hdr_format')),
+            )
+            db_session.add(row)
+            entry['last_telemetry_key'] = sample_key
+
+        db_session.commit()
+        return True
+    except Exception as exc:
+        db_session.rollback()
+        logger.error(f"Error saving Ace telemetry snapshot: {exc}", exc_info=True)
+        return False
+    finally:
+        db_session.close()
+
+
 def _ace_status_buckets(monitor_items):
     active_states = {'starting', 'running', 'stuck', 'reconnecting'}
     running = 0
@@ -5319,6 +5445,8 @@ def list_acestream_channel_sessions():
                 continue
             raw['session_id'] = session_id
             if _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings):
+                store_changed = True
+            if _save_ace_session_telemetry_snapshot(raw, monitors_by_id):
                 store_changed = True
             summary = _build_ace_channel_session_summary(raw, monitors_by_id)
             if status_filter == 'active' and not summary.get('is_active'):
@@ -5499,6 +5627,9 @@ def get_acestream_channel_session(session_id):
         monitors_by_id = {item.get('monitor_id'): item for item in monitor_items if isinstance(item, dict) and item.get('monitor_id')}
         _annotate_monitors_with_playback(client, monitors_by_id)
         if _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings):
+            store[session_id] = raw
+            _save_ace_channel_sessions_store(store)
+        if _save_ace_session_telemetry_snapshot(raw, monitors_by_id):
             store[session_id] = raw
             _save_ace_channel_sessions_store(store)
 
