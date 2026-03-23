@@ -1163,7 +1163,29 @@ def analyze_stream(
                         logger.warning(f"  {stream_name}: Check failed - {result['status']} ({result_data['elapsed_time']:.2f}s)")
 
                 if result['status'] == "OK":
-                    break
+                    # Check whether FFmpeg ran for a meaningful portion of the
+                    # probe window.  A stream that exits early produced partial
+                    # data that is not representative of sustained delivery.
+                    # Give it another attempt rather than accepting the result.
+                    elapsed  = result_data.get('elapsed_time', ffmpeg_duration)
+                    completed = elapsed >= ffmpeg_duration * EARLY_EXIT_THRESHOLD
+                    if completed:
+                        break
+                    elif attempt < total_attempts - 1:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.warning(
+                                f"  Stream '{stream_name}' exited early "
+                                f"({elapsed:.1f}s / {ffmpeg_duration}s expected) — "
+                                f"retrying (attempt {attempt + 2}/{total_attempts})"
+                            )
+                        else:
+                            logger.warning(
+                                f"  {stream_name} exited early "
+                                f"({elapsed:.1f}s/{ffmpeg_duration}s) — "
+                                f"retrying (attempt {attempt + 2}/{total_attempts})"
+                            )
+                    # If this was the last attempt, fall through without break.
+                    # is_stream_dead() will classify it as 'unstable'.
                 else:
                     if attempt < total_attempts - 1:
                         if logger.isEnabledFor(logging.DEBUG):
