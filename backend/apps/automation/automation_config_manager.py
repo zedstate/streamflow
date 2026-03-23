@@ -224,7 +224,12 @@ class AutomationConfigManager:
             if "name" in profile_data: p.name = profile_data["name"]
             if "description" in profile_data: p.description = profile_data["description"]
             if "enabled" in profile_data: p.enabled = profile_data["enabled"]
-            current_extra = p.extra_settings or {}
+            # Use dict() to create a new object rather than mutating the existing
+            # one in place. SQLAlchemy's JSON column change-detection only fires
+            # when the column attribute is reassigned to a *different* object —
+            # mutating the existing dict silently bypasses dirty tracking and the
+            # change is never written to the database.
+            current_extra = dict(p.extra_settings or {})
             for k,v in profile_data.items():
                 if k not in ['name', 'description', 'enabled', 'parallel_checks', 'id']:
                     current_extra[k] = v
