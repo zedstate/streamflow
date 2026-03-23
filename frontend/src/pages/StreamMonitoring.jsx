@@ -204,7 +204,21 @@ function StreamMonitoring() {
 
   const handleCreateSession = async (sessionData) => {
     try {
-      if (sessionData.group_id) {
+      if (sessionData.session_type === 'acestream') {
+        await aceStreamMonitoringAPI.startSession({
+          content_id: sessionData.content_id,
+          stream_name: sessionData.stream_name,
+          interval_s: sessionData.interval_s,
+          run_seconds: sessionData.run_seconds,
+          per_sample_timeout_s: sessionData.per_sample_timeout_s,
+          engine_container_id: sessionData.engine_container_id || null,
+        });
+
+        toast({
+          title: 'Success',
+          description: 'AceStream session started successfully'
+        });
+      } else if (sessionData.group_id) {
         // Group Monitoring
         const response = await streamSessionsAPI.createGroupSession(sessionData);
         toast({
@@ -230,7 +244,7 @@ function StreamMonitoring() {
 
         // Optionally auto-start the session
         if (sessionData.autoStart) {
-          await handleStartSession(response.data.session_id);
+          await streamSessionsAPI.startSession(response.data.session_id);
         }
       }
 

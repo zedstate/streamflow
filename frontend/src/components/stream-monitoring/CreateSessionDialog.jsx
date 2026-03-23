@@ -12,11 +12,18 @@ import { channelsAPI } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 
 function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
+  const [sessionType, setSessionType] = useState('standard');
   const [mode, setMode] = useState('channel');
   const [channels, setChannels] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
+    content_id: '',
+    stream_name: '',
+    interval_s: 1.0,
+    run_seconds: 0,
+    per_sample_timeout_s: 1.0,
+    engine_container_id: '',
     channel_id: '',
     group_id: '',
     stagger_ms: 1000,
@@ -59,6 +66,28 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
   const handleSubmit = (e) => {
     e.preventDefault();
 
+    if (sessionType === 'acestream') {
+      if (!formData.content_id || !String(formData.content_id).trim()) {
+        toast({
+          title: 'Validation Error',
+          description: 'Please provide an AceStream content ID or stream URL',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      onCreateSession({
+        session_type: 'acestream',
+        content_id: String(formData.content_id).trim(),
+        stream_name: formData.stream_name ? String(formData.stream_name).trim() : undefined,
+        interval_s: Number(formData.interval_s),
+        run_seconds: Number(formData.run_seconds),
+        per_sample_timeout_s: Number(formData.per_sample_timeout_s),
+        engine_container_id: formData.engine_container_id ? String(formData.engine_container_id).trim() : undefined,
+      });
+      return;
+    }
+
     if (mode === 'channel' && !formData.channel_id) {
       toast({
         title: 'Validation Error',
@@ -78,6 +107,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
     }
 
     const payload = {
+      session_type: 'standard',
       ...formData,
       channel_id: mode === 'channel' ? formData.channel_id : undefined,
       group_id: mode === 'group' ? formData.group_id : undefined
@@ -106,8 +136,19 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
         <form onSubmit={handleSubmit}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4">
 
+            <div className="md:col-span-2 space-y-2">
+              <Label>Session Type</Label>
+              <Tabs value={sessionType} onValueChange={setSessionType} className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="standard">Standard Monitoring</TabsTrigger>
+                  <TabsTrigger value="acestream">AceStream Monitoring</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
             {/* Left Column: Target Selection */}
             <div className="space-y-4">
+              {sessionType === 'standard' ? (
               <Tabs value={mode} onValueChange={setMode} className="w-full">
                 <TabsList className="grid w-full grid-cols-2 mb-4">
                   <TabsTrigger value="channel">Single Channel</TabsTrigger>
@@ -162,12 +203,84 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
                   </div>
                 </TabsContent>
               </Tabs>
+              ) : (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="acestream-content-id">Content ID / Stream URL *</Label>
+                    <Input
+                      id="acestream-content-id"
+                      value={formData.content_id}
+                      onChange={(e) => handleChange('content_id', e.target.value)}
+                      placeholder="6422e8bc... or http://host/ace/getstream?id=<id>"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="acestream-name">Stream Name (optional)</Label>
+                    <Input
+                      id="acestream-name"
+                      value={formData.stream_name}
+                      onChange={(e) => handleChange('stream_name', e.target.value)}
+                      placeholder="Example Channel"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="acestream-interval" className="text-xs">Interval (s)</Label>
+                      <Input
+                        id="acestream-interval"
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        value={formData.interval_s}
+                        onChange={(e) => handleChange('interval_s', parseFloat(e.target.value || '1'))}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="acestream-run-seconds" className="text-xs">Run Seconds</Label>
+                      <Input
+                        id="acestream-run-seconds"
+                        type="number"
+                        min="0"
+                        value={formData.run_seconds}
+                        onChange={(e) => handleChange('run_seconds', parseInt(e.target.value || '0', 10))}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2 col-span-2">
+                      <Label htmlFor="acestream-timeout" className="text-xs">Per-Sample Timeout (s)</Label>
+                      <Input
+                        id="acestream-timeout"
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        value={formData.per_sample_timeout_s}
+                        onChange={(e) => handleChange('per_sample_timeout_s', parseFloat(e.target.value || '1'))}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2 col-span-2">
+                      <Label htmlFor="acestream-engine-id" className="text-xs">Engine Container ID (optional)</Label>
+                      <Input
+                        id="acestream-engine-id"
+                        value={formData.engine_container_id}
+                        onChange={(e) => handleChange('engine_container_id', e.target.value)}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Info Alert moved to bottom of left column */}
               <Alert className="mt-6">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription className="text-xs leading-relaxed">
-                  {mode === 'group'
+                  {sessionType === 'acestream'
+                    ? "AceStream sessions are telemetry-only and use orchestrator native monitoring."
+                    : mode === 'group'
                     ? "Group monitoring will create and immediately start sessions for all channels in the selected group."
                     : "Sessions continuously monitor stream quality, capture screenshots, and calculate reliability scores using Capped Sliding Window algorithm."
                   }
@@ -177,6 +290,8 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
 
             {/* Right Column: Settings */}
             <div className="space-y-5">
+              {sessionType === 'standard' ? (
+              <>
 
               {/* Advanced Settings */}
               <div className="border rounded-lg p-4 space-y-4 bg-muted/20">
@@ -290,6 +405,15 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
                   />
                 </div>
               )}
+              </>
+              ) : (
+                <div className="border rounded-lg p-4 space-y-2 bg-muted/20">
+                  <h4 className="text-sm font-medium">AceStream Session Notes</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Interval must be at least 0.5 seconds. Run seconds set to 0 means continuous monitoring until stopped.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -297,9 +421,13 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || (mode === 'channel' ? !formData.channel_id : !formData.group_id)} className="gap-2">
+            <Button
+              type="submit"
+              disabled={loading || (sessionType === 'acestream' ? !formData.content_id : (mode === 'channel' ? !formData.channel_id : !formData.group_id))}
+              className="gap-2"
+            >
               <MonitorPlay className="h-4 w-4" />
-              {mode === 'group' ? 'Start Group Monitoring' : 'Create Session'}
+              {sessionType === 'acestream' ? 'Start AceStream Monitoring' : (mode === 'group' ? 'Start Group Monitoring' : 'Create Session')}
             </Button>
           </DialogFooter>
         </form>
