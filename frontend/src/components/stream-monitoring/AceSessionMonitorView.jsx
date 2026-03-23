@@ -108,6 +108,7 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
           timestamp: now,
           speed_down: latest.speed_down != null ? Number(latest.speed_down) : null,
           peers: latest.peers != null ? Number(latest.peers) : null,
+          last_ts: latest.last_ts != null ? Number(latest.last_ts) : null,
           management_score: Number(entry.management_score || 0),
           management_state: entry.management_state || 'review',
           management_reason: entry.management_reason || null,
@@ -391,24 +392,6 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
         <StatsCard title="Played Streams" value={formatNumber(playedCount)} icon={Activity} />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Session Lifecycle</CardTitle>
-          <CardDescription>Channel-level AceStream session metadata</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <InfoItem label="Session ID" value={session.session_id} />
-            <InfoItem label="Channel" value={session.channel_name || '-'} />
-            <InfoItem label="Created" value={formatTime(session.created_at)} />
-            <InfoItem label="Monitor Count" value={formatNumber(session.monitor_count)} />
-            <InfoItem label="Total Streams" value={formatNumber(session.stream_count)} />
-            <InfoItem label="Total Samples" value={formatNumber(session.sample_count)} />
-            <InfoItem label="Channel ID" value={formatNumber(session.channel_id)} />
-            <InfoItem label="Played Streams" value={formatNumber(session.played_count)} />
-          </div>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
@@ -554,7 +537,6 @@ function AceStreamsTable({ rows, actionStreamId, onAction, metricsHistoryRef, ex
             <TableHead>FFProbe</TableHead>
             <TableHead>Speed Down</TableHead>
             <TableHead>Peers</TableHead>
-            <TableHead>Samples</TableHead>
             <TableHead>Last Collected</TableHead>
             <TableHead>Action</TableHead>
           </TableRow>
@@ -645,7 +627,6 @@ function AceStreamsTable({ rows, actionStreamId, onAction, metricsHistoryRef, ex
                       </span>
                     ) : '-'}
                   </TableCell>
-                  <TableCell className="tabular-nums">{formatNumber(row.sample_count)}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{formatTime(row.last_collected_at)}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {(row.management_state || '').toLowerCase() === 'quarantined' ? (
@@ -674,7 +655,7 @@ function AceStreamsTable({ rows, actionStreamId, onAction, metricsHistoryRef, ex
                 </TableRow>
                 {isExpanded && (
                   <TableRow>
-                    <TableCell colSpan={11} className="bg-muted/30 p-3">
+                    <TableCell colSpan={10} className="bg-muted/30 p-3">
                       <AceSpeedChart
                         streamId={row.stream_id}
                         metricsHistoryRef={metricsHistoryRef}
@@ -722,16 +703,29 @@ function AceSpeedChart({ streamId, metricsHistoryRef, cursorTime, isLive, zoomLe
   const chartData = useMemo(() => {
     return allMetrics
       .filter((m) => m.timestamp >= startTime && m.timestamp <= endTimestamp)
-      .map((m) => {
+      .map((m, index, arr) => {
         const date = new Date(m.timestamp * 1000)
         const h = date.getHours().toString().padStart(2, '0')
         const min = date.getMinutes().toString().padStart(2, '0')
         const s = date.getSeconds().toString().padStart(2, '0')
+        // Calculate last_ts delta relative to previous sample (only when timestamps are ordered)
+        const prev = arr[index - 1]
+        const last_ts_delta = (
+          index > 0 &&
+          prev &&
+          prev.last_ts != null &&
+          m.last_ts != null &&
+          prev.timestamp < m.timestamp
+        )
+          ? m.last_ts - prev.last_ts
+          : null
         return {
           time: `${h}:${min}:${s}`,
           timestamp: m.timestamp,
           speed_down: m.speed_down != null ? Number(m.speed_down) : 0,
           peers: m.peers != null ? Number(m.peers) : 0,
+          last_ts: m.last_ts != null ? Number(m.last_ts) : null,
+          last_ts_delta: last_ts_delta,
         }
       })
   }, [allMetrics, startTime, endTimestamp])
@@ -816,6 +810,62 @@ function AceSpeedChart({ streamId, metricsHistoryRef, cursorTime, isLive, zoomLe
                 formatter={(value) => [`${value}`, 'Peers']}
               />
               <Line type="monotone" dataKey="peers" stroke="hsl(142 76% 36%)" strokeWidth={2} dot={false} animationDuration={300} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-1">
+          <div className="text-xs text-orange-500 font-medium px-2">last_ts (stream position)</div>
+          <ResponsiveContainer width="100%" height={80}>
+            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis
+                dataKey="timestamp"
+                tickFormatter={formatTimeTick}
+                tick={{ fontSize: 10 }}
+                domain={[startTime, endTimestamp]}
+                type="number"
+                interval="preserveStartEnd"
+              />
+              <YAxis tick={{ fontSize: 10 }} width={50} domain={['auto', 'auto']} />
+              <RechartsTooltip
+                contentStyle={{
+                  backgroundColor: 'hsl(var(--background))',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                }}
+                labelFormatter={(value) => formatTimeTick(value)}
+                formatter={(value) => [value != null ? value.toFixed(2) : '-', 'last_ts']}
+              />
+              <Line type="monotone" dataKey="last_ts" stroke="hsl(25 95% 53%)" strokeWidth={2} dot={false} animationDuration={300} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-1">
+          <div className="text-xs text-orange-500 font-medium px-2">last_ts delta (advancement rate)</div>
+          <ResponsiveContainer width="100%" height={80}>
+            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis
+                dataKey="timestamp"
+                tickFormatter={formatTimeTick}
+                tick={{ fontSize: 10 }}
+                domain={[startTime, endTimestamp]}
+                type="number"
+                interval="preserveStartEnd"
+              />
+              <YAxis tick={{ fontSize: 10 }} width={50} domain={['auto', 'auto']} />
+              <RechartsTooltip
+                contentStyle={{
+                  backgroundColor: 'hsl(var(--background))',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                }}
+                labelFormatter={(value) => formatTimeTick(value)}
+                formatter={(value) => [value != null ? `${value.toFixed(3)}s` : '-', 'Δlast_ts']}
+              />
+              <Line type="monotone" dataKey="last_ts_delta" stroke="hsl(0 84% 60%)" strokeWidth={2} dot={false} animationDuration={300} connectNulls />
             </LineChart>
           </ResponsiveContainer>
         </div>

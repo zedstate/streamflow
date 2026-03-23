@@ -617,7 +617,7 @@ function SessionCard({ session, onView, onStart, onStop, onDelete, selected, onT
 
   return (
     <Card
-      className={`hover:shadow-lg transition-shadow cursor-pointer relative group ${selected ? 'ring-2 ring-primary border-primary' : ''}`}
+      className={`hover:shadow-lg transition-shadow cursor-pointer relative group ${selected ? 'ring-2 ring-primary border-primary' : session.source_type === 'acestream' ? 'border-orange-400 dark:border-orange-500' : ''}`}
       onClick={() => onView(session)}
     >
       <div
@@ -685,15 +685,6 @@ function SessionCard({ session, onView, onStart, onStop, onDelete, selected, onT
             </div>
           </div>
 
-          {session.source_type === 'acestream' && (
-            <div className="flex gap-2 flex-wrap">
-              <Badge variant="outline">monitors: {session.monitor_count || 0}</Badge>
-              <Badge variant="outline">samples: {session.sample_count || 0}</Badge>
-              <Badge variant={(session.played_count || 0) > 0 ? 'default' : 'secondary'}>
-                played: {session.played_count || 0}
-              </Badge>
-            </div>
-          )}
 
 
 
