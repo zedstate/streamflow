@@ -383,7 +383,14 @@ export default function StreamChecker() {
             {progress.streams_detail && progress.streams_detail.length > 0 && (() => {
               // Sort: completed/dead/error by score desc first, then checking, then pending.
               // Re-evaluates on every render so the table self-organises as results arrive.
-              const STATUS_ORDER = { completed: 0, dead: 0, error: 0, loop_detected: 0, probing: 1, checking: 2, pending: 3 }
+              // Sort order switches based on which phase is active.
+              // During quality analysis: completed rises, dead/error sink.
+              // During loop testing: probing streams rise to top so active
+              // probes are immediately visible above completed streams.
+              const isLoopPhase = progress.step === 'Loop testing'
+              const STATUS_ORDER = isLoopPhase
+                ? { probing: 0, loop_detected: 1, completed: 2, checking: 3, pending: 4, error: 5, dead: 5 }
+                : { completed: 0, checking: 1, pending: 2, error: 3, dead: 3 }
               const maxWorkers = status?.parallel?.max_workers || 6
               const rowHeight = 44  // px — accounts for both single and double-line rows
               const headerHeight = 32  // px — h-8
