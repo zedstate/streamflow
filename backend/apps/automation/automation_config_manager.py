@@ -479,17 +479,65 @@ class AutomationConfigManager:
         effective.update(self.get_channel_periods(channel_id))
         return effective
 
-    def get_period_channels(self, period_id: str) -> List[int]:
-        assignments = self._get_config_dict("channel_period_assignments", {})
+    def get_effective_period_channel_profiles(self, period_id: str) -> Dict[int, str]:
+        """Return effective channel -> profile assignments for a period.
+
+        Group-level assignments are used as the base and channel-level assignments override them.
+        """
         pid = str(period_id)
-        channels: List[int] = []
-        for cid, period_map in assignments.items():
-            if isinstance(period_map, dict) and pid in period_map:
-                try:
-                    channels.append(int(cid))
-                except (TypeError, ValueError):
-                    continue
-        return channels
+        effective_assignments: Dict[int, str] = {}
+
+        # Base assignments from group-level period/profile mappings.
+        group_assignments = self._get_config_dict("group_period_assignments", {})
+        groups_with_period: Dict[int, str] = {}
+        for gid_raw, period_map in group_assignments.items():
+            if not isinstance(period_map, dict) or pid not in period_map:
+                continue
+            try:
+                gid = int(gid_raw)
+            except (TypeError, ValueError):
+                continue
+            profile_id = period_map.get(pid)
+            if profile_id:
+                groups_with_period[gid] = str(profile_id)
+
+        if groups_with_period:
+            try:
+                from apps.udi import get_udi_manager
+                udi = get_udi_manager()
+                for gid, profile_id in groups_with_period.items():
+                    channels = udi.get_channels_by_group(gid) or []
+                    for channel in channels:
+                        channel_id_raw = channel.get('id')
+                        try:
+                            channel_id = int(channel_id_raw)
+                        except (TypeError, ValueError):
+                            continue
+                        effective_assignments[channel_id] = profile_id
+            except Exception as e:
+                logger.warning(
+                    "Failed to resolve group period assignments for period %s via UDI: %s",
+                    pid,
+                    e,
+                )
+
+        # Channel-level assignments override group-level assignments.
+        channel_assignments = self._get_config_dict("channel_period_assignments", {})
+        for cid_raw, period_map in channel_assignments.items():
+            if not isinstance(period_map, dict) or pid not in period_map:
+                continue
+            try:
+                channel_id = int(cid_raw)
+            except (TypeError, ValueError):
+                continue
+            profile_id = period_map.get(pid)
+            if profile_id:
+                effective_assignments[channel_id] = str(profile_id)
+
+        return effective_assignments
+
+    def get_period_channels(self, period_id: str) -> List[int]:
+        return sorted(self.get_effective_period_channel_profiles(period_id).keys())
 
     # --- Group Period Assignments ---
 
