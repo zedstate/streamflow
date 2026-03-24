@@ -420,7 +420,40 @@ class AutomationConfigManager:
             p = session.query(AutomationPeriod).get(pid)
             if not p: return False
             session.delete(p)
-            session.commit(); return True
+            session.commit()
+
+            # Remove orphaned references to deleted period from assignment maps.
+            pid_str = str(period_id)
+            changed = False
+
+            channel_assignments = self._get_config_dict("channel_period_assignments", {})
+            if isinstance(channel_assignments, dict):
+                for cid, period_map in list(channel_assignments.items()):
+                    if not isinstance(period_map, dict):
+                        continue
+                    if pid_str in period_map:
+                        del period_map[pid_str]
+                        if not period_map:
+                            del channel_assignments[cid]
+                        changed = True
+                if changed:
+                    self._set_config_dict("channel_period_assignments", channel_assignments)
+
+            group_assignments = self._get_config_dict("group_period_assignments", {})
+            group_changed = False
+            if isinstance(group_assignments, dict):
+                for gid, period_map in list(group_assignments.items()):
+                    if not isinstance(period_map, dict):
+                        continue
+                    if pid_str in period_map:
+                        del period_map[pid_str]
+                        if not period_map:
+                            del group_assignments[gid]
+                        group_changed = True
+                if group_changed:
+                    self._set_config_dict("group_period_assignments", group_assignments)
+
+            return True
         except: session.rollback(); return False
         finally: session.close()
 
@@ -501,10 +534,21 @@ class AutomationConfigManager:
             if profile_id:
                 groups_with_period[gid] = str(profile_id)
 
+        valid_channel_ids: Optional[set] = None
+        try:
+            from apps.udi import get_udi_manager
+            udi = get_udi_manager()
+            udi_channels = udi.get_channels() or []
+            valid_channel_ids = {
+                int(ch.get('id'))
+                for ch in udi_channels
+                if isinstance(ch, dict) and ch.get('id') is not None
+            }
+        except Exception:
+            valid_channel_ids = None
+
         if groups_with_period:
             try:
-                from apps.udi import get_udi_manager
-                udi = get_udi_manager()
                 for gid, profile_id in groups_with_period.items():
                     channels = udi.get_channels_by_group(gid) or []
                     for channel in channels:
@@ -512,6 +556,8 @@ class AutomationConfigManager:
                         try:
                             channel_id = int(channel_id_raw)
                         except (TypeError, ValueError):
+                            continue
+                        if valid_channel_ids is not None and channel_id not in valid_channel_ids:
                             continue
                         effective_assignments[channel_id] = profile_id
             except Exception as e:
@@ -529,6 +575,8 @@ class AutomationConfigManager:
             try:
                 channel_id = int(cid_raw)
             except (TypeError, ValueError):
+                continue
+            if valid_channel_ids is not None and channel_id not in valid_channel_ids:
                 continue
             profile_id = period_map.get(pid)
             if profile_id:
@@ -605,9 +653,8 @@ class AutomationConfigManager:
 
     def is_period_active_now(self, period_id: str) -> bool: return True
 
-    def get_active_periods_for_channel(self, channel_id: int) -> List[Dict]:
-        assignments = self._get_config_dict("channel_period_assignments", {})
-        pid_profile = assignments.get(str(channel_id), {})
+    def get_active_periods_for_channel(self, channel_id: int, group_id: Optional[int] = None) -> List[Dict]:
+        pid_profile = self.get_effective_channel_periods(channel_id, group_id)
         res = []
         for pid, profile_id in pid_profile.items():
             period = self.get_period(pid)
@@ -619,7 +666,7 @@ class AutomationConfigManager:
         return res
 
     def get_effective_configuration(self, channel_id: int, group_id: Optional[int] = None) -> Optional[Dict]:
-        active_periods = self.get_active_periods_for_channel(channel_id)
+        active_periods = self.get_active_periods_for_channel(channel_id, group_id)
         if active_periods:
             if len(active_periods) > 1: active_periods.sort(key=lambda p: (-int(p.get('priority', 0)), p.get('id', '')))
             period = active_periods[0]

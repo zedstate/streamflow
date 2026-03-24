@@ -1306,11 +1306,16 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
             {channel.automation_periods_count || 0} period{channel.automation_periods_count !== 1 ? 's' : ''}
           </Badge>
         </div>
-        <div className="flex items-center">
+        <div className="flex items-center gap-2 flex-wrap">
           {patternCount > 0 ? (
             <Badge variant="secondary">{patternCount} pattern{patternCount > 1 ? 's' : ''}</Badge>
           ) : (
             <span className="text-sm text-muted-foreground">No patterns</span>
+          )}
+          {matchByTvgId && (
+            <Badge variant="default" className="text-xs">
+              TVG-ID
+            </Badge>
           )}
         </div>
         <div className="flex items-center gap-2">

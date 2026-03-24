@@ -129,7 +129,10 @@ class AutomationEventsScheduler:
         
         for period in all_periods:
             period_id = period.get('id')
-            period_name = period.get('name', 'Unknown')
+            period_name_raw = period.get('name', '')
+            period_name = str(period_name_raw).strip() if period_name_raw is not None else ''
+            if not period_name:
+                period_name = f"Period {period_id}"
             
             # Resolve effective channel -> profile assignments for this period.
             # Includes group-level assignments with channel-level overrides.

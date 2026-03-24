@@ -4483,6 +4483,15 @@ def get_group_automation_periods(group_id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 
+def _invalidate_events_cache_safely() -> None:
+    """Best-effort cache invalidation after period/assignment changes."""
+    try:
+        from apps.automation.automation_events_scheduler import get_events_scheduler
+        get_events_scheduler().invalidate_cache()
+    except Exception as e:
+        logger.debug(f"Could not invalidate automation events cache: {e}")
+
+
 @app.route('/api/automation/periods/<period_id>/assign-groups', methods=['POST'])
 @log_function_call
 def assign_period_to_groups(period_id):
@@ -4501,6 +4510,7 @@ def assign_period_to_groups(period_id):
             return jsonify({"error": "profile_id is required"}), 400
 
         if automation_config.assign_period_to_groups(period_id, group_ids, profile_id, replace):
+            _invalidate_events_cache_safely()
             return jsonify({
                 "message": f"Period {period_id} with profile {profile_id} assigned to {len(group_ids)} groups",
                 "group_ids": group_ids
@@ -4527,6 +4537,7 @@ def remove_period_from_groups(period_id):
             return jsonify({"error": "group_ids list is required"}), 400
 
         if automation_config.remove_period_from_groups(period_id, group_ids):
+            _invalidate_events_cache_safely()
             return jsonify({
                 "message": f"Period {period_id} removed from {len(group_ids)} groups"
             }), 200
@@ -4576,6 +4587,8 @@ def batch_assign_periods_to_groups():
             profile_id = assignment['profile_id']
             automation_config.assign_period_to_groups(pid, group_ids, profile_id, replace and is_first)
             is_first = False
+
+        _invalidate_events_cache_safely()
 
         return jsonify({
             "message": f"Assigned {len(period_assignments)} period-profile pairs to {len(group_ids)} groups"
@@ -4654,6 +4667,7 @@ def handle_automation_periods():
                 
             period_id = automation_config.create_period(data)
             if period_id:
+                _invalidate_events_cache_safely()
                 period = automation_config.get_period(period_id)
                 return jsonify(period), 201
             else:
@@ -4695,6 +4709,7 @@ def handle_automation_period(period_id):
                         return jsonify({"error": "Invalid cron expression"}), 400
                 
             if automation_config.update_period(period_id, data):
+                _invalidate_events_cache_safely()
                 period = automation_config.get_period(period_id)
                 return jsonify(period), 200
             else:
@@ -4702,6 +4717,7 @@ def handle_automation_period(period_id):
                 
         elif request.method == 'DELETE':
             if automation_config.delete_period(period_id):
+                _invalidate_events_cache_safely()
                 return jsonify({"message": "Period deleted"}), 200
             else:
                 return jsonify({"error": "Period not found or delete failed"}), 404
@@ -4729,6 +4745,7 @@ def assign_period_to_channels(period_id):
             return jsonify({"error": "profile_id is required"}), 400
             
         if automation_config.assign_period_to_channels(period_id, channel_ids, profile_id, replace):
+            _invalidate_events_cache_safely()
             return jsonify({
                 "message": f"Period {period_id} with profile {profile_id} assigned to {len(channel_ids)} channels",
                 "channel_ids": channel_ids
@@ -4755,6 +4772,7 @@ def remove_period_from_channels(period_id):
             return jsonify({"error": "channel_ids list is required"}), 400
             
         if automation_config.remove_period_from_channels(period_id, channel_ids):
+            _invalidate_events_cache_safely()
             return jsonify({
                 "message": f"Period {period_id} removed from {len(channel_ids)} channels"
             }), 200
