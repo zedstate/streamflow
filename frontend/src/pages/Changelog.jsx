@@ -132,6 +132,9 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                     {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
                       <TableHead>Score</TableHead>
                     )}
+                    {item.stats.stream_details.some(s => s.loop_probe_ran) && (
+                      <TableHead>Loop</TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -160,6 +163,23 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                         <TableCell>{streamDetail.video_codec || 'N/A'}</TableCell>
                         {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
                           <TableCell>{streamDetail.score !== undefined && streamDetail.score !== null ? streamDetail.score.toFixed(2) : 'N/A'}</TableCell>
+                        )}
+                        {item.stats.stream_details.some(s => s.loop_probe_ran) && (
+                          <TableCell>
+                            {streamDetail.loop_probe_ran ? (
+                              streamDetail.loop_detected === true ? (
+                                <span className="text-amber-500 font-medium text-xs">
+                                  ⚠ {streamDetail.loop_duration_secs ? `${streamDetail.loop_duration_secs.toFixed(1)}s` : 'Loop'}
+                                </span>
+                              ) : streamDetail.loop_detected === false ? (
+                                <span className="text-muted-foreground text-xs">✓</span>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
+                              )
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </TableCell>
                         )}
                       </TableRow>
                     ))}
