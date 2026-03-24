@@ -3869,7 +3869,8 @@ class StreamCheckerService:
                 if m3u_account_id:
                     m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
                 
-                check_stats['stream_details'].append({
+                # Build stream detail dict — include loop results if persisted
+                stream_detail = {
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
                     'resolution': formatted_stats['resolution'],
@@ -3879,7 +3880,18 @@ class StreamCheckerService:
                     'score': score,
                     'm3u_account': m3u_account_name,
                     'hdr_format': extracted_stats.get('hdr_format')
-                })
+                }
+
+                # Loop detection results are persisted to stream_stats by
+                # _prepare_stream_stats_for_batch / _update_stream_stats.
+                # Read them back here so the single-channel changelog entry
+                # shows the Loop column the same as the batch path.
+                if stream_stats.get('loop_probe_ran'):
+                    stream_detail['loop_probe_ran']     = True
+                    stream_detail['loop_detected']      = stream_stats.get('loop_detected')
+                    stream_detail['loop_duration_secs'] = stream_stats.get('loop_duration_secs')
+
+                check_stats['stream_details'].append(stream_detail)
             
             # Calculate duration
             end_time = time_module.time()
