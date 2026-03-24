@@ -2726,10 +2726,13 @@ class StreamCheckerService:
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
                 )
-                # Second targeted stats write for streams whose score changed
-                # due to the loop penalty — persists the penalised score.
+                # Write stats for all probed streams so loop fields
+                # (loop_probe_ran, loop_detected, loop_duration_secs) are
+                # persisted to the database regardless of whether a penalty
+                # was applied. Streams with a penalty get their updated score
+                # persisted here too.
                 for analyzed in analyzed_streams:
-                    if analyzed.get('loop_score_penalty') is not None:
+                    if analyzed.get('loop_probe_ran'):
                         self._update_stream_stats(analyzed)
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -3814,7 +3817,11 @@ class StreamCheckerService:
             else:
                 logger.info(f"Step 6/6: Skipping stream checking (checking is disabled for this channel)")
             
-            # Gather statistics after check using centralized utility
+            # Gather statistics after check using centralized utility.
+            # Refresh UDI cache first so stream_stats reflect the post-probe
+            # database state — loop fields written by _update_stream_stats
+            # won't be visible otherwise.
+            udi.refresh_streams()
             streams = fetch_channel_streams(channel_id)
             total_streams = len(streams)
             
@@ -3830,8 +3837,16 @@ class StreamCheckerService:
                 'stream_details': []
             }
             
-            # Add top stream details using centralized extraction
-            for stream in streams[:10]:  # Top 10 streams
+            # Sort streams by persisted quality_score descending so the
+            # highest-ranked streams (including any that were loop-probed)
+            # appear first. No arbitrary cap — all streams are included so
+            # loop results are never hidden by a slice.
+            streams_sorted = sorted(
+                streams,
+                key=lambda s: (s.get('stream_stats') or {}).get('quality_score') or 0,
+                reverse=True
+            )
+            for stream in streams_sorted:
                 # Extract stats using centralized utility
                 extracted_stats = extract_stream_stats(stream)
                 formatted_stats = format_stream_stats_for_display(extracted_stats)
