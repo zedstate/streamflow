@@ -2062,6 +2062,7 @@ class StreamCheckerService:
                     loop_penalty=loop_penalty,
                     channel_id=channel_id,
                     channel_name=channel_name,
+                    streams_detail=list(stream_statuses.values()),
                 )
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -2735,6 +2736,7 @@ class StreamCheckerService:
                     loop_penalty=loop_penalty,
                     channel_id=channel_id,
                     channel_name=channel_name,
+                    streams_detail=None,
                 )
                 # Write stats for all probed streams so loop fields
                 # (loop_probe_ran, loop_detected, loop_duration_secs) are
@@ -2990,7 +2992,7 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
-    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, channel_id: int = 0, channel_name: str = '') -> None:
+    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, channel_id: int = 0, channel_name: str = '', streams_detail: Optional[list] = None) -> None:
         """
         Run loop detection probes on eligible streams in parallel with
         per-account concurrent limits, then write results back into each
@@ -3064,6 +3066,23 @@ class StreamCheckerService:
             f"scoring >= {LOOP_PROBE_SCORE_THRESHOLD}) — running in parallel"
         )
 
+        # Build a mutable streams_detail dict for the loop probe phase.
+        # Reuse the snapshot passed in from quality analysis (preserves specs/scores
+        # for non-probed streams). Mark eligible streams as 'probing' so the UI
+        # shows which streams are actively being tested.
+        # Keyed by stream_id for O(1) updates inside _probe_one threads.
+        probe_detail: dict = {}
+        if streams_detail:
+            for entry in streams_detail:
+                sid = entry.get('id') or entry.get('stream_id')
+                if sid is not None:
+                    probe_detail[sid] = dict(entry)  # shallow copy — safe to mutate
+
+        eligible_ids = {s.get('stream_id') for s in eligible}
+        for sid, entry in probe_detail.items():
+            if sid in eligible_ids:
+                entry['status'] = 'probing'
+
         # Reset progress bar for loop testing phase so the UI reflects
         # what's happening rather than showing a frozen 100% from quality analysis.
         if channel_id:
@@ -3074,7 +3093,8 @@ class StreamCheckerService:
                 total=total,
                 status='analyzing',
                 step='Loop testing',
-                step_detail=f'Probing {total} stream(s) for looping content'
+                step_detail=f'Probing {total} stream(s) for looping content',
+                streams_detail=list(probe_detail.values()) if probe_detail else None
             )
 
         global_limit = self.config.get('concurrent_streams.global_limit', 10)
@@ -3150,6 +3170,15 @@ class StreamCheckerService:
                     logger.info(
                         f"[loop-probe] Completed {completed[0]}/{total}: {stream_name}"
                     )
+                    # Update this stream's entry in probe_detail so the grid
+                    # reflects the probe outcome immediately.
+                    if probe_detail and stream_id in probe_detail:
+                        loop_result = stream.get('loop_detected')
+                        if loop_result is True:
+                            probe_detail[stream_id]['status'] = 'loop_detected'
+                        else:
+                            probe_detail[stream_id]['status'] = 'completed'
+
                     if channel_id:
                         self.progress.update(
                             channel_id=channel_id,
@@ -3158,7 +3187,8 @@ class StreamCheckerService:
                             total=total,
                             status='analyzing',
                             step='Loop testing',
-                            step_detail=f'Completed {completed[0]}/{total}: {stream_name}'
+                            step_detail=f'Completed {completed[0]}/{total}: {stream_name}',
+                            streams_detail=list(probe_detail.values()) if probe_detail else None
                         )
 
         with ThreadPoolExecutor(max_workers=global_limit) as executor:
