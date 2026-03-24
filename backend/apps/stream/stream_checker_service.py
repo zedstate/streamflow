@@ -1353,6 +1353,11 @@ class StreamCheckerService:
             "channel_layout": stream_data.get("channel_layout"),
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
+            "quality_score": stream_data.get("score"),
+            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else None,
+            "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
+            "loop_score_penalty": stream_data.get("loop_score_penalty"),
+            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else None,
         }
         
         # Clean up the payload, removing any None values or N/A values
@@ -2194,8 +2199,9 @@ class StreamCheckerService:
 
                     # Include loop detection results if the probe ran
                     if analyzed.get('loop_probe_ran'):
-                        stream_stat['loop_detected']      = analyzed.get('loop_detected')
-                        stream_stat['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+                        stream_stat['loop_probe_ran']      = True
+                        stream_stat['loop_detected']       = analyzed.get('loop_detected')
+                        stream_stat['loop_duration_secs']  = analyzed.get('loop_duration_secs')
 
                     # Clean up N/A values for cleaner JSON
                     cleaned_stat = {k: v for k, v in stream_stat.items() if v not in [None]}
@@ -2725,10 +2731,13 @@ class StreamCheckerService:
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
                 )
-                # Second targeted stats write for streams whose score changed
-                # due to the loop penalty — persists the penalised score.
+                # Write stats for all probed streams so loop fields
+                # (loop_probe_ran, loop_detected, loop_duration_secs) are
+                # persisted to the database regardless of whether a penalty
+                # was applied. Streams with a penalty get their updated score
+                # persisted here too.
                 for analyzed in analyzed_streams:
-                    if analyzed.get('loop_score_penalty') is not None:
+                    if analyzed.get('loop_probe_ran'):
                         self._update_stream_stats(analyzed)
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -2868,8 +2877,9 @@ class StreamCheckerService:
 
                         # Include loop detection results if the probe ran
                         if analyzed.get('loop_probe_ran'):
-                            stream_stat['loop_detected']      = analyzed.get('loop_detected')
-                            stream_stat['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+                            stream_stat['loop_probe_ran']      = True
+                            stream_stat['loop_detected']       = analyzed.get('loop_detected')
+                            stream_stat['loop_duration_secs']  = analyzed.get('loop_duration_secs')
 
                         # Clean up N/A values for cleaner output
                         stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
@@ -3752,8 +3762,8 @@ class StreamCheckerService:
                     from apps.automation.automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
-                    # Run validation - respects automation_controls.remove_non_matching_streams setting
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    # Run validation scoped to this channel only
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams(channel_id=channel_id)
                     if validation_results.get("streams_removed", 0) > 0:
                         logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams")
                     else:
@@ -3772,9 +3782,9 @@ class StreamCheckerService:
                     from apps.automation.automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
-                    # Run full discovery (this will add new matching streams but skip dead ones)
+                    # Run discovery scoped to this channel only
                     # Skip automatic check trigger since we'll perform the check explicitly in Step 6
-                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
+                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True, channel_id=channel_id)
                     if assignments:
                         logger.info(f"✓ Stream matching completed")
                     else:
@@ -3812,7 +3822,11 @@ class StreamCheckerService:
             else:
                 logger.info(f"Step 6/6: Skipping stream checking (checking is disabled for this channel)")
             
-            # Gather statistics after check using centralized utility
+            # Gather statistics after check using centralized utility.
+            # Refresh UDI cache first so stream_stats reflect the post-probe
+            # database state — loop fields written by _update_stream_stats
+            # won't be visible otherwise.
+            udi.refresh_streams()
             streams = fetch_channel_streams(channel_id)
             total_streams = len(streams)
             
@@ -3828,8 +3842,16 @@ class StreamCheckerService:
                 'stream_details': []
             }
             
-            # Add top stream details using centralized extraction
-            for stream in streams[:10]:  # Top 10 streams
+            # Sort streams by persisted quality_score descending so the
+            # highest-ranked streams (including any that were loop-probed)
+            # appear first. No arbitrary cap — all streams are included so
+            # loop results are never hidden by a slice.
+            streams_sorted = sorted(
+                streams,
+                key=lambda s: (s.get('stream_stats') or {}).get('quality_score') or 0,
+                reverse=True
+            )
+            for stream in streams_sorted:
                 # Extract stats using centralized utility
                 extracted_stats = extract_stream_stats(stream)
                 formatted_stats = format_stream_stats_for_display(extracted_stats)
@@ -3867,7 +3889,8 @@ class StreamCheckerService:
                 if m3u_account_id:
                     m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
                 
-                check_stats['stream_details'].append({
+                # Build stream detail dict — include loop results if persisted
+                stream_detail = {
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
                     'resolution': formatted_stats['resolution'],
@@ -3877,7 +3900,18 @@ class StreamCheckerService:
                     'score': score,
                     'm3u_account': m3u_account_name,
                     'hdr_format': extracted_stats.get('hdr_format')
-                })
+                }
+
+                # Loop detection results are persisted to stream_stats by
+                # _prepare_stream_stats_for_batch / _update_stream_stats.
+                # Read them back here so the single-channel changelog entry
+                # shows the Loop column the same as the batch path.
+                if stream_stats.get('loop_probe_ran'):
+                    stream_detail['loop_probe_ran']     = True
+                    stream_detail['loop_detected']      = stream_stats.get('loop_detected')
+                    stream_detail['loop_duration_secs'] = stream_stats.get('loop_duration_secs')
+
+                check_stats['stream_details'].append(stream_detail)
             
             # Calculate duration
             end_time = time_module.time()

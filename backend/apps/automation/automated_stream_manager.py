@@ -1547,18 +1547,18 @@ class AutomatedStreamManager:
                 
         return results
 
-    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, int]:
+    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False, channel_id: Optional[int] = None) -> Dict[str, int]:
         """Wrapper for stream discovery to ensure single execution."""
         if not self._lock.acquire(blocking=False):
             logger.warning("Stream discovery already active - skipping concurrent request")
             return {}
         
         try:
-            return self._discover_and_assign_streams_impl(force, skip_check_trigger, forced_period_id, skip_changelog)
+            return self._discover_and_assign_streams_impl(force, skip_check_trigger, forced_period_id, skip_changelog, channel_id)
         finally:
             self._lock.release()
 
-    def _discover_and_assign_streams_impl(self, force: bool = False, skip_check_trigger: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, int]:
+    def _discover_and_assign_streams_impl(self, force: bool = False, skip_check_trigger: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False, channel_id: Optional[int] = None) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
@@ -1567,6 +1567,11 @@ class AutomatedStreamManager:
             skip_check_trigger: If True, don't trigger immediate stream quality check.
                    Used when the caller will handle the check itself (e.g., check_single_channel).
             forced_period_id: Optional period ID to filter channels.
+            channel_id: Optional channel ID to scope discovery to a single channel.
+                        When provided, only that channel receives stream assignments and
+                        all_streams is pre-filtered to that channel's known M3U accounts
+                        to avoid processing the full stream catalogue unnecessarily.
+                        All other callers pass None (default) for full discovery.
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logger.info("Stream discovery is disabled in configuration")
@@ -1652,7 +1657,36 @@ class AutomatedStreamManager:
             
             # Filter by profile if one is selected
             all_channels = self._filter_channels_by_profile(all_channels, "stream assignment")
-            
+
+            # Scope to a single channel when called from check_single_channel.
+            # This avoids iterating and assigning streams for every channel in
+            # the system when only one channel needs updating.
+            if channel_id is not None:
+                all_channels = [ch for ch in all_channels if ch.get('id') == channel_id]
+                if not all_channels:
+                    logger.info(f"[single-channel] Channel {channel_id} not found or not eligible for stream assignment")
+                    return {}
+                logger.info(f"[single-channel] Scoping stream discovery to channel {channel_id}")
+
+                # Pre-filter all_streams to only streams from this channel's known
+                # M3U accounts — avoids regex-matching the full stream catalogue.
+                channel_stream_account_ids = set()
+                for s in udi.get_channel_streams(channel_id):
+                    acct = s.get('m3u_account_id') or s.get('m3u_account')
+                    if acct:
+                        channel_stream_account_ids.add(acct)
+                if channel_stream_account_ids:
+                    pre_filter_count = len(all_streams)
+                    all_streams = [
+                        s for s in all_streams
+                        if s.get('is_custom', False)
+                        or (s.get('m3u_account_id') or s.get('m3u_account')) in channel_stream_account_ids
+                    ]
+                    logger.info(
+                        f"[single-channel] Pre-filtered streams from {pre_filter_count} "
+                        f"to {len(all_streams)} (accounts: {channel_stream_account_ids})"
+                    )
+
             # Filter channels by automation profile settings
             from apps.automation.automation_config_manager import get_automation_config_manager
             automation_config = get_automation_config_manager()
@@ -2000,7 +2034,7 @@ class AutomatedStreamManager:
                 "error": str(e)
             }
     
-    def validate_and_remove_non_matching_streams(self, force: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, Any]:
+    def validate_and_remove_non_matching_streams(self, force: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False, channel_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Validate existing streams in channels against regex patterns.
         Remove streams that no longer match their channel's patterns.
@@ -2061,11 +2095,11 @@ class AutomatedStreamManager:
             }
             
         try:
-            return self._validate_and_remove_non_matching_streams_impl(force, forced_period_id, skip_changelog)
+            return self._validate_and_remove_non_matching_streams_impl(force, forced_period_id, skip_changelog, channel_id)
         finally:
             self._lock.release()
 
-    def _validate_and_remove_non_matching_streams_impl(self, force: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False) -> Dict[str, Any]:
+    def _validate_and_remove_non_matching_streams_impl(self, force: bool = False, forced_period_id: Optional[str] = None, skip_changelog: bool = False, channel_id: Optional[int] = None) -> Dict[str, Any]:
         """Core implementation of stream validation."""
         log_function_call(logger, "validate_and_remove_non_matching_streams")
         try:
@@ -2080,7 +2114,20 @@ class AutomatedStreamManager:
             
             # Filter by profile if one is selected
             all_channels = self._filter_channels_by_profile(all_channels, "stream validation")
-            
+
+            # Scope to a single channel when called from check_single_channel.
+            if channel_id is not None:
+                all_channels = [ch for ch in all_channels if ch.get('id') == channel_id]
+                if not all_channels:
+                    logger.info(f"[single-channel] Channel {channel_id} not found or not eligible for stream validation")
+                    return {
+                        "channels_checked": 0,
+                        "streams_removed": 0,
+                        "channels_modified": 0,
+                        "details": []
+                    }
+                logger.info(f"[single-channel] Scoping stream validation to channel {channel_id}")
+
             # Filter channels with matching enabled using Automation Profiles
             from apps.automation.automation_config_manager import get_automation_config_manager
             automation_config = get_automation_config_manager()
