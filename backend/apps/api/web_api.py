@@ -650,8 +650,11 @@ def get_channels():
             # Also include explicit assignment for UI logic if needed
             ch_copy['assigned_profile_id'] = automation_config.get_channel_assignment(ch_copy.get('id'))
 
-            # Get automation periods count
-            periods = automation_config.get_channel_periods(ch_copy.get('id'))
+            # Get automation periods count (including group-inherited periods)
+            periods = automation_config.get_effective_channel_periods(
+                ch_copy.get('id'),
+                ch_copy.get('channel_group_id')
+            )
             ch_copy['automation_periods_count'] = len(periods)
 
             channels_with_profiles.append(ch_copy)
@@ -4778,12 +4781,16 @@ def get_batch_period_usage():
 @app.route('/api/channels/<int:channel_id>/automation-periods', methods=['GET'])
 @log_function_call
 def get_channel_automation_periods(channel_id):
-    """Get all automation periods assigned to a channel."""
+    """Get all automation periods assigned to a channel (including group-inherited ones)."""
     try:
         automation_config = get_automation_config_manager()
-        # get_channel_periods returns a dict {period_id: profile_id}
-        period_assignments = automation_config.get_channel_periods(channel_id)
-        
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(channel_id)
+        group_id = channel.get('channel_group_id') if channel else None
+
+        # get_effective_channel_periods merges group-level and channel-level assignments
+        period_assignments = automation_config.get_effective_channel_periods(channel_id, group_id)
+
         periods = []
         for pid, profile_id in period_assignments.items():
             period = automation_config.get_period(pid)
@@ -4795,9 +4802,9 @@ def get_channel_automation_periods(channel_id):
                 if profile:
                     period_copy['profile_name'] = profile.get('name')
                 periods.append(period_copy)
-        
+
         return jsonify(periods), 200
-        
+
     except Exception as e:
         logger.error(f"Error getting automation periods for channel {channel_id}: {e}")
         return jsonify({"error": "Internal Server Error"}), 500

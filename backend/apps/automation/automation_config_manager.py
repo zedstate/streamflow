@@ -468,6 +468,17 @@ class AutomationConfigManager:
             return {}
         return channel_assignments
 
+    def get_effective_channel_periods(self, channel_id: int, group_id: int = None) -> Dict[str, str]:
+        """Return the combined period assignments for a channel, merging group-level and channel-level assignments.
+
+        Group-level assignments are used as the base; channel-specific assignments override them.
+        """
+        effective: Dict[str, str] = {}
+        if group_id is not None:
+            effective.update(self.get_group_periods(group_id))
+        effective.update(self.get_channel_periods(channel_id))
+        return effective
+
     def get_period_channels(self, period_id: str) -> List[int]:
         assignments = self._get_config_dict("channel_period_assignments", {})
         pid = str(period_id)
