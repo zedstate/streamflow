@@ -2090,6 +2090,7 @@ class StreamCheckerService:
                     channel_id=channel_id,
                     channel_name=channel_name,
                     streams_detail=list(stream_statuses.values()),
+                    probe_duration=analysis_params_lp.get('loop_probe_duration', 360),
                 )
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -2764,6 +2765,7 @@ class StreamCheckerService:
                     channel_id=channel_id,
                     channel_name=channel_name,
                     streams_detail=None,
+                    probe_duration=analysis_params_lp.get('loop_probe_duration', 360),
                 )
                 # Write stats for all probed streams so loop fields
                 # (loop_probe_ran, loop_detected, loop_duration_secs) are
@@ -3019,7 +3021,7 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
-    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, channel_id: int = 0, channel_name: str = '', streams_detail: Optional[list] = None) -> None:
+    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, channel_id: int = 0, channel_name: str = '', streams_detail: Optional[list] = None, probe_duration: int = 360) -> None:
         """
         Run loop detection probes on eligible streams in parallel with
         per-account concurrent limits, then write results back into each
@@ -3124,7 +3126,7 @@ class StreamCheckerService:
                 step='Loop testing',
                 step_detail=f'Probing {total} stream(s) for looping content',
                 streams_detail=list(probe_detail.values()) if probe_detail else None,
-                stream_duration=_LOOP_PROBE_DURATION
+                stream_duration=probe_duration
             )
 
         global_limit = self.config.get('concurrent_streams.global_limit', 10)
@@ -3219,7 +3221,7 @@ class StreamCheckerService:
                             step='Loop testing',
                             step_detail=f'Completed {completed[0]}/{total}: {stream_name}',
                             streams_detail=list(probe_detail.values()) if probe_detail else None,
-                            stream_duration=_LOOP_PROBE_DURATION
+                            stream_duration=probe_duration
                         )
 
         with ThreadPoolExecutor(max_workers=global_limit) as executor:
