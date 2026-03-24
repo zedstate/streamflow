@@ -2194,8 +2194,9 @@ class StreamCheckerService:
 
                     # Include loop detection results if the probe ran
                     if analyzed.get('loop_probe_ran'):
-                        stream_stat['loop_detected']      = analyzed.get('loop_detected')
-                        stream_stat['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+                        stream_stat['loop_probe_ran']      = True
+                        stream_stat['loop_detected']       = analyzed.get('loop_detected')
+                        stream_stat['loop_duration_secs']  = analyzed.get('loop_duration_secs')
 
                     # Clean up N/A values for cleaner JSON
                     cleaned_stat = {k: v for k, v in stream_stat.items() if v not in [None]}
@@ -2868,8 +2869,9 @@ class StreamCheckerService:
 
                         # Include loop detection results if the probe ran
                         if analyzed.get('loop_probe_ran'):
-                            stream_stat['loop_detected']      = analyzed.get('loop_detected')
-                            stream_stat['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+                            stream_stat['loop_probe_ran']      = True
+                            stream_stat['loop_detected']       = analyzed.get('loop_detected')
+                            stream_stat['loop_duration_secs']  = analyzed.get('loop_duration_secs')
 
                         # Clean up N/A values for cleaner output
                         stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
