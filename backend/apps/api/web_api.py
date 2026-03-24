@@ -4853,7 +4853,9 @@ def _ping_orchestrator_ready(client=None):
     except requests.exceptions.HTTPError as exc:
         return False, f"Orchestrator /version returned HTTP {exc.response.status_code}"
     except Exception as exc:
-        return False, f"Error pinging orchestrator: {exc}"
+        # Log full exception details server-side, but return a generic message to the client
+        logger.error("Unexpected error while pinging AceStream orchestrator", exc_info=True)
+        return False, "Unexpected error while pinging orchestrator"
 
 
 def _parse_m3u_acestream_entries(m3u_content: str):
