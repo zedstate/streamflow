@@ -4361,6 +4361,135 @@ def assign_automation_profile_group():
         return jsonify({"error": "Internal Server Error"}), 500
 
 
+@app.route('/api/channels/groups/<int:group_id>/automation-periods', methods=['GET'])
+@log_function_call
+def get_group_automation_periods(group_id):
+    """Get all automation periods assigned to a group."""
+    try:
+        automation_config = get_automation_config_manager()
+        period_assignments = automation_config.get_group_periods(group_id)
+
+        periods = []
+        for pid, profile_id in period_assignments.items():
+            period = automation_config.get_period(pid)
+            if period:
+                period_copy = period.copy()
+                period_copy['profile_id'] = profile_id
+                profile = automation_config.get_profile(profile_id)
+                if profile:
+                    period_copy['profile_name'] = profile.get('name')
+                periods.append(period_copy)
+
+        return jsonify(periods), 200
+
+    except Exception as e:
+        logger.error(f"Error getting automation periods for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/assign-groups', methods=['POST'])
+@log_function_call
+def assign_period_to_groups(period_id):
+    """Assign an automation period to one or more groups with a profile."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        group_ids = data.get('group_ids')
+        profile_id = data.get('profile_id')
+        replace = data.get('replace', False)
+
+        if not group_ids or not isinstance(group_ids, list):
+            return jsonify({"error": "group_ids list is required"}), 400
+        if not profile_id:
+            return jsonify({"error": "profile_id is required"}), 400
+
+        if automation_config.assign_period_to_groups(period_id, group_ids, profile_id, replace):
+            return jsonify({
+                "message": f"Period {period_id} with profile {profile_id} assigned to {len(group_ids)} groups",
+                "group_ids": group_ids
+            }), 200
+        else:
+            return jsonify({"error": "Failed to assign period to groups"}), 500
+
+    except Exception as e:
+        logger.error(f"Error assigning period to groups: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/remove-groups', methods=['POST'])
+@log_function_call
+def remove_period_from_groups(period_id):
+    """Remove an automation period from specific groups."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        group_ids = data.get('group_ids')
+
+        if not group_ids or not isinstance(group_ids, list):
+            return jsonify({"error": "group_ids list is required"}), 400
+
+        if automation_config.remove_period_from_groups(period_id, group_ids):
+            return jsonify({
+                "message": f"Period {period_id} removed from {len(group_ids)} groups"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to remove period from groups"}), 500
+
+    except Exception as e:
+        logger.error(f"Error removing period from groups: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/batch/assign-periods', methods=['POST'])
+@log_function_call
+def batch_assign_periods_to_groups():
+    """Batch assign automation periods to multiple groups with profiles.
+
+    Expects format:
+    {
+        "group_ids": [1, 2, 3],
+        "period_assignments": [
+            {"period_id": "period1", "profile_id": "profile1"},
+            {"period_id": "period2", "profile_id": "profile2"}
+        ],
+        "replace": false
+    }
+    """
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        group_ids = data.get('group_ids')
+        period_assignments = data.get('period_assignments')
+        replace = data.get('replace', False)
+
+        if not group_ids or not isinstance(group_ids, list):
+            return jsonify({"error": "group_ids list is required"}), 400
+        if not period_assignments or not isinstance(period_assignments, list):
+            return jsonify({"error": "period_assignments list is required"}), 400
+
+        for assignment in period_assignments:
+            if 'period_id' not in assignment or 'profile_id' not in assignment:
+                return jsonify({"error": "Each period assignment must have period_id and profile_id"}), 400
+
+        is_first = True
+        for assignment in period_assignments:
+            pid = assignment['period_id']
+            profile_id = assignment['profile_id']
+            automation_config.assign_period_to_groups(pid, group_ids, profile_id, replace and is_first)
+            is_first = False
+
+        return jsonify({
+            "message": f"Assigned {len(period_assignments)} period-profile pairs to {len(group_ids)} groups"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error batch assigning periods to groups: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
 # ==================== Automation Periods API ====================
 # Manage automation periods - multiple scheduled automation configurations per channel
 
