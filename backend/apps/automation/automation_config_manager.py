@@ -224,11 +224,6 @@ class AutomationConfigManager:
             if "name" in profile_data: p.name = profile_data["name"]
             if "description" in profile_data: p.description = profile_data["description"]
             if "enabled" in profile_data: p.enabled = profile_data["enabled"]
-            # Use dict() to create a new object rather than mutating the existing
-            # one in place. SQLAlchemy's JSON column change-detection only fires
-            # when the column attribute is reassigned to a *different* object —
-            # mutating the existing dict silently bypasses dirty tracking and the
-            # change is never written to the database.
             current_extra = dict(p.extra_settings or {})
             for k,v in profile_data.items():
                 if k not in ['name', 'description', 'enabled', 'parallel_checks', 'id']:
@@ -484,6 +479,68 @@ class AutomationConfigManager:
                 except (TypeError, ValueError):
                     continue
         return channels
+
+    # --- Group Period Assignments ---
+
+    def assign_period_to_groups(self, period_id: str, group_ids: List[int], profile_id: str, replace: bool = False) -> bool:
+        """Assign an automation period with a profile to one or more groups."""
+        assignments = self._get_config_dict("group_period_assignments", {})
+        pid = str(period_id)
+        changed = False
+
+        for gid_raw in group_ids:
+            gid = str(gid_raw)
+            if replace or gid not in assignments or not isinstance(assignments[gid], dict):
+                assignments[gid] = {}
+            if assignments[gid].get(pid) != str(profile_id):
+                assignments[gid][pid] = str(profile_id)
+                changed = True
+
+        if changed:
+            return self._set_config_dict("group_period_assignments", assignments)
+        return True
+
+    def remove_period_from_groups(self, period_id: str, group_ids: List[int]) -> bool:
+        """Remove an automation period from one or more groups."""
+        assignments = self._get_config_dict("group_period_assignments", {})
+        pid = str(period_id)
+        changed = False
+
+        for gid_raw in group_ids:
+            gid = str(gid_raw)
+            group_assignments = assignments.get(gid)
+            if not isinstance(group_assignments, dict):
+                continue
+            if pid in group_assignments:
+                del group_assignments[pid]
+                if not group_assignments:
+                    del assignments[gid]
+                changed = True
+
+        if changed:
+            return self._set_config_dict("group_period_assignments", assignments)
+        return True
+
+    def get_group_periods(self, group_id: int) -> Dict[str, str]:
+        """Return a mapping of {period_id: profile_id} for a group."""
+        assignments = self._get_config_dict("group_period_assignments", {})
+        group_assignments = assignments.get(str(group_id), {})
+        if not isinstance(group_assignments, dict):
+            return {}
+        return group_assignments
+
+    def get_period_groups(self, period_id: str) -> List[int]:
+        """Return the list of group IDs that have this period assigned."""
+        assignments = self._get_config_dict("group_period_assignments", {})
+        pid = str(period_id)
+        groups: List[int] = []
+        for gid, period_map in assignments.items():
+            if isinstance(period_map, dict) and pid in period_map:
+                try:
+                    groups.append(int(gid))
+                except (TypeError, ValueError):
+                    continue
+        return groups
 
     # --- Outer scheduler helpers ---
 

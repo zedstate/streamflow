@@ -1524,6 +1524,181 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
   )
 }
 
+// Dialog for assigning automation periods to a group
+function GroupAssignPeriodsDialog({ open, onOpenChange, group, onSave, saving }) {
+  const [allPeriods, setAllPeriods] = useState([])
+  const [allProfiles, setAllProfiles] = useState([])
+  const [periodAssignments, setPeriodAssignments] = useState({})  // {period_id: profile_id}
+  const [loading, setLoading] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    if (open) {
+      loadData()
+    }
+  }, [open])
+
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const [periodsResponse, profilesResponse] = await Promise.all([
+        automationAPI.getPeriods(),
+        automationAPI.getProfiles()
+      ])
+      setAllPeriods(periodsResponse.data || [])
+      setAllProfiles(profilesResponse.data || [])
+      setPeriodAssignments({})
+    } catch (err) {
+      console.error('Failed to load data:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load periods and profiles",
+        variant: "destructive"
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const togglePeriod = (periodId) => {
+    setPeriodAssignments(prev => {
+      const newAssignments = { ...prev }
+      if (periodId in newAssignments) {
+        delete newAssignments[periodId]
+      } else {
+        if (allProfiles.length > 0) {
+          newAssignments[periodId] = allProfiles[0].id
+        }
+      }
+      return newAssignments
+    })
+  }
+
+  const updateProfile = (periodId, profileId) => {
+    setPeriodAssignments(prev => ({
+      ...prev,
+      [periodId]: profileId
+    }))
+  }
+
+  const handleSave = () => {
+    const selectedPeriods = Object.entries(periodAssignments).filter(([_, profileId]) => profileId && profileId !== '')
+
+    if (selectedPeriods.length === 0) {
+      toast({
+        title: "No Periods Selected",
+        description: "Please select at least one period and assign a profile",
+        variant: "destructive"
+      })
+      return
+    }
+
+    const assignments = selectedPeriods.map(([periodId, profileId]) => ({
+      period_id: periodId,
+      profile_id: profileId
+    }))
+
+    onSave(assignments, false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Assign Automation Periods to Group</DialogTitle>
+          <DialogDescription>
+            Assign automation periods with profiles to group &quot;{group?.name}&quot;. Channels in this group will inherit these periods.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : allPeriods.length === 0 ? (
+          <div className="text-center py-8">
+            <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50 text-muted-foreground" />
+            <p className="text-muted-foreground mb-4">No automation periods available</p>
+            <p className="text-sm text-muted-foreground">
+              Create automation periods in Settings → Automation → Periods first
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3 overflow-y-auto flex-1">
+            {allPeriods.map((period) => {
+              const isSelected = period.id in periodAssignments
+              const selectedProfile = periodAssignments[period.id]
+
+              return (
+                <div
+                  key={period.id}
+                  className={`p-3 border rounded-lg transition-colors ${isSelected ? 'border-primary bg-primary/5' : 'border-border'}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => togglePeriod(period.id)}
+                      className="mt-1"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium">{period.name}</span>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {period.schedule?.type === 'interval'
+                            ? `Every ${period.schedule.value} minutes`
+                            : `Cron: ${period.schedule?.value || 'Not configured'}`}
+                        </div>
+                      </div>
+
+                      {isSelected && (
+                        <div className="pt-2 border-t">
+                          <Label className="text-xs text-muted-foreground mb-1 block">
+                            Profile for this period:
+                          </Label>
+                          <Select
+                            value={selectedProfile}
+                            onValueChange={(value) => updateProfile(period.id, value)}
+                          >
+                            <SelectTrigger className="h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {allProfiles.map((profile) => (
+                                <SelectItem key={profile.id} value={profile.id}>
+                                  {profile.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={saving || loading || Object.keys(periodAssignments).length === 0}
+          >
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Assign to Group
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 
 export default function ChannelConfiguration() {
   const [channels, setChannels] = useState([])
@@ -1596,6 +1771,17 @@ export default function ChannelConfiguration() {
   // Batch automation period assignment state
   const [batchPeriodsDialogOpen, setBatchPeriodsDialogOpen] = useState(false)
 
+  // Group Configuration state
+  const [groupsConfig, setGroupsConfig] = useState({}) // {groupId: {profileId, periods: [{id, profile_id}]}}
+  const [loadingGroupsConfig, setLoadingGroupsConfig] = useState(false)
+  const [groupAssignProfileDialogOpen, setGroupAssignProfileDialogOpen] = useState(false)
+  const [groupAssignPeriodsDialogOpen, setGroupAssignPeriodsDialogOpen] = useState(false)
+  const [selectedGroupForConfig, setSelectedGroupForConfig] = useState(null)
+  const [groupProfileId, setGroupProfileId] = useState('')
+  const [groupPeriodAssignments, setGroupPeriodAssignments] = useState([]) // [{period_id, profile_id}]
+  const [savingGroupProfile, setSavingGroupProfile] = useState(false)
+  const [savingGroupPeriods, setSavingGroupPeriods] = useState(false)
+
   // Edit common regex dialog state
   const [editCommonDialogOpen, setEditCommonDialogOpen] = useState(false)
   const [commonPatterns, setCommonPatterns] = useState([])
@@ -1628,6 +1814,12 @@ export default function ChannelConfiguration() {
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    if (activeTab === 'groups' && groups.length > 0) {
+      loadGroupsConfig()
+    }
+  }, [activeTab, groups])
 
   const loadData = async () => {
     try {
@@ -1842,6 +2034,111 @@ export default function ChannelConfiguration() {
       return
     }
     setBatchPeriodsDialogOpen(true)
+  }
+
+  // --- Group Configuration Handlers ---
+
+  const loadGroupsConfig = async () => {
+    if (groups.length === 0) return
+    try {
+      setLoadingGroupsConfig(true)
+      const configMap = {}
+      await Promise.all(groups.map(async (group) => {
+        try {
+          const [periodsRes] = await Promise.all([
+            automationAPI.getGroupPeriods(group.id)
+          ])
+          configMap[group.id] = {
+            periods: periodsRes.data || []
+          }
+        } catch {
+          configMap[group.id] = { periods: [] }
+        }
+      }))
+      setGroupsConfig(configMap)
+    } catch (err) {
+      console.error('Failed to load groups config:', err)
+    } finally {
+      setLoadingGroupsConfig(false)
+    }
+  }
+
+  const handleOpenGroupAssignProfile = (group) => {
+    setSelectedGroupForConfig(group)
+    setGroupProfileId('')
+    setGroupAssignProfileDialogOpen(true)
+  }
+
+  const handleSaveGroupProfile = async () => {
+    if (!selectedGroupForConfig) return
+    try {
+      setSavingGroupProfile(true)
+      await automationAPI.assignGroup(selectedGroupForConfig.id, groupProfileId || null)
+      toast({
+        title: "Success",
+        description: groupProfileId
+          ? `Automation profile assigned to group "${selectedGroupForConfig.name}"`
+          : `Automation profile removed from group "${selectedGroupForConfig.name}"`
+      })
+      setGroupAssignProfileDialogOpen(false)
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to assign profile to group",
+        variant: "destructive"
+      })
+    } finally {
+      setSavingGroupProfile(false)
+    }
+  }
+
+  const handleOpenGroupAssignPeriods = (group) => {
+    setSelectedGroupForConfig(group)
+    setGroupPeriodAssignments([])
+    setGroupAssignPeriodsDialogOpen(true)
+  }
+
+  const handleSaveGroupPeriods = async (assignments, replace = false) => {
+    if (!selectedGroupForConfig || assignments.length === 0) return
+    try {
+      setSavingGroupPeriods(true)
+      await automationAPI.batchAssignPeriodsToGroups(
+        [selectedGroupForConfig.id],
+        assignments,
+        replace
+      )
+      toast({
+        title: "Success",
+        description: `Assigned ${assignments.length} period${assignments.length !== 1 ? 's' : ''} to group "${selectedGroupForConfig.name}"`
+      })
+      setGroupAssignPeriodsDialogOpen(false)
+      await loadGroupsConfig()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to assign periods to group",
+        variant: "destructive"
+      })
+    } finally {
+      setSavingGroupPeriods(false)
+    }
+  }
+
+  const handleRemoveGroupPeriod = async (group, periodId) => {
+    try {
+      await automationAPI.removePeriodFromGroups(periodId, [group.id])
+      toast({
+        title: "Success",
+        description: `Period removed from group "${group.name}"`
+      })
+      await loadGroupsConfig()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to remove period from group",
+        variant: "destructive"
+      })
+    }
   }
 
   const handleUpdateMatchSettings = async (channelId, settings) => {
@@ -2870,9 +3167,10 @@ export default function ChannelConfiguration() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="regex">Regex Configuration</TabsTrigger>
             <TabsTrigger value="ordering">Channel Order</TabsTrigger>
+            <TabsTrigger value="groups">Group Configuration</TabsTrigger>
           </TabsList>
 
           <TabsContent value="regex" className="space-y-6">
@@ -3483,7 +3781,175 @@ export default function ChannelConfiguration() {
               </div>
             )}
           </TabsContent>
+
+          <TabsContent value="groups" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Group Configuration</CardTitle>
+                    <CardDescription>
+                      Assign automation profiles and periods to channel groups. New channels added to a group will inherit these settings.
+                    </CardDescription>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={loadGroupsConfig} disabled={loadingGroupsConfig}>
+                    {loadingGroupsConfig ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {groups.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No channel groups found
+                  </div>
+                ) : loadingGroupsConfig ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {groups.map((group) => {
+                      const config = groupsConfig[group.id] || { periods: [] }
+                      return (
+                        <Card key={group.id} className="border">
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <h3 className="font-semibold text-base">{group.name}</h3>
+                                  <Badge variant="secondary" className="text-xs">
+                                    ID: {group.id}
+                                  </Badge>
+                                </div>
+
+                                {/* Periods section */}
+                                <div className="space-y-1">
+                                  <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
+                                    Automation Periods ({config.periods.length})
+                                  </div>
+                                  {config.periods.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic">No periods assigned</p>
+                                  ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                      {config.periods.map((period) => (
+                                        <Badge key={period.id} variant="outline" className="gap-1 pr-1">
+                                          <Clock className="h-3 w-3" />
+                                          <span>{period.name}</span>
+                                          {period.profile_name && (
+                                            <span className="text-muted-foreground">· {period.profile_name}</span>
+                                          )}
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-4 w-4 p-0 ml-1 hover:bg-destructive hover:text-destructive-foreground rounded-full"
+                                            onClick={() => handleRemoveGroupPeriod(group, period.id)}
+                                          >
+                                            <X className="h-3 w-3" />
+                                          </Button>
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Action buttons */}
+                              <div className="flex gap-2 flex-shrink-0">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenGroupAssignProfile(group)}
+                                      className="h-8"
+                                    >
+                                      <ArrowRight className="h-4 w-4 mr-1" />
+                                      Profile
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Assign automation profile to group</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenGroupAssignPeriods(group)}
+                                      className="h-8"
+                                    >
+                                      <Clock className="h-4 w-4 mr-1" />
+                                      Periods
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Assign automation periods to group</TooltipContent>
+                                </Tooltip>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
+
+        {/* Group Assign Profile Dialog */}
+        <Dialog open={groupAssignProfileDialogOpen} onOpenChange={setGroupAssignProfileDialogOpen}>
+          <DialogContent className="sm:max-w-[450px]">
+            <DialogHeader>
+              <DialogTitle>Assign Automation Profile to Group</DialogTitle>
+              <DialogDescription>
+                {selectedGroupForConfig
+                  ? `Assign an automation profile to group "${selectedGroupForConfig.name}". Channels in this group will use this profile unless they have a channel-specific assignment.`
+                  : ''}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Automation Profile</Label>
+                <Select value={groupProfileId} onValueChange={setGroupProfileId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a profile (or clear to remove)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">— Remove profile assignment —</SelectItem>
+                    {profiles.map((profile) => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Select a profile to assign, or choose the empty option to remove the current assignment.
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setGroupAssignProfileDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveGroupProfile} disabled={savingGroupProfile}>
+                {savingGroupProfile && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Group Assign Periods Dialog */}
+        {selectedGroupForConfig && (
+          <GroupAssignPeriodsDialog
+            open={groupAssignPeriodsDialogOpen}
+            onOpenChange={setGroupAssignPeriodsDialogOpen}
+            group={selectedGroupForConfig}
+            onSave={handleSaveGroupPeriods}
+            saving={savingGroupPeriods}
+          />
+        )}
 
         {/* Regex Pattern Dialog */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
