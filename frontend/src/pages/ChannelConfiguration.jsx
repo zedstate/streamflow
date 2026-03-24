@@ -3860,28 +3860,14 @@ export default function ChannelConfiguration() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => handleOpenGroupAssignProfile(group)}
-                                      className="h-8"
-                                    >
-                                      <ArrowRight className="h-4 w-4 mr-1" />
-                                      Profile
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Assign automation profile to group</TooltipContent>
-                                </Tooltip>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
                                       onClick={() => handleOpenGroupAssignPeriods(group)}
                                       className="h-8"
                                     >
                                       <Clock className="h-4 w-4 mr-1" />
-                                      Periods
+                                      Period and Profile
                                     </Button>
                                   </TooltipTrigger>
-                                  <TooltipContent>Assign automation periods to group</TooltipContent>
+                                  <TooltipContent>Assign automation periods and profiles to group</TooltipContent>
                                 </Tooltip>
                               </div>
                             </div>
