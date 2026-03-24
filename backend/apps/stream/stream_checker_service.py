@@ -1270,13 +1270,24 @@ class StreamCheckerService:
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
             "quality_score": stream_data.get("score"),
-            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else None,
+            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else False,
+            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else False,
             "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
             "loop_score_penalty": stream_data.get("loop_score_penalty"),
         }
-        
-        # Clean up the payload, removing any None values or N/A values
-        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+
+        # Clean up the payload — remove None and N/A values but preserve False
+        # for boolean loop fields so stale True values from previous runs are
+        # explicitly overwritten in Dispatcharr rather than left unchanged by merge.
+        PRESERVE_FALSE = {'loop_probe_ran', 'loop_detected'}
+        stream_stats_payload = {
+            k: v for k, v in stream_stats_payload.items()
+            if v not in [None, "N/A"] or (v is None and k not in PRESERVE_FALSE)
+        }
+        # Explicitly keep False booleans for loop fields
+        for k in PRESERVE_FALSE:
+            if k in stream_stats_payload or stream_data.get(k) is False:
+                stream_stats_payload[k] = stream_data.get(k) if stream_data.get(k) is not None else False
         
         if not stream_stats_payload:
             logger.debug(f"No data to update for stream {stream_id}. Skipping.")
@@ -1355,15 +1366,27 @@ class StreamCheckerService:
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
             "quality_score": stream_data.get("score"),
-            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else None,
+            # Explicitly write False for non-probed streams so stale True values
+            # from previous runs are overwritten in Dispatcharr. False must survive
+            # the None filter below — handled by the separate boolean cleanup step.
+            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else False,
+            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else False,
             "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
             "loop_score_penalty": stream_data.get("loop_score_penalty"),
-            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else None,
         }
         
-        # Clean up the payload, removing any None values or N/A values
-        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
-        
+        # Clean up the payload — remove None and N/A but preserve False for
+        # boolean loop fields so stale True values from previous runs are
+        # explicitly overwritten in Dispatcharr rather than left by merge.
+        PRESERVE_FALSE = {'loop_probe_ran', 'loop_detected'}
+        stream_stats_payload = {
+            k: v for k, v in stream_stats_payload.items()
+            if v not in [None, "N/A"] or (v is None and k not in PRESERVE_FALSE)
+        }
+        for k in PRESERVE_FALSE:
+            if k in stream_stats_payload or stream_data.get(k) is False:
+                stream_stats_payload[k] = stream_data.get(k) if stream_data.get(k) is not None else False
+
         if not stream_stats_payload:
             logger.debug(f"No data to update for stream {stream_id}. Skipping.")
             return None
