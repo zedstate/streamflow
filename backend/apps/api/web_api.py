@@ -2243,8 +2243,11 @@ def get_changelog():
         session = get_session()
         
         try:
-            # Query the required runs
-            runs = session.query(Run).filter(Run.timestamp >= cutoff).order_by(Run.timestamp.desc()).all()
+            # Query the required runs, excluding AceStream monitor telemetry snapshots
+            runs = session.query(Run).filter(
+                Run.timestamp >= cutoff,
+                Run.run_type != 'acestream_monitor',
+            ).order_by(Run.timestamp.desc()).all()
             
             merged_changelog = []
             for r in runs:
@@ -5202,8 +5205,31 @@ def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
         entry['management_reason'] = reason
         changed = True
 
-    return changed
+    # Update last_ts_delta sliding window for tie-breaking (last 10 samples)
+    _ACE_LAST_TS_DELTA_WINDOW = 10
+    current_delta = None
+    if isinstance(monitor, dict):
+        movement = monitor.get('livepos_movement') or {}
+        raw_delta = movement.get('last_ts_delta')
+        if raw_delta is not None:
+            try:
+                current_delta = float(raw_delta)
+            except (TypeError, ValueError):
+                pass
+    if current_delta is not None:
+        window = entry.get('_last_ts_delta_window')
+        if not isinstance(window, list):
+            window = []
+            entry['_last_ts_delta_window'] = window
+        if len(window) >= _ACE_LAST_TS_DELTA_WINDOW:
+            del window[0]
+        window.append(current_delta)
+        avg_delta = sum(window) / len(window)
+        if entry.get('_last_ts_delta_avg') != avg_delta:
+            entry['_last_ts_delta_avg'] = avg_delta
+            changed = True
 
+    return changed
 
 def _is_ace_ffprobe_stats_empty(ffprobe_stats):
     """Return True if ffprobe stats have no useful data (all N/A or missing)."""
@@ -5388,12 +5414,12 @@ def _apply_ace_dispatcharr_sync(raw_session):
 
     stable = sorted(
         [e for e in entries if (e.get('management_state') or 'review').lower() == 'stable'],
-        key=lambda e: float(e.get('management_score') or 0),
+        key=lambda e: (float(e.get('management_score') or 0), float(e.get('_last_ts_delta_avg') or 0)),
         reverse=True,
     )
     review = sorted(
         [e for e in entries if (e.get('management_state') or 'review').lower() == 'review'],
-        key=lambda e: float(e.get('management_score') or 0),
+        key=lambda e: (float(e.get('management_score') or 0), float(e.get('_last_ts_delta_avg') or 0)),
         reverse=True,
     )
 

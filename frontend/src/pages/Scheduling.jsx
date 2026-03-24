@@ -1621,7 +1621,7 @@ export default function Scheduling() {
                         </div>
 
                         {/* Monitoring Toggles */}
-                        {ruleScheduleType === 'monitoring' && (
+                        {ruleScheduleType === 'monitoring' && ruleSessionType !== 'acestream' && (
                           <div className="border rounded-lg p-3 space-y-3">
                             <h4 className="text-sm font-medium">Monitoring Features</h4>
 
