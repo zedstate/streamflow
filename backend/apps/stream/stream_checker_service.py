@@ -777,6 +777,7 @@ class StreamCheckerProgress:
                 'percentage': round((current / total * 100) if total > 0 else 0, 1),
                 'current_stream_name': current_stream,
                 'status': status,
+                'step': step,
                 'step_detail': step_detail,
                 'timestamp': datetime.now().isoformat()
             }
@@ -2059,6 +2060,8 @@ class StreamCheckerService:
                     analyzed_streams,
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
                 )
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -2730,6 +2733,8 @@ class StreamCheckerService:
                     analyzed_streams,
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
                 )
                 # Write stats for all probed streams so loop fields
                 # (loop_probe_ran, loop_detected, loop_duration_secs) are
@@ -2985,7 +2990,7 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
-    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0) -> None:
+    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, channel_id: int = 0, channel_name: str = '') -> None:
         """
         Run loop detection probes on eligible streams in parallel with
         per-account concurrent limits, then write results back into each
@@ -3058,6 +3063,19 @@ class StreamCheckerService:
             f"(top {int(LOOP_PROBE_TOP_PERCENTILE * 100)}% of {len(candidates_sorted)} "
             f"scoring >= {LOOP_PROBE_SCORE_THRESHOLD}) — running in parallel"
         )
+
+        # Reset progress bar for loop testing phase so the UI reflects
+        # what's happening rather than showing a frozen 100% from quality analysis.
+        if channel_id:
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=total,
+                status='analyzing',
+                step='Loop testing',
+                step_detail=f'Probing {total} stream(s) for looping content'
+            )
 
         global_limit = self.config.get('concurrent_streams.global_limit', 10)
         account_limiter = get_account_limiter()
@@ -3132,6 +3150,16 @@ class StreamCheckerService:
                     logger.info(
                         f"[loop-probe] Completed {completed[0]}/{total}: {stream_name}"
                     )
+                    if channel_id:
+                        self.progress.update(
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            current=completed[0],
+                            total=total,
+                            status='analyzing',
+                            step='Loop testing',
+                            step_detail=f'Completed {completed[0]}/{total}: {stream_name}'
+                        )
 
         with ThreadPoolExecutor(max_workers=global_limit) as executor:
             futures = {executor.submit(_probe_one, stream): stream for stream in eligible}
