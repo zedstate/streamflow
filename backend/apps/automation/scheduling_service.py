@@ -415,6 +415,11 @@ class SchedulingService:
                 'check_time': check_time.isoformat(),
                 'tvg_id': channel.get('tvg_id'),
                 'schedule_type': schedule_type,
+                'session_type': event_data.get('session_type', 'standard'),
+                'interval_s': event_data.get('interval_s', 1.0),
+                'run_seconds': event_data.get('run_seconds', 0),
+                'per_sample_timeout_s': event_data.get('per_sample_timeout_s', 1.0),
+                'engine_container_id': event_data.get('engine_container_id'),
                 'enable_looping_detection': event_data.get('enable_looping_detection', True),
                 'enable_logo_detection': event_data.get('enable_logo_detection', True),
                 'created_at': datetime.now(timezone.utc).isoformat()
@@ -507,23 +512,48 @@ class SchedulingService:
         
         try:
             if schedule_type == 'monitoring':
-                # Create and start monitoring session
-                session_id = self.create_session_from_event(event_id)
-                
-                if session_id:
-                    # Start the session
-                    from apps.stream.stream_session_manager import get_session_manager
-                    session_manager = get_session_manager()
+                session_type = event.get('session_type', 'standard')
+                if session_type == 'acestream':
+                    from apps.api.web_api import create_acestream_channel_session_impl
+                    interval_s = float(event.get('interval_s', 1.0))
+                    run_seconds = int(event.get('run_seconds', 0))
+                    per_sample_timeout_s = float(event.get('per_sample_timeout_s', 1.0))
+                    engine_container_id = event.get('engine_container_id')
                     
-                    if session_manager.start_session(session_id):
-                        logger.info(f"Started monitoring session {session_id} for event {event_id}")
+                    result, status_code = create_acestream_channel_session_impl(
+                        channel_id=channel_id,
+                        interval_s=interval_s,
+                        run_seconds=run_seconds,
+                        per_sample_timeout_s=per_sample_timeout_s,
+                        engine_container_id=engine_container_id,
+                        epg_event_title=program_title,
+                        epg_event_start=program_start_time,
+                        epg_event_end=event.get('program_end_time'),
+                    )
+                    if status_code in (200, 201):
+                        logger.info(f"Started AceStream monitoring session {result.get('session_id')} for event {event_id}")
                         success = True
                     else:
-                        logger.error(f"Failed to start monitoring session {session_id} for event {event_id}")
+                        logger.error(f"Failed to start AceStream monitoring session for event {event_id}: {result}")
                         success = False
                 else:
-                    logger.error(f"Failed to create monitoring session for event {event_id}")
-                    success = False
+                    # Create and start standard monitoring session
+                    session_id = self.create_session_from_event(event_id)
+                    
+                    if session_id:
+                        # Start the session
+                        from apps.stream.stream_session_manager import get_session_manager
+                        session_manager = get_session_manager()
+                        
+                        if session_manager.start_session(session_id):
+                            logger.info(f"Started monitoring session {session_id} for event {event_id}")
+                            success = True
+                        else:
+                            logger.error(f"Failed to start monitoring session {session_id} for event {event_id}")
+                            success = False
+                    else:
+                        logger.error(f"Failed to create monitoring session for event {event_id}")
+                        success = False
             else:
                 # Execute traditional stream check
                 result = stream_checker_service.check_single_channel(
@@ -928,6 +958,11 @@ class SchedulingService:
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
                 'schedule_type': schedule_type,
+                'session_type': rule_data.get('session_type', 'standard'),
+                'interval_s': rule_data.get('interval_s', 1.0),
+                'run_seconds': rule_data.get('run_seconds', 0),
+                'per_sample_timeout_s': rule_data.get('per_sample_timeout_s', 1.0),
+                'engine_container_id': rule_data.get('engine_container_id'),
                 'enable_looping_detection': rule_data.get('enable_looping_detection', True),
                 'enable_logo_detection': rule_data.get('enable_logo_detection', True),
                 'created_at': datetime.now(timezone.utc).isoformat()
@@ -1129,6 +1164,16 @@ class SchedulingService:
                 rule['name'] = rule_data['name']
             if 'minutes_before' in rule_data:
                 rule['minutes_before'] = rule_data['minutes_before']
+            if 'session_type' in rule_data:
+                rule['session_type'] = rule_data['session_type']
+            if 'interval_s' in rule_data:
+                rule['interval_s'] = rule_data['interval_s']
+            if 'run_seconds' in rule_data:
+                rule['run_seconds'] = rule_data['run_seconds']
+            if 'per_sample_timeout_s' in rule_data:
+                rule['per_sample_timeout_s'] = rule_data['per_sample_timeout_s']
+            if 'engine_container_id' in rule_data:
+                rule['engine_container_id'] = rule_data['engine_container_id']
             if 'enable_looping_detection' in rule_data:
                 rule['enable_looping_detection'] = rule_data['enable_looping_detection']
             if 'enable_logo_detection' in rule_data:
@@ -1371,6 +1416,11 @@ class SchedulingService:
                         'check_time': check_time.isoformat(),
                         'tvg_id': tvg_id,
                         'schedule_type': schedule_type,
+                        'session_type': rule.get('session_type', 'standard'),
+                        'interval_s': rule.get('interval_s', 1.0),
+                        'run_seconds': rule.get('run_seconds', 0),
+                        'per_sample_timeout_s': rule.get('per_sample_timeout_s', 1.0),
+                        'engine_container_id': rule.get('engine_container_id'),
                         'enable_looping_detection': rule.get('enable_looping_detection', True),
                         'enable_logo_detection': rule.get('enable_logo_detection', True),
                         'created_at': datetime.now(timezone.utc).isoformat(),

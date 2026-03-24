@@ -9,14 +9,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Settings2, ShieldCheck, Play, MonitorPlay } from 'lucide-react';
 import { channelsAPI } from '@/services/api';
+import { aceStreamMonitoringAPI } from '@/services/aceStreamMonitoring';
 import { useToast } from '@/hooks/use-toast';
 
 function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
+  const [sessionType, setSessionType] = useState('standard');
   const [mode, setMode] = useState('channel');
   const [channels, setChannels] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
+    interval_s: 1.0,
+    run_seconds: 0,
+    per_sample_timeout_s: 1.0,
+    engine_container_id: '',
     channel_id: '',
     group_id: '',
     stagger_ms: 1000,
@@ -56,7 +63,7 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (mode === 'channel' && !formData.channel_id) {
@@ -77,7 +84,45 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
       return;
     }
 
+    if (sessionType === 'acestream') {
+      // Verify the AceStream orchestrator is ready before creating the session
+      try {
+        setSubmitting(true);
+        const readyRes = await aceStreamMonitoringAPI.checkOrchestratorReady();
+        const readyData = readyRes.data || {};
+        if (!readyData.ready) {
+          toast({
+            title: 'Orchestrator Not Ready',
+            description: readyData.error || readyData.detail || 'AceStream orchestrator is not reachable. Please check your configuration.',
+            variant: 'destructive',
+          });
+          return;
+        }
+      } catch (err) {
+        toast({
+          title: 'Orchestrator Check Failed',
+          description: err.response?.data?.error || 'Could not verify AceStream orchestrator status.',
+          variant: 'destructive',
+        });
+        return;
+      } finally {
+        setSubmitting(false);
+      }
+
+      onCreateSession({
+        session_type: 'acestream',
+        channel_id: mode === 'channel' ? formData.channel_id : undefined,
+        group_id: mode === 'group' ? formData.group_id : undefined,
+        interval_s: Number(formData.interval_s),
+        run_seconds: Number(formData.run_seconds),
+        per_sample_timeout_s: Number(formData.per_sample_timeout_s),
+        engine_container_id: formData.engine_container_id ? String(formData.engine_container_id).trim() : undefined,
+      });
+      return;
+    }
+
     const payload = {
+      session_type: 'standard',
       ...formData,
       channel_id: mode === 'channel' ? formData.channel_id : undefined,
       group_id: mode === 'group' ? formData.group_id : undefined
@@ -105,6 +150,16 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
 
         <form onSubmit={handleSubmit}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4">
+
+            <div className="md:col-span-2 space-y-2">
+              <Label>Session Type</Label>
+              <Tabs value={sessionType} onValueChange={setSessionType} className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="standard">Standard Monitoring</TabsTrigger>
+                  <TabsTrigger value="acestream">AceStream Monitoring</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
 
             {/* Left Column: Target Selection */}
             <div className="space-y-4">
@@ -167,7 +222,11 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
               <Alert className="mt-6">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription className="text-xs leading-relaxed">
-                  {mode === 'group'
+                  {sessionType === 'acestream'
+                    ? (mode === 'group'
+                      ? "AceStream group sessions create one monitoring session per channel using orchestrator metrics."
+                      : "AceStream channel sessions monitor all AceStream-compatible streams in the selected channel using orchestrator telemetry.")
+                    : mode === 'group'
                     ? "Group monitoring will create and immediately start sessions for all channels in the selected group."
                     : "Sessions continuously monitor stream quality, capture screenshots, and calculate reliability scores using Capped Sliding Window algorithm."
                   }
@@ -177,6 +236,8 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
 
             {/* Right Column: Settings */}
             <div className="space-y-5">
+              {sessionType === 'standard' ? (
+              <>
 
               {/* Advanced Settings */}
               <div className="border rounded-lg p-4 space-y-4 bg-muted/20">
@@ -290,6 +351,61 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
                   />
                 </div>
               )}
+              </>
+              ) : (
+                <div className="border rounded-lg p-4 space-y-4 bg-muted/20">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Settings2 className="h-4 w-4 text-primary" />
+                    <h4>AceStream Monitoring Settings</h4>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="acestream-interval" className="text-xs">Interval (s)</Label>
+                      <Input
+                        id="acestream-interval"
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        value={formData.interval_s}
+                        onChange={(e) => handleChange('interval_s', parseFloat(e.target.value || '1'))}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="acestream-run-seconds" className="text-xs">Run Seconds</Label>
+                      <Input
+                        id="acestream-run-seconds"
+                        type="number"
+                        min="0"
+                        value={formData.run_seconds}
+                        onChange={(e) => handleChange('run_seconds', parseInt(e.target.value || '0', 10))}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2 col-span-2">
+                      <Label htmlFor="acestream-timeout" className="text-xs">Per-Sample Timeout (s)</Label>
+                      <Input
+                        id="acestream-timeout"
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        value={formData.per_sample_timeout_s}
+                        onChange={(e) => handleChange('per_sample_timeout_s', parseFloat(e.target.value || '1'))}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2 col-span-2">
+                      <Label htmlFor="acestream-engine-id" className="text-xs">Engine Container ID (optional)</Label>
+                      <Input
+                        id="acestream-engine-id"
+                        value={formData.engine_container_id}
+                        onChange={(e) => handleChange('engine_container_id', e.target.value)}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -297,9 +413,13 @@ function CreateSessionDialog({ open, onOpenChange, onCreateSession }) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || (mode === 'channel' ? !formData.channel_id : !formData.group_id)} className="gap-2">
+            <Button
+              type="submit"
+              disabled={loading || submitting || (mode === 'channel' ? !formData.channel_id : !formData.group_id)}
+              className="gap-2"
+            >
               <MonitorPlay className="h-4 w-4" />
-              {mode === 'group' ? 'Start Group Monitoring' : 'Create Session'}
+              {submitting ? 'Checking orchestrator...' : sessionType === 'acestream' ? 'Start AceStream Monitoring' : (mode === 'group' ? 'Start Group Monitoring' : 'Create Session')}
             </Button>
           </DialogFooter>
         </form>

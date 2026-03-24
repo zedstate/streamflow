@@ -48,6 +48,7 @@ from apps.stream.stream_checker_service import get_stream_checker_service
 from apps.automation.scheduling_service import get_scheduling_service
 
 from apps.config.dispatcharr_config import get_dispatcharr_config
+from apps.config.acestream_orchestrator_config import get_acestream_orchestrator_config
 from apps.channels.channel_order_manager import get_channel_order_manager
 from apps.automation.automation_config_manager import get_automation_config_manager
 
@@ -2242,8 +2243,11 @@ def get_changelog():
         session = get_session()
         
         try:
-            # Query the required runs
-            runs = session.query(Run).filter(Run.timestamp >= cutoff).order_by(Run.timestamp.desc()).all()
+            # Query the required runs, excluding AceStream monitor telemetry snapshots
+            runs = session.query(Run).filter(
+                Run.timestamp >= cutoff,
+                Run.run_type != 'acestream_monitor',
+            ).order_by(Run.timestamp.desc()).all()
             
             merged_changelog = []
             for r in runs:
@@ -4794,6 +4798,1757 @@ def invalidate_automation_events_cache():
 
 from apps.stream.stream_session_manager import get_session_manager, REVIEW_DURATION
 from apps.stream.stream_monitoring_service import get_monitoring_service
+from apps.stream.acestream_monitoring_client import AceStreamMonitoringClient, normalize_content_id
+
+
+def _get_acestream_monitoring_client() -> AceStreamMonitoringClient:
+    """Build client for external AceStream orchestrator monitoring contract."""
+    return AceStreamMonitoringClient()
+
+
+def _acestream_client_or_error():
+    client = _get_acestream_monitoring_client()
+    if not client.is_configured():
+        return None, (
+            jsonify({
+                "error": "AceStream orchestrator is not configured",
+                "required_env": [
+                    "ACESTREAM_ORCHESTRATOR_BASE_URL",
+                    "ACESTREAM_ORCHESTRATOR_API_KEY"
+                ]
+            }),
+            500,
+        )
+    return client, None
+
+
+def _ping_orchestrator_ready(client=None):
+    """Ping the orchestrator /version endpoint to verify it is running and reachable.
+
+    Returns (True, version_str) on success, (False, error_msg) on failure.
+    The response must be a JSON object with a 'title' field containing 'AceStream Orchestrator'.
+    """
+    if client is None:
+        client = _get_acestream_monitoring_client()
+    if not client.is_configured():
+        return False, "AceStream orchestrator is not configured"
+
+    base_url = client.base_url
+    version_url = f"{base_url.rstrip('/')}/version"
+    try:
+        resp = requests.get(version_url, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return False, "Orchestrator /version returned unexpected format"
+        title = str(data.get('title') or '')
+        if 'AceStream Orchestrator' not in title:
+            return False, f"Unexpected orchestrator title: '{title}'"
+        version = data.get('version', 'unknown')
+        return True, str(version)
+    except requests.exceptions.ConnectionError:
+        return False, f"Cannot connect to AceStream orchestrator at {base_url}"
+    except requests.exceptions.Timeout:
+        return False, f"Timeout connecting to AceStream orchestrator at {base_url}"
+    except requests.exceptions.HTTPError as exc:
+        return False, f"Orchestrator /version returned HTTP {exc.response.status_code}"
+    except Exception as exc:
+        # Log full exception details server-side, but return a generic message to the client
+        logger.error("Unexpected error while pinging AceStream orchestrator", exc_info=True)
+        return False, "Unexpected error while pinging orchestrator"
+
+
+def _parse_m3u_acestream_entries(m3u_content: str):
+    """Local parser fallback for acestream:// and /ace/getstream?id=<id> entries."""
+    items = []
+    pending_name = None
+
+    for idx, raw_line in enumerate((m3u_content or '').splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if line.startswith('#EXTINF:'):
+            if ',' in line:
+                pending_name = line.split(',', 1)[1].strip() or None
+            else:
+                pending_name = None
+            continue
+
+        content_id = normalize_content_id(line)
+        if content_id:
+            items.append({
+                'content_id': content_id,
+                'name': pending_name,
+                'line_number': str(idx),
+            })
+            pending_name = None
+
+    # Deduplicate by content_id keeping first non-empty name.
+    merged = {}
+    for item in items:
+        key = item['content_id']
+        if key not in merged:
+            merged[key] = item
+        elif not merged[key].get('name') and item.get('name'):
+            merged[key]['name'] = item['name']
+
+    return list(merged.values())
+
+
+def _ace_channel_sessions_store():
+    from apps.database.manager import get_db_manager
+    db = get_db_manager()
+    store = db.get_system_setting('acestream_channel_sessions', {})
+    return store if isinstance(store, dict) else {}
+
+
+def _save_ace_channel_sessions_store(store):
+    from apps.database.manager import get_db_manager
+    db = get_db_manager()
+    return bool(db.set_system_setting('acestream_channel_sessions', store))
+
+
+def _get_ace_management_settings():
+    """Load management tuning from shared session settings."""
+    from apps.database.manager import get_db_manager
+
+    db = get_db_manager()
+    session_settings = db.get_system_setting('session_settings', {})
+    if not isinstance(session_settings, dict):
+        session_settings = {}
+
+    review_duration = float(session_settings.get('review_duration', 60.0) or 60.0)
+    pass_score_threshold = 70.0
+    return {
+        'review_duration': max(0.0, review_duration),
+        'pass_score_threshold': pass_score_threshold,
+    }
+
+
+def _clamp_score(value):
+    return max(0.0, min(100.0, float(value)))
+
+
+def _coerce_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _parse_resolution_pixels(resolution):
+    if not isinstance(resolution, str):
+        return 0
+    match = re.match(r'^(\d{2,5})x(\d{2,5})$', resolution.strip())
+    if not match:
+        return 0
+    return int(match.group(1)) * int(match.group(2))
+
+
+def _parse_resolution_parts(resolution):
+    if not isinstance(resolution, str):
+        return None, None
+    match = re.match(r'^(\d{2,5})x(\d{2,5})$', resolution.strip())
+    if not match:
+        return None, None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _score_ffprobe_quality(ffprobe_stats):
+    """Compute quality bonus from cached FFProbe-like stream stats."""
+    if not isinstance(ffprobe_stats, dict):
+        return 0.0, 'unknown'
+
+    bonus = 0.0
+    resolution = ffprobe_stats.get('resolution')
+    pixels = _parse_resolution_pixels(resolution)
+    if pixels >= 1920 * 1080:
+        bonus += 8.0
+    elif pixels >= 1280 * 720:
+        bonus += 5.0
+    elif pixels >= 960 * 540:
+        bonus += 2.0
+    elif pixels > 0:
+        bonus -= 2.0
+
+    video_codec = str(ffprobe_stats.get('video_codec') or '').lower()
+    if video_codec in ('hevc', 'h265', 'av1'):
+        bonus += 3.0
+    elif video_codec in ('h264', 'avc'):
+        bonus += 2.0
+    elif video_codec and video_codec != 'n/a':
+        bonus += 1.0
+
+    audio_codec = str(ffprobe_stats.get('audio_codec') or '').lower()
+    if audio_codec and audio_codec != 'n/a':
+        bonus += 1.0
+
+    fps = _coerce_float(ffprobe_stats.get('fps'))
+    if fps is not None:
+        if fps >= 50.0:
+            bonus += 2.0
+        elif fps >= 23.0:
+            bonus += 1.0
+
+    bitrate_kbps = _coerce_float(ffprobe_stats.get('bitrate_kbps'))
+    if bitrate_kbps is not None:
+        if bitrate_kbps >= 4000.0:
+            bonus += 2.0
+        elif bitrate_kbps >= 1500.0:
+            bonus += 1.0
+
+    if ffprobe_stats.get('hdr_format'):
+        bonus += 2.0
+
+    if bonus >= 14.0:
+        rating = 'excellent'
+    elif bonus >= 9.0:
+        rating = 'good'
+    elif bonus >= 4.0:
+        rating = 'fair'
+    else:
+        rating = 'basic'
+
+    return bonus, rating
+
+
+def _extract_last_ts_values(monitor):
+    values = []
+    if not isinstance(monitor, dict):
+        return values
+
+    recent_status = monitor.get('recent_status')
+    if isinstance(recent_status, list):
+        for item in recent_status:
+            if not isinstance(item, dict):
+                continue
+            last_ts = _coerce_float(item.get('last_ts'))
+            if last_ts is not None:
+                values.append(last_ts)
+
+    latest = monitor.get('latest_status')
+    if isinstance(latest, dict):
+        latest_last_ts = _coerce_float(latest.get('last_ts'))
+        if latest_last_ts is not None and (not values or values[-1] != latest_last_ts):
+            values.append(latest_last_ts)
+
+    return values
+
+
+def _compute_last_ts_plateau_penalty(monitor):
+    """Penalize frequent last_ts plateaus (limited progression between samples)."""
+    values = _extract_last_ts_values(monitor)
+    if len(values) < 3:
+        return 0.0, 0.0
+
+    deltas = []
+    for i in range(1, len(values)):
+        deltas.append(values[i] - values[i - 1])
+
+    if not deltas:
+        return 0.0, 0.0
+
+    plateau_steps = sum(1 for d in deltas if d <= 0.0)
+    plateau_ratio = float(plateau_steps) / float(len(deltas))
+    penalty = min(18.0, plateau_ratio * 18.0)
+
+    # Extra penalty if there is a long consecutive plateau streak.
+    longest = 0
+    current = 0
+    for d in deltas:
+        if d <= 0.0:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    if longest >= 3:
+        penalty = min(22.0, penalty + 4.0)
+
+    return penalty, plateau_ratio
+
+
+def _compute_ace_management_score(monitor, entry=None):
+    """Compute Ace reliability score using status, plateau behavior, and FFProbe quality."""
+    if not isinstance(monitor, dict):
+        return 25.0, {
+            'plateau_penalty': 0.0,
+            'plateau_ratio': 0.0,
+            'ffprobe_bonus': 0.0,
+            'ffprobe_rating': 'unknown',
+        }
+
+    status = (monitor.get('status') or '').lower()
+    base = {
+        'running': 82.0,
+        'starting': 55.0,
+        'reconnecting': 50.0,
+        'stuck': 25.0,
+        'dead': 0.0,
+    }.get(status, 40.0)
+
+    latest = monitor.get('latest_status') or {}
+
+    speed_down = float(latest.get('speed_down') or 0.0)
+    speed_up = float(latest.get('speed_up') or 0.0)
+    peers = float(latest.get('peers') or 0.0)
+
+    base += min(8.0, speed_down / 600.0)
+    base += min(4.0, speed_up / 900.0)
+    base += min(6.0, peers / 8.0)
+
+    if monitor.get('currently_played'):
+        base += 3.0
+
+    plateau_penalty, plateau_ratio = _compute_last_ts_plateau_penalty(monitor)
+    ffprobe_stats = entry.get('ffprobe_stats') if isinstance(entry, dict) else None
+    ffprobe_bonus, ffprobe_rating = _score_ffprobe_quality(ffprobe_stats)
+
+    score = _clamp_score(base - plateau_penalty + ffprobe_bonus)
+    return score, {
+        'plateau_penalty': plateau_penalty,
+        'plateau_ratio': plateau_ratio,
+        'ffprobe_bonus': ffprobe_bonus,
+        'ffprobe_rating': ffprobe_rating,
+    }
+
+
+def _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
+    """Derive and persist management state fields for a channel-session entry."""
+    changed = False
+
+    prev_state = (entry.get('management_state') or 'review').lower()
+    prev_since = float(entry.get('management_since') or now_ts)
+    manual_quarantine = bool(entry.get('manual_quarantine'))
+
+    score, score_meta = _compute_ace_management_score(monitor, entry)
+    reason = None
+
+    if not isinstance(monitor, dict):
+        target_state = 'review'
+        reason = 'missing-monitor'
+    else:
+        raw_status = (monitor.get('status') or 'unknown').lower()
+
+        if manual_quarantine:
+            target_state = 'quarantined'
+            reason = 'manual'
+        elif raw_status == 'dead':
+            target_state = 'quarantined'
+            reason = 'dead'
+        elif raw_status == 'stuck':
+            # Keep stuck as problematic but still monitored for potential recovery.
+            target_state = 'quarantined'
+            reason = 'stuck'
+        elif raw_status in ('starting', 'reconnecting'):
+            target_state = 'review'
+            reason = raw_status
+        elif raw_status == 'running':
+            elapsed = max(0.0, now_ts - prev_since)
+            if prev_state == 'stable':
+                target_state = 'stable'
+            elif prev_state == 'review' and elapsed >= settings['review_duration'] and score >= settings['pass_score_threshold']:
+                target_state = 'stable'
+            else:
+                target_state = 'review'
+                if score_meta.get('plateau_ratio', 0.0) >= 0.5:
+                    reason = 'plateau'
+                elif prev_state != 'stable':
+                    reason = 'warming'
+                else:
+                    reason = 'low-score'
+        else:
+            target_state = 'review'
+            reason = f'status-{raw_status}'
+
+    # Auto-revive from quarantine after cooldown (mirrors standard QUARANTINE_DURATION of 15 min).
+    # Only applies to automatic quarantines — manual quarantines persist until explicitly revived.
+    QUARANTINE_DURATION = 900.0
+    if target_state == 'quarantined' and not manual_quarantine:
+        time_in_quarantine = now_ts - prev_since
+        if prev_state == 'quarantined' and time_in_quarantine >= QUARANTINE_DURATION:
+            target_state = 'review'
+            reason = 'auto-revive'
+            logger.info(
+                f"Ace stream {entry.get('stream_id')} auto-revived after {time_in_quarantine:.0f}s in quarantine"
+            )
+
+    if target_state != prev_state:
+        entry['management_state'] = target_state
+        entry['management_since'] = now_ts
+        changed = True
+    elif 'management_state' not in entry:
+        entry['management_state'] = target_state
+        entry['management_since'] = now_ts
+        changed = True
+
+    if float(entry.get('management_score') or -1) != float(score):
+        entry['management_score'] = score
+        changed = True
+
+    plateau_ratio = float(score_meta.get('plateau_ratio') or 0.0)
+    if float(entry.get('management_plateau_ratio') or -1.0) != plateau_ratio:
+        entry['management_plateau_ratio'] = plateau_ratio
+        changed = True
+
+    ffprobe_rating = score_meta.get('ffprobe_rating')
+    if entry.get('management_ffprobe_rating') != ffprobe_rating:
+        entry['management_ffprobe_rating'] = ffprobe_rating
+        changed = True
+
+    ffprobe_bonus = float(score_meta.get('ffprobe_bonus') or 0.0)
+    if float(entry.get('management_ffprobe_bonus') or -999.0) != ffprobe_bonus:
+        entry['management_ffprobe_bonus'] = ffprobe_bonus
+        changed = True
+
+    if entry.get('management_reason') != reason:
+        entry['management_reason'] = reason
+        changed = True
+
+    # Update last_ts_delta sliding window for tie-breaking (last 10 samples)
+    _ACE_LAST_TS_DELTA_WINDOW = 10
+    current_delta = None
+    if isinstance(monitor, dict):
+        movement = monitor.get('livepos_movement') or {}
+        raw_delta = movement.get('last_ts_delta')
+        if raw_delta is not None:
+            try:
+                current_delta = float(raw_delta)
+            except (TypeError, ValueError):
+                pass
+    if current_delta is not None:
+        window = entry.get('_last_ts_delta_window')
+        if not isinstance(window, list):
+            window = []
+            entry['_last_ts_delta_window'] = window
+        if len(window) >= _ACE_LAST_TS_DELTA_WINDOW:
+            del window[0]
+        window.append(current_delta)
+        avg_delta = sum(window) / len(window)
+        if entry.get('_last_ts_delta_avg') != avg_delta:
+            entry['_last_ts_delta_avg'] = avg_delta
+            changed = True
+
+    return changed
+
+def _is_ace_ffprobe_stats_empty(ffprobe_stats):
+    """Return True if ffprobe stats have no useful data (all N/A or missing)."""
+    if not isinstance(ffprobe_stats, dict):
+        return True
+    return (
+        (ffprobe_stats.get('resolution') or 'N/A') in ('N/A', '0x0', '') and
+        (ffprobe_stats.get('video_codec') or 'N/A') == 'N/A'
+    )
+
+
+_ACE_FFPROBE_RECHECK_THROTTLE_S = 300   # seconds between automatic recheck attempts
+_ACE_FFPROBE_PROBE_DURATION_S = 5       # seconds of stream to analyse per recheck
+_ACE_FFPROBE_PROBE_TIMEOUT_S = 15       # subprocess timeout for each recheck
+
+
+def _schedule_ace_ffprobe_recheck(entry, monitor):
+    """Schedule a background ffprobe recheck on the engine HTTP URL for a running stream.
+
+    Only triggers when:
+    - Current ffprobe stats are empty/N/A
+    - The monitor is in 'running' status
+    - The engine host and port are known
+    - The last attempt was more than _ACE_FFPROBE_RECHECK_THROTTLE_S seconds ago
+    """
+    if not _is_ace_ffprobe_stats_empty(entry.get('ffprobe_stats')):
+        return
+
+    monitor_status = (monitor.get('status') or '').lower() if isinstance(monitor, dict) else ''
+    if monitor_status != 'running':
+        return
+
+    # Throttle: avoid hammering the engine
+    last_attempt = entry.get('_ffprobe_attempt_ts')
+    if last_attempt and time.time() - float(last_attempt) < _ACE_FFPROBE_RECHECK_THROTTLE_S:
+        return
+
+    engine = (monitor.get('engine') or {}) if isinstance(monitor, dict) else {}
+    host = engine.get('host')
+    port = engine.get('port')
+    content_id = entry.get('content_id')
+
+    if not host or not port or not content_id:
+        return
+
+    url = f"http://{host}:{port}/ace/getstream?id={content_id}"
+    entry['_ffprobe_attempt_ts'] = time.time()
+    thread_name = f"ace-ffprobe-{content_id[:8] if content_id else 'unknown'}"
+
+    def _run():
+        try:
+            from apps.stream.stream_check_utils import get_stream_info_and_bitrate
+            stats = get_stream_info_and_bitrate(
+                url,
+                duration=_ACE_FFPROBE_PROBE_DURATION_S,
+                timeout=_ACE_FFPROBE_PROBE_TIMEOUT_S,
+            )
+            if stats and (stats.get('resolution', 'N/A') not in ('N/A', '0x0', '') or
+                         stats.get('video_codec', 'N/A') != 'N/A'):
+                entry['ffprobe_stats'] = {
+                    'resolution': stats.get('resolution'),
+                    'fps': stats.get('fps'),
+                    'bitrate_kbps': stats.get('bitrate_kbps'),
+                    'video_codec': stats.get('video_codec', 'N/A'),
+                    'audio_codec': stats.get('audio_codec', 'N/A'),
+                    'hdr_format': stats.get('hdr_format'),
+                    'pixel_format': stats.get('pixel_format'),
+                    'audio_sample_rate': stats.get('audio_sample_rate'),
+                    'audio_channels': stats.get('audio_channels'),
+                    'channel_layout': stats.get('channel_layout'),
+                    'audio_bitrate': stats.get('audio_bitrate'),
+                }
+                logger.info(f"AceStream ffprobe recheck succeeded for {content_id}: {entry['ffprobe_stats'].get('resolution')}")
+            else:
+                logger.debug(f"AceStream ffprobe recheck yielded no useful data for {content_id}")
+        except Exception as exc:
+            logger.debug(f"AceStream ffprobe recheck failed for {content_id}: {exc}")
+
+    t = threading.Thread(target=_run, daemon=True, name=thread_name)
+    t.start()
+
+
+def _evaluate_ace_session_management(raw_session, monitors_by_id, settings):
+    """Evaluate and persist management state for every entry in one session."""
+    if not isinstance(raw_session, dict):
+        return False
+
+    changed = False
+    now_ts = time.time()
+    udi = get_udi_manager()
+    ffprobe_cache = {}
+    entries = raw_session.get('entries') or []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+
+        if not isinstance(entry.get('ffprobe_stats'), dict):
+            stream_id = entry.get('stream_id')
+            stream = None
+            if stream_id not in ffprobe_cache:
+                try:
+                    stream = udi.get_stream_by_id(int(stream_id)) if stream_id is not None else None
+                except Exception:
+                    stream = None
+                ffprobe_cache[stream_id] = stream
+            else:
+                stream = ffprobe_cache.get(stream_id)
+
+            if isinstance(stream, dict):
+                entry['ffprobe_stats'] = extract_stream_stats(stream)
+                changed = True
+
+        monitor = monitors_by_id.get(entry.get('monitor_id'))
+        # Schedule a background ffprobe recheck via the engine HTTP URL when stats are empty
+        _schedule_ace_ffprobe_recheck(entry, monitor)
+        if _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
+            changed = True
+
+    return changed
+
+
+def _check_ace_session_epg_auto_stop(raw_session, client):
+    """Stop Orchestrator monitors for a session when its EPG event end time has passed.
+
+    Uses a 'epg_auto_stopped' flag to avoid issuing stop calls on every poll tick.
+    Returns True if the store needs to be persisted.
+    """
+    if not isinstance(raw_session, dict):
+        return False
+    if raw_session.get('epg_auto_stopped'):
+        return False
+
+    epg_end = raw_session.get('epg_event_end')
+    if not epg_end:
+        return False
+
+    try:
+        from datetime import datetime, timezone
+        end_time = datetime.fromisoformat(str(epg_end).replace('Z', '+00:00'))
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if now < end_time:
+            return False
+    except Exception:
+        return False
+
+    session_id = raw_session.get('session_id', '?')
+    logger.info(f"Ace session {session_id}: EPG event ended, auto-stopping Orchestrator monitors")
+
+    for entry in raw_session.get('entries') or []:
+        monitor_id = entry.get('monitor_id') if isinstance(entry, dict) else None
+        if not monitor_id:
+            continue
+        try:
+            client.stop_session(monitor_id)
+        except Exception:
+            pass
+
+    raw_session['epg_auto_stopped'] = True
+    return True
+
+
+def _apply_ace_dispatcharr_sync(raw_session):
+    """Enforce Dispatcharr channel stream order based on AceStream management states.
+
+    Order: stable entries (desc score) → review entries (desc score).
+    Quarantined entries are excluded from the channel.
+    Mirrors the _update_monitoring_ranks / _execute_sync logic of the standard monitoring service.
+    Returns True if a sync was attempted (store does NOT need extra save; update_channel_streams is async).
+    """
+    if not isinstance(raw_session, dict):
+        return False
+
+    channel_id = raw_session.get('channel_id')
+    if not channel_id:
+        return False
+
+    entries = [e for e in (raw_session.get('entries') or []) if isinstance(e, dict)]
+    if not entries:
+        return False
+
+    stable = sorted(
+        [e for e in entries if (e.get('management_state') or 'review').lower() == 'stable'],
+        key=lambda e: (float(e.get('management_score') or 0), float(e.get('_last_ts_delta_avg') or 0)),
+        reverse=True,
+    )
+    review = sorted(
+        [e for e in entries if (e.get('management_state') or 'review').lower() == 'review'],
+        key=lambda e: (float(e.get('management_score') or 0), float(e.get('_last_ts_delta_avg') or 0)),
+        reverse=True,
+    )
+
+    desired_ids = [int(e['stream_id']) for e in (stable + review) if e.get('stream_id') is not None]
+
+    if not desired_ids:
+        return False
+
+    try:
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(int(channel_id))
+        current_ids = channel.get('streams', []) if isinstance(channel, dict) else []
+
+        if desired_ids == current_ids:
+            return False
+
+        from apps.core.api_utils import update_channel_streams
+
+        def _do_sync():
+            try:
+                success = update_channel_streams(int(channel_id), desired_ids)
+                if success:
+                    udi.refresh_channel_by_id(int(channel_id))
+                    logger.debug(
+                        f"Ace session {raw_session.get('session_id')}: synced channel {channel_id} "
+                        f"stream order → {desired_ids}"
+                    )
+                else:
+                    logger.warning(f"Ace Dispatcharr sync failed for channel {channel_id}")
+            except Exception as exc:
+                logger.error(f"Ace Dispatcharr sync error for channel {channel_id}: {exc}")
+
+        import threading
+        threading.Thread(target=_do_sync, daemon=True, name=f"AceSync-{channel_id}").start()
+        return True
+
+    except Exception as exc:
+        logger.error(f"_apply_ace_dispatcharr_sync error: {exc}")
+        return False
+
+
+def _save_ace_session_telemetry_snapshot(raw_session, monitors_by_id):
+    """Persist Ace monitoring telemetry to DB, deduped by latest monitor sample key."""
+    if not isinstance(raw_session, dict):
+        return False
+
+    entries = raw_session.get('entries') or []
+    if not isinstance(entries, list) or not entries:
+        return False
+
+    pending_entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        monitor = monitors_by_id.get(entry.get('monitor_id'))
+        if not isinstance(monitor, dict):
+            continue
+
+        sample_key = str(monitor.get('last_collected_at') or monitor.get('sample_count') or '')
+        if not sample_key:
+            continue
+        if entry.get('last_telemetry_key') == sample_key:
+            continue
+
+        pending_entries.append((entry, monitor, sample_key))
+
+    if not pending_entries:
+        return False
+
+    from apps.database.connection import get_session as get_db_session
+    from apps.database.models import Run, ChannelHealth, StreamTelemetry
+
+    db_session = get_db_session()
+    try:
+        run_ts = datetime.utcnow()
+        channel_id = int(raw_session.get('channel_id') or 0)
+        channel_name = raw_session.get('channel_name')
+
+        all_monitors = []
+        quarantined_count = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            monitor = monitors_by_id.get(entry.get('monitor_id'))
+            if isinstance(monitor, dict):
+                all_monitors.append(monitor)
+            if (entry.get('management_state') or '').lower() == 'quarantined':
+                quarantined_count += 1
+
+        run = Run(
+            timestamp=run_ts,
+            duration_seconds=0.0,
+            total_channels=1,
+            total_streams=len(entries),
+            global_dead_count=quarantined_count,
+            global_revived_count=0,
+            run_type='acestream_monitor',
+            raw_details=json.dumps({
+                'source_type': 'acestream',
+                'session_id': raw_session.get('session_id'),
+                'channel_id': channel_id,
+                'channel_name': channel_name,
+                'pending_streams': len(pending_entries),
+            }),
+            raw_subentries=None,
+        )
+        db_session.add(run)
+        db_session.flush()
+
+        channel_health = ChannelHealth(
+            run_id=run.id,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            offline=len(all_monitors) == 0,
+            available_streams=max(0, len(entries) - quarantined_count),
+            dead_streams=quarantined_count,
+        )
+        db_session.add(channel_health)
+
+        udi = get_udi_manager()
+        stream_cache = {}
+        for entry, monitor, sample_key in pending_entries:
+            stream_id = int(entry.get('stream_id') or 0)
+            if stream_id not in stream_cache:
+                stream_cache[stream_id] = udi.get_stream_by_id(stream_id) if stream_id else None
+            stream = stream_cache.get(stream_id)
+
+            ffprobe_stats = entry.get('ffprobe_stats') if isinstance(entry.get('ffprobe_stats'), dict) else {}
+            width, height = _parse_resolution_parts(ffprobe_stats.get('resolution'))
+
+            row = StreamTelemetry(
+                run_id=run.id,
+                channel_id=channel_id,
+                provider_id=(stream or {}).get('m3u_account_id') if isinstance(stream, dict) else None,
+                stream_id=stream_id,
+                bitrate_kbps=int(_coerce_float(ffprobe_stats.get('bitrate_kbps')) or 0) or None,
+                resolution_width=width,
+                resolution_height=height,
+                fps=_coerce_float(ffprobe_stats.get('fps')),
+                codec=ffprobe_stats.get('video_codec'),
+                audio_codec=ffprobe_stats.get('audio_codec'),
+                quality_score=_coerce_float(entry.get('management_score')),
+                is_dead=((entry.get('management_state') or '').lower() == 'quarantined'),
+                is_hdr=bool(ffprobe_stats.get('hdr_format')),
+            )
+            db_session.add(row)
+            entry['last_telemetry_key'] = sample_key
+
+        db_session.commit()
+        return True
+    except Exception as exc:
+        db_session.rollback()
+        logger.error(f"Error saving Ace telemetry snapshot: {exc}", exc_info=True)
+        return False
+    finally:
+        db_session.close()
+
+
+def _ace_status_buckets(monitor_items):
+    active_states = {'starting', 'running', 'stuck', 'reconnecting'}
+    running = 0
+    stuck = 0
+    dead = 0
+
+    for item in monitor_items:
+        status = (item.get('status') or '').lower()
+        if status == 'running':
+            running += 1
+        elif status == 'stuck':
+            stuck += 1
+            # Keep stuck in the dead/problem section for UI grouping,
+            # but still treat it as active for continued monitoring.
+            dead += 1
+        elif status == 'dead':
+            dead += 1
+
+    is_active = any((item.get('status') or '').lower() in active_states for item in monitor_items)
+    return running, stuck, dead, is_active
+
+
+def _build_ace_channel_session_summary(raw_session, monitors_by_id):
+    monitor_items = [monitors_by_id.get(entry.get('monitor_id')) for entry in raw_session.get('entries', [])]
+    monitor_items = [item for item in monitor_items if isinstance(item, dict)]
+
+    stable = 0
+    review = 0
+    quarantined = 0
+    for entry in raw_session.get('entries', []):
+        if not isinstance(entry, dict):
+            continue
+        state = (entry.get('management_state') or 'review').lower()
+        if state == 'stable':
+            stable += 1
+        elif state == 'quarantined':
+            quarantined += 1
+        else:
+            review += 1
+
+    _, _, _, is_active = _ace_status_buckets(monitor_items)
+    return {
+        'session_id': raw_session.get('session_id'),
+        'source_type': 'acestream',
+        'channel_id': raw_session.get('channel_id'),
+        'channel_name': raw_session.get('channel_name'),
+        'channel_logo_url': raw_session.get('channel_logo_url'),
+        'epg_event_title': raw_session.get('epg_event_title'),
+        'epg_event_description': raw_session.get('epg_event_description'),
+        'epg_event_start': raw_session.get('epg_event_start'),
+        'epg_event_end': raw_session.get('epg_event_end'),
+        'epg_event_id': raw_session.get('epg_event_id'),
+        'created_at': raw_session.get('created_at'),
+        'is_active': is_active,
+        'stable_count': stable,
+        'review_count': review,
+        'quarantined_count': quarantined,
+        'stream_count': len(raw_session.get('entries', [])),
+        'sample_count': sum(int(item.get('sample_count') or 0) for item in monitor_items),
+        'played_count': sum(1 for item in monitor_items if item.get('currently_played')),
+        'monitor_count': len(raw_session.get('entries', [])),
+    }
+
+
+def _annotate_monitors_with_playback(client, monitors_by_id):
+    """Attach currently_played to monitor payloads using started streams endpoint."""
+    if not monitors_by_id:
+        return
+
+    try:
+        started_payload = client.list_started_streams()
+    except Exception:
+        return
+
+    for monitor_id, monitor in list(monitors_by_id.items()):
+        if not isinstance(monitor, dict):
+            continue
+        monitors_by_id[monitor_id] = client.annotate_with_playback(dict(monitor), started_payload)
+
+
+def _compact_ace_monitor_payload(monitor, recent_limit=8):
+    """Return a compact monitor shape suitable for 1s UI polling."""
+    if not isinstance(monitor, dict):
+        return None
+
+    recent_status = monitor.get('recent_status')
+    if isinstance(recent_status, list):
+        recent_status = recent_status[-recent_limit:]
+    else:
+        recent_status = []
+
+    return {
+        'monitor_id': monitor.get('monitor_id'),
+        'content_id': monitor.get('content_id'),
+        'stream_name': monitor.get('stream_name'),
+        'status': monitor.get('status'),
+        'interval_s': monitor.get('interval_s'),
+        'run_seconds': monitor.get('run_seconds'),
+        'started_at': monitor.get('started_at'),
+        'last_collected_at': monitor.get('last_collected_at'),
+        'ended_at': monitor.get('ended_at'),
+        'sample_count': monitor.get('sample_count'),
+        'last_error': monitor.get('last_error'),
+        'dead_reason': monitor.get('dead_reason'),
+        'reconnect_attempts': monitor.get('reconnect_attempts'),
+        'engine': monitor.get('engine'),
+        'session': monitor.get('session'),
+        'latest_status': monitor.get('latest_status'),
+        'recent_status': recent_status,
+        'livepos_movement': monitor.get('livepos_movement'),
+        'currently_played': bool(monitor.get('currently_played')),
+    }
+
+
+@app.route('/api/acestream-channel-sessions', methods=['GET'])
+def list_acestream_channel_sessions():
+    """List channel-scoped AceStream monitoring sessions."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        status_filter = (request.args.get('status') or '').lower()
+        store = _ace_channel_sessions_store()
+        mgmt_settings = _get_ace_management_settings()
+        monitor_payload = client.list_sessions()
+        monitor_items = monitor_payload.get('items', []) if isinstance(monitor_payload, dict) else []
+        monitors_by_id = {item.get('monitor_id'): item for item in monitor_items if isinstance(item, dict) and item.get('monitor_id')}
+        _annotate_monitors_with_playback(client, monitors_by_id)
+
+        sessions = []
+        store_changed = False
+        for session_id, raw in store.items():
+            if not isinstance(raw, dict):
+                continue
+            raw['session_id'] = session_id
+            if _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings):
+                store_changed = True
+            if _save_ace_session_telemetry_snapshot(raw, monitors_by_id):
+                store_changed = True
+            if _check_ace_session_epg_auto_stop(raw, client):
+                store_changed = True
+            # Discover new matching streams and start monitors for them (mirrors standard refresh)
+            if not raw.get('epg_auto_stopped'):
+                if _refresh_ace_session_streams(raw, client):
+                    store_changed = True
+                    _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings)
+            _apply_ace_dispatcharr_sync(raw)
+            summary = _build_ace_channel_session_summary(raw, monitors_by_id)
+            if status_filter == 'active' and not summary.get('is_active'):
+                continue
+            sessions.append(summary)
+
+        if store_changed:
+            _save_ace_channel_sessions_store(store)
+
+        sessions.sort(key=lambda s: s.get('created_at') or 0, reverse=True)
+        return jsonify(sessions), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({'error': 'Failed to list AceStream channel sessions', 'detail': detail}), status_code
+    except Exception as e:
+        logger.error(f"Error listing AceStream channel sessions: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+def _refresh_ace_session_streams(raw_session, client, interval_s=1.0, run_seconds=0, per_sample_timeout_s=1.0):
+    """Discover new streams matching the session filter and start monitors for them.
+
+    Mirrors StreamSessionManager._refresh_session_streams: on each poll cycle the full UDI
+    stream list is re-evaluated against the stored regex / TVG-ID filter so that streams
+    added to the M3U source after session creation are automatically picked up.
+    Returns True if new entries were added (store must be persisted by caller).
+    """
+    if not isinstance(raw_session, dict):
+        return False
+
+    channel_id = raw_session.get('channel_id')
+    if not channel_id:
+        return False
+
+    resolved_regex = raw_session.get('regex_filter', '')
+    match_by_tvg_id = bool(raw_session.get('match_by_tvg_id'))
+    channel_tvg_id = raw_session.get('channel_tvg_id')
+    channel_name = raw_session.get('channel_name', '')
+
+    # Nothing to refresh if session used the channel-streams fallback
+    if not resolved_regex and not (match_by_tvg_id and channel_tvg_id):
+        return False
+
+    import re as _re
+
+    compiled_regex = None
+    if resolved_regex:
+        try:
+            pattern = resolved_regex.replace('CHANNEL_NAME', _re.escape(channel_name))
+            pattern = _re.sub(r'(?<!\\) +', r'\\s+', pattern)
+            compiled_regex = _re.compile(pattern, _re.IGNORECASE)
+        except _re.error:
+            return False
+
+    udi = get_udi_manager()
+    all_streams = udi.get_streams() or []
+
+    # Build set of content_ids already being monitored
+    existing_content_ids = {
+        e.get('content_id')
+        for e in (raw_session.get('entries') or [])
+        if isinstance(e, dict) and e.get('content_id')
+    }
+
+    new_entries = []
+    for s in all_streams:
+        matched = False
+        if match_by_tvg_id and channel_tvg_id:
+            if s.get('tvg_id') == channel_tvg_id:
+                matched = True
+        if not matched and compiled_regex:
+            if compiled_regex.search((s.get('name') or '')[:1000]):
+                matched = True
+        if not matched:
+            continue
+
+        content_id = normalize_content_id(s.get('url'))
+        if not content_id or content_id in existing_content_ids:
+            continue
+
+        try:
+            payload = {
+                'content_id': content_id,
+                'stream_name': s.get('name') or channel_name,
+                'interval_s': float(interval_s),
+                'run_seconds': int(run_seconds),
+                'per_sample_timeout_s': float(per_sample_timeout_s),
+            }
+            started = client.start_session(payload)
+            monitor_id = started.get('monitor_id') if isinstance(started, dict) else None
+            if not monitor_id:
+                continue
+            new_entries.append({
+                'stream_id': s.get('id'),
+                'stream_name': s.get('name'),
+                'content_id': content_id,
+                'monitor_id': monitor_id,
+                'ffprobe_stats': extract_stream_stats(s),
+            })
+            existing_content_ids.add(content_id)
+            logger.info(
+                f"Ace session {raw_session.get('session_id')}: discovered new stream "
+                f"{s.get('name')} ({content_id})"
+            )
+        except Exception as exc:
+            logger.warning(f"Ace refresh: failed to start monitor for {content_id}: {exc}")
+
+    if new_entries:
+        raw_session.setdefault('entries', []).extend(new_entries)
+        return True
+    return False
+
+
+def create_acestream_channel_session_impl(
+    channel_id,
+    interval_s=1.0,
+    run_seconds=0,
+    per_sample_timeout_s=1.0,
+    engine_container_id=None,
+    epg_event_title=None,
+    epg_event_description=None,
+    epg_event_start=None,
+    epg_event_end=None,
+    epg_event_id=None,
+):
+    """Core logic to create and start an AceStream channel session.
+
+    Stream discovery always uses the channel's automation profile settings
+    (regex filter and TVG-ID matching), the same as FFmpeg-based sessions.
+    """
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return {'error': 'AceStream backend orchestrator is not configured.'}, 503
+
+    # Verify the orchestrator is actually reachable and ready before starting
+    ready, ready_detail = _ping_orchestrator_ready(client)
+    if not ready:
+        return {
+            'error': 'AceStream orchestrator is not ready',
+            'detail': ready_detail,
+        }, 503
+
+    try:
+        udi = get_udi_manager()
+
+        # Always refresh this channel to get up-to-date metadata
+        udi.refresh_channel_by_id(int(channel_id))
+        channel = udi.get_channel_by_id(int(channel_id))
+        if not channel:
+            return {'error': 'Channel not found'}, 404
+
+        channel_name = channel.get('name') or f'Channel {channel_id}'
+        channel_tvg_id = channel.get('tvg_id')
+        logo_id = channel.get('logo_id')
+        channel_logo_url = f"/api/channels/logos/{logo_id}/cache" if logo_id else channel.get('logo_url')
+
+        # ── Stream discovery: always load from channel's automation profile ──
+        # Mirrors what create_session_from_event does for FFmpeg-based sessions.
+        resolved_regex = ''
+        resolved_match_by_tvg_id = False
+        try:
+            from apps.automation.automated_stream_manager import RegexChannelMatcher
+            regex_matcher = RegexChannelMatcher()
+            match_config = regex_matcher.get_channel_match_config(str(channel_id))
+            resolved_match_by_tvg_id = match_config.get('match_by_tvg_id', False)
+            channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=None)
+            if channel_regex:
+                resolved_regex = channel_regex
+            logger.info(
+                f"AceStream session for channel {channel_id}: channel profile "
+                f"(regex='{resolved_regex}', match_by_tvg_id={resolved_match_by_tvg_id})"
+            )
+        except Exception as _e:
+            logger.debug(f"Could not load channel automation profile for AceStream session: {_e}")
+
+        compiled_regex = None
+        if resolved_regex:
+            import re as _re
+            try:
+                pattern = resolved_regex.replace('CHANNEL_NAME', _re.escape(channel_name))
+                # Convert literal spaces to flexible whitespace (mirrors _WHITESPACE_PATTERN)
+                pattern = _re.sub(r'(?<!\\) +', r'\\s+', pattern)
+                compiled_regex = _re.compile(pattern, _re.IGNORECASE)
+            except _re.error as exc:
+                logger.error(f"Invalid regex for channel {channel_id} automation profile: {exc}")
+                compiled_regex = None
+
+        all_streams = udi.get_streams() or []
+        candidate_stream_ids = []
+        for s in all_streams:
+            matched = False
+            if resolved_match_by_tvg_id and channel_tvg_id:
+                if s.get('tvg_id') == channel_tvg_id:
+                    matched = True
+            if not matched and compiled_regex:
+                stream_name = (s.get('name') or '')[:1000]
+                if compiled_regex.search(stream_name):
+                    matched = True
+            if matched:
+                candidate_stream_ids.append(s.get('id'))
+
+        # Fallback: if no filter specified at all, use channel's pre-assigned streams
+        if not candidate_stream_ids and not resolved_regex and not (resolved_match_by_tvg_id and channel_tvg_id):
+            candidate_stream_ids = channel.get('streams', [])
+
+        entries = []
+        seen_content_ids = set()
+        for stream_id in candidate_stream_ids:
+            stream = udi.get_stream_by_id(int(stream_id)) if stream_id else None
+            if not stream:
+                continue
+            content_id = normalize_content_id(stream.get('url'))
+            if not content_id or content_id in seen_content_ids:
+                continue
+            seen_content_ids.add(content_id)
+
+            payload = {
+                'content_id': content_id,
+                'stream_name': stream.get('name') or channel_name,
+                'interval_s': float(interval_s),
+                'run_seconds': int(run_seconds),
+                'per_sample_timeout_s': float(per_sample_timeout_s),
+                'engine_container_id': engine_container_id if engine_container_id else None,
+            }
+            started = client.start_session(payload)
+            monitor_id = started.get('monitor_id') if isinstance(started, dict) else None
+            if not monitor_id:
+                continue
+            entries.append({
+                'stream_id': stream.get('id'),
+                'stream_name': stream.get('name'),
+                'content_id': content_id,
+                'monitor_id': monitor_id,
+                'ffprobe_stats': extract_stream_stats(stream),
+            })
+
+        if not entries:
+            return {'error': 'No AceStream-compatible streams found matching the discovery criteria'}, 400
+
+        session_id = f"ace_channel_{int(channel_id)}_{int(time.time())}"
+        store = _ace_channel_sessions_store()
+        store[session_id] = {
+            'session_id': session_id,
+            'channel_id': int(channel_id),
+            'channel_name': channel_name,
+            'channel_logo_url': channel_logo_url,
+            'channel_tvg_id': channel_tvg_id,
+            'regex_filter': resolved_regex,
+            'match_by_tvg_id': bool(resolved_match_by_tvg_id),
+            'epg_event_title': epg_event_title,
+            'epg_event_description': epg_event_description,
+            'epg_event_start': epg_event_start,
+            'epg_event_end': epg_event_end,
+            'epg_event_id': epg_event_id,
+            'created_at': time.time(),
+            'entries': entries,
+        }
+        _save_ace_channel_sessions_store(store)
+
+        logger.info(
+            f"Created AceStream session {session_id} for channel {channel_id} "
+            f"with {len(entries)} stream(s) "
+            f"(filter: '{resolved_regex or 'channel-streams-fallback'}', tvg_id: {resolved_match_by_tvg_id})"
+        )
+        return {'session_id': session_id, 'message': 'AceStream channel session created', 'monitor_count': len(entries)}, 201
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return {'error': 'Failed to create AceStream channel session', 'detail': detail}, status_code
+    except Exception as e:
+        logger.error(f"Error creating AceStream channel session: {e}", exc_info=True)
+        return {'error': 'Internal Server Error'}, 500
+
+
+@app.route('/api/acestream-channel-sessions', methods=['POST'])
+def create_acestream_channel_session():
+    """Create and start AceStream monitoring for all AceStream streams in a channel."""
+    data = request.get_json(silent=True) or {}
+    channel_id = data.get('channel_id')
+    if not channel_id:
+        return jsonify({'error': 'channel_id is required'}), 400
+
+    result, status_code = create_acestream_channel_session_impl(
+        channel_id=channel_id,
+        interval_s=data.get('interval_s', 1.0),
+        run_seconds=data.get('run_seconds', 0),
+        per_sample_timeout_s=data.get('per_sample_timeout_s', 1.0),
+        engine_container_id=data.get('engine_container_id'),
+        epg_event_title=data.get('epg_event_title'),
+        epg_event_description=data.get('epg_event_description'),
+        epg_event_start=data.get('epg_event_start'),
+        epg_event_end=data.get('epg_event_end'),
+        epg_event_id=data.get('epg_event_id'),
+    )
+    return jsonify(result), status_code
+
+
+@app.route('/api/acestream-channel-sessions/group/start', methods=['POST'])
+def create_acestream_group_sessions():
+    """Create AceStream channel sessions for all channels in a group."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    # Verify the orchestrator is reachable before starting any sessions
+    ready, ready_detail = _ping_orchestrator_ready(client)
+    if not ready:
+        return jsonify({
+            'error': 'AceStream orchestrator is not ready',
+            'detail': ready_detail,
+        }), 503
+
+    try:
+        data = request.get_json(silent=True) or {}
+        group_id = data.get('group_id')
+        if not group_id:
+            return jsonify({'error': 'group_id is required'}), 400
+
+        udi = get_udi_manager()
+        channels = udi.get_channels_by_group(int(group_id)) or []
+        if not channels:
+            return jsonify({'error': 'Group not found or has no channels'}), 404
+
+        created_sessions = []
+        errors = []
+        for channel in channels:
+            payload = {
+                'channel_id': channel.get('id'),
+                'interval_s': data.get('interval_s', 1.0),
+                'run_seconds': data.get('run_seconds', 0),
+                'per_sample_timeout_s': data.get('per_sample_timeout_s', 1.0),
+                'engine_container_id': data.get('engine_container_id'),
+                'epg_event_title': data.get('epg_event_title'),
+                'epg_event_description': data.get('epg_event_description'),
+                'epg_event_start': data.get('epg_event_start'),
+                'epg_event_end': data.get('epg_event_end'),
+                'epg_event_id': data.get('epg_event_id'),
+            }
+
+            with app.test_request_context('/api/acestream-channel-sessions', method='POST', json=payload):
+                # Reuse handler logic for consistency.
+                response = create_acestream_channel_session()
+
+            if isinstance(response, tuple):
+                body, code = response
+            else:
+                body, code = response, response.status_code
+
+            if code >= 200 and code < 300:
+                created_sessions.append(body.get_json())
+            else:
+                try:
+                    msg = body.get_json().get('error')
+                except Exception:
+                    msg = 'Unknown error'
+                errors.append(f"Channel {channel.get('name')} ({channel.get('id')}): {msg}")
+
+        return jsonify({
+            'message': f"Started {len(created_sessions)} AceStream channel sessions from group {group_id}",
+            'sessions': created_sessions,
+            'errors': errors,
+        }), 200 if created_sessions else 400
+    except Exception as e:
+        logger.error(f"Error creating AceStream group sessions: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-channel-sessions/<session_id>', methods=['GET'])
+def get_acestream_channel_session(session_id):
+    """Get detailed channel-scoped AceStream monitoring session."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        store = _ace_channel_sessions_store()
+        raw = store.get(session_id)
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Session not found'}), 404
+
+        mgmt_settings = _get_ace_management_settings()
+        monitor_payload = client.list_sessions()
+        monitor_items = monitor_payload.get('items', []) if isinstance(monitor_payload, dict) else []
+        monitors_by_id = {item.get('monitor_id'): item for item in monitor_items if isinstance(item, dict) and item.get('monitor_id')}
+        _annotate_monitors_with_playback(client, monitors_by_id)
+
+        store_changed = False
+        if _evaluate_ace_session_management(raw, monitors_by_id, mgmt_settings):
+            store_changed = True
+        if _save_ace_session_telemetry_snapshot(raw, monitors_by_id):
+            store_changed = True
+        if _check_ace_session_epg_auto_stop(raw, client):
+            store_changed = True
+        _apply_ace_dispatcharr_sync(raw)
+        if store_changed:
+            store[session_id] = raw
+            _save_ace_channel_sessions_store(store)
+
+        summary = _build_ace_channel_session_summary(raw, monitors_by_id)
+        entries = []
+        for entry in raw.get('entries', []):
+            monitor = monitors_by_id.get(entry.get('monitor_id'))
+            if monitor is None and entry.get('monitor_id'):
+                try:
+                    monitor = client.get_session(entry['monitor_id'])
+                except Exception:
+                    monitor = None
+            entries.append({
+                **entry,
+                'monitor': _compact_ace_monitor_payload(monitor),
+            })
+
+        detail = {
+            **summary,
+            'entries': entries,
+            'channel_id': raw.get('channel_id'),
+            'channel_name': raw.get('channel_name'),
+            'created_at': raw.get('created_at'),
+        }
+        return jsonify(detail), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({'error': 'Failed to get AceStream channel session', 'detail': detail}), status_code
+    except Exception as e:
+        logger.error(f"Error getting AceStream channel session {session_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-channel-sessions/<session_id>/stop', methods=['POST'])
+def stop_acestream_channel_session(session_id):
+    """Stop all orchestrator monitor sessions attached to a channel session."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        store = _ace_channel_sessions_store()
+        raw = store.get(session_id)
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Session not found'}), 404
+
+        for entry in raw.get('entries', []):
+            monitor_id = entry.get('monitor_id')
+            if not monitor_id:
+                continue
+            try:
+                client.stop_session(monitor_id)
+            except Exception:
+                pass
+
+        return jsonify({'message': 'AceStream channel session stopped'}), 200
+    except Exception as e:
+        logger.error(f"Error stopping AceStream channel session {session_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-channel-sessions/<session_id>', methods=['DELETE'])
+def delete_acestream_channel_session(session_id):
+    """Delete channel session and all orchestrator monitor entries."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        store = _ace_channel_sessions_store()
+        raw = store.get(session_id)
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Session not found'}), 404
+
+        for entry in raw.get('entries', []):
+            monitor_id = entry.get('monitor_id')
+            if not monitor_id:
+                continue
+            try:
+                client.delete_entry(monitor_id)
+            except Exception:
+                try:
+                    client.stop_session(monitor_id)
+                except Exception:
+                    pass
+
+        del store[session_id]
+        _save_ace_channel_sessions_store(store)
+        return jsonify({'message': 'AceStream channel session deleted'}), 200
+    except Exception as e:
+        logger.error(f"Error deleting AceStream channel session {session_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-channel-sessions/<session_id>/streams/<int:stream_id>/quarantine', methods=['POST'])
+def quarantine_acestream_channel_stream(session_id, stream_id):
+    """Manually quarantine one Ace stream entry within a channel session."""
+    try:
+        store = _ace_channel_sessions_store()
+        raw = store.get(session_id)
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Session not found'}), 404
+
+        entries = raw.get('entries') or []
+        target = None
+        for entry in entries:
+            if int(entry.get('stream_id') or -1) == int(stream_id):
+                target = entry
+                break
+
+        if not isinstance(target, dict):
+            return jsonify({'error': 'Stream not found in session'}), 404
+
+        now_ts = time.time()
+        target['manual_quarantine'] = True
+        target['management_state'] = 'quarantined'
+        target['management_reason'] = 'manual'
+        target['management_since'] = now_ts
+
+        _save_ace_channel_sessions_store(store)
+        return jsonify({'message': 'Ace stream quarantined'}), 200
+    except Exception as e:
+        logger.error(f"Error quarantining Ace stream {stream_id} in session {session_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-channel-sessions/<session_id>/streams/<int:stream_id>/revive', methods=['POST'])
+def revive_acestream_channel_stream(session_id, stream_id):
+    """Revive one manually quarantined Ace stream entry back to review."""
+    try:
+        store = _ace_channel_sessions_store()
+        raw = store.get(session_id)
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Session not found'}), 404
+
+        entries = raw.get('entries') or []
+        target = None
+        for entry in entries:
+            if int(entry.get('stream_id') or -1) == int(stream_id):
+                target = entry
+                break
+
+        if not isinstance(target, dict):
+            return jsonify({'error': 'Stream not found in session'}), 404
+
+        now_ts = time.time()
+        target['manual_quarantine'] = False
+        target['management_state'] = 'review'
+        target['management_reason'] = 'manual-revive'
+        target['management_since'] = now_ts
+
+        _save_ace_channel_sessions_store(store)
+        return jsonify({'message': 'Ace stream moved to review'}), 200
+    except Exception as e:
+        logger.error(f"Error reviving Ace stream {stream_id} in session {session_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@app.route('/api/acestream-orchestrator/config', methods=['GET'])
+def get_acestream_orchestrator_config_endpoint():
+    """Get AceStream orchestrator configuration (without exposing API key)."""
+    try:
+        cfg = get_acestream_orchestrator_config().get_config()
+        return jsonify(cfg), 200
+    except Exception as e:
+        logger.error(f"Error getting AceStream orchestrator config: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/acestream-orchestrator/config', methods=['PUT'])
+def update_acestream_orchestrator_config_endpoint():
+    """Update AceStream orchestrator host, port, and API key."""
+    try:
+        data = request.get_json() or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "No configuration data provided"}), 400
+
+        host = data.get('host')
+        port = data.get('port')
+        api_key = data.get('api_key')
+
+        cfg = get_acestream_orchestrator_config()
+        success = cfg.update_config(host=host, port=port, api_key=api_key)
+        if not success:
+            return jsonify({"error": "Failed to save configuration"}), 500
+
+        # Maintain env vars for immediate availability and compatibility.
+        base_url = cfg.get_base_url() or ''
+        if base_url:
+            os.environ['ACESTREAM_ORCHESTRATOR_BASE_URL'] = base_url
+            os.environ['ORCHESTRATOR_BASE_URL'] = base_url
+        if api_key is not None:
+            os.environ['ACESTREAM_ORCHESTRATOR_API_KEY'] = str(api_key)
+            os.environ['ORCHESTRATOR_API_KEY'] = str(api_key)
+
+        return jsonify({"message": "AceStream orchestrator configuration updated successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error updating AceStream orchestrator config: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/acestream-orchestrator/ready', methods=['GET'])
+def check_acestream_orchestrator_ready():
+    """Check if the AceStream orchestrator is configured and reachable."""
+    try:
+        client = _get_acestream_monitoring_client()
+        if not client.is_configured():
+            return jsonify({
+                "ready": False,
+                "error": "AceStream orchestrator is not configured",
+            }), 200
+
+        ready, detail = _ping_orchestrator_ready(client)
+        return jsonify({
+            "ready": ready,
+            "detail": detail,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error checking AceStream orchestrator readiness: {e}")
+        return jsonify({"ready": False, "error": "Internal Server Error"}), 500
+
+
+@app.route('/api/acestream-monitor-sessions/start', methods=['POST'])
+def start_acestream_monitor_session():
+    """Start AceStream monitoring session via external orchestrator contract."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    payload = request.get_json(silent=True) or {}
+    normalized = normalize_content_id(payload.get('content_id'))
+    if not normalized:
+        return jsonify({"error": "content_id is required and must contain a valid 40-hex AceStream ID"}), 400
+    payload['content_id'] = normalized
+    try:
+        response_data = client.start_session(payload)
+        return jsonify(response_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to start AceStream monitoring session", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions', methods=['GET'])
+def list_acestream_monitor_sessions():
+    """List AceStream monitoring sessions with optional playback correlation."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        sessions_data = client.list_sessions()
+        include_correlation = request.args.get('include_correlation', 'true').lower() != 'false'
+        if include_correlation:
+            started_streams = client.list_started_streams()
+            sessions_data['items'] = client.annotate_many_with_playback(sessions_data.get('items', []), started_streams)
+        return jsonify(sessions_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to list AceStream monitoring sessions", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/<monitor_id>', methods=['GET'])
+def get_acestream_monitor_session(monitor_id):
+    """Get one AceStream monitoring session with detailed history."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        session_data = client.get_session(monitor_id)
+        include_correlation = request.args.get('include_correlation', 'true').lower() != 'false'
+        if include_correlation:
+            started_streams = client.list_started_streams()
+            session_data = client.annotate_with_playback(session_data, started_streams)
+        return jsonify(session_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to get AceStream monitoring session", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/<monitor_id>', methods=['DELETE'])
+def stop_acestream_monitor_session(monitor_id):
+    """Stop AceStream monitoring session lifecycle."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        response_data = client.stop_session(monitor_id)
+        return jsonify(response_data if response_data is not None else {"ok": True}), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to stop AceStream monitoring session", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/<monitor_id>/entry', methods=['DELETE'])
+def delete_acestream_monitor_entry(monitor_id):
+    """Delete AceStream monitoring entry and ensure it is stopped."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        response_data = client.delete_entry(monitor_id)
+        return jsonify(response_data if response_data is not None else {"ok": True}), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to delete AceStream monitoring entry", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/parse-m3u', methods=['POST'])
+def parse_acestream_m3u():
+    """Parse M3U and extract AceStream IDs and names via orchestrator contract."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    data = request.get_json(silent=True) or {}
+    m3u_content = data.get('m3u_content', '')
+    if not isinstance(m3u_content, str):
+        return jsonify({"error": "m3u_content must be a string"}), 400
+
+    try:
+        response_data = client.parse_m3u(m3u_content)
+        parsed_items = response_data.get('items', []) if isinstance(response_data, dict) else []
+
+        # Merge with local parser to ensure /ace/getstream?id=<id> URLs are detected.
+        fallback_items = _parse_m3u_acestream_entries(m3u_content)
+        merged = {}
+        for item in parsed_items:
+            cid = normalize_content_id(item.get('content_id'))
+            if not cid:
+                continue
+            merged[cid] = {
+                'content_id': cid,
+                'name': item.get('name'),
+                'line_number': str(item.get('line_number')) if item.get('line_number') is not None else None,
+            }
+        for item in fallback_items:
+            cid = item['content_id']
+            if cid not in merged:
+                merged[cid] = item
+            elif not merged[cid].get('name') and item.get('name'):
+                merged[cid]['name'] = item['name']
+
+        response_data = {
+            'count': len(merged),
+            'items': list(merged.values()),
+        }
+        return jsonify(response_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to parse M3U for AceStream entries", "detail": detail}), status_code
+
+
+@app.route('/api/acestream-monitor-sessions/streams/started', methods=['GET'])
+def list_acestream_started_streams():
+    """Optional playback correlation source from orchestrator proxy streams endpoint."""
+    client, error_response = _acestream_client_or_error()
+    if error_response:
+        return error_response
+
+    try:
+        response_data = client.list_started_streams()
+        return jsonify(response_data), 200
+    except requests.RequestException as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', 502)
+        detail = None
+        if getattr(exc, 'response', None) is not None:
+            try:
+                detail = exc.response.json()
+            except Exception:
+                detail = exc.response.text
+        return jsonify({"error": "Failed to list started streams", "detail": detail}), status_code
 
 
 @app.route('/api/stream-sessions', methods=['GET'])
