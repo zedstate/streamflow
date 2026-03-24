@@ -1699,6 +1699,139 @@ function GroupAssignPeriodsDialog({ open, onOpenChange, group, onSave, saving })
   )
 }
 
+// Dialog for assigning regex and TVG-ID matching to a group
+function GroupAssignMatchingDialog({ open, onOpenChange, group, initialConfig, onSave, onDelete, saving }) {
+  const [enabled, setEnabled] = useState(true)
+  const [matchByTvgId, setMatchByTvgId] = useState(false)
+  const [patterns, setPatterns] = useState([])
+  const [newPattern, setNewPattern] = useState('')
+  const { toast } = useToast()
+
+  useEffect(() => {
+    if (!open) return
+    const cfg = initialConfig || {}
+    setEnabled(cfg.enabled ?? true)
+    setMatchByTvgId(Boolean(cfg.match_by_tvg_id))
+
+    const regexPatterns = cfg.regex_patterns || []
+    const normalized = regexPatterns
+      .map((p) => (typeof p === 'string' ? p : p?.pattern))
+      .filter(Boolean)
+    setPatterns(normalized)
+    setNewPattern('')
+  }, [open, initialConfig])
+
+  const handleAddPattern = () => {
+    const trimmed = (newPattern || '').trim()
+    if (!trimmed) return
+    if (patterns.includes(trimmed)) {
+      toast({
+        title: 'Duplicate Pattern',
+        description: 'This regex pattern already exists for this group.',
+        variant: 'destructive'
+      })
+      return
+    }
+    setPatterns((prev) => [...prev, trimmed])
+    setNewPattern('')
+  }
+
+  const handleRemovePattern = (idx) => {
+    setPatterns((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleSave = () => {
+    onSave({
+      name: group?.name || '',
+      enabled,
+      match_by_tvg_id: matchByTvgId,
+      regex_patterns: patterns.map((pattern) => ({ pattern }))
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Configure Group Matching</DialogTitle>
+          <DialogDescription>
+            Configure regex and TVG-ID matching for group &quot;{group?.name}&quot;. Channels in this group inherit these settings unless they have channel-specific matching config.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 overflow-y-auto flex-1 py-1">
+          <div className="flex items-center justify-between p-3 rounded-md border bg-muted/40">
+            <div>
+              <p className="font-medium text-sm">Enable Group Regex Matching</p>
+              <p className="text-xs text-muted-foreground">When enabled, group regex patterns can match streams for channels in this group.</p>
+            </div>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-md border bg-muted/40">
+            <div>
+              <p className="font-medium text-sm">Match by TVG-ID</p>
+              <p className="text-xs text-muted-foreground">Use TVG-ID matching as a group fallback when channel-level settings are not defined.</p>
+            </div>
+            <Switch checked={matchByTvgId} onCheckedChange={setMatchByTvgId} />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Regex Patterns</Label>
+            <div className="flex gap-2">
+              <Input
+                value={newPattern}
+                onChange={(e) => setNewPattern(e.target.value)}
+                placeholder="e.g. .*SPORT.*|.*ESPN.*"
+                className="font-mono"
+              />
+              <Button onClick={handleAddPattern} type="button" variant="outline">
+                <Plus className="h-4 w-4 mr-1" />
+                Add
+              </Button>
+            </div>
+
+            {patterns.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">No regex patterns configured for this group</p>
+            ) : (
+              <div className="space-y-2">
+                {patterns.map((pattern, idx) => (
+                  <div key={`${pattern}-${idx}`} className="flex items-center justify-between gap-2 p-2 rounded border bg-background">
+                    <code className="text-xs flex-1 truncate">{pattern}</code>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => handleRemovePattern(idx)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="justify-between">
+          <Button variant="destructive" onClick={onDelete} disabled={saving}>
+            Clear Group Matching
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Matching
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 
 export default function ChannelConfiguration() {
   const [channels, setChannels] = useState([])
@@ -1776,11 +1909,13 @@ export default function ChannelConfiguration() {
   const [loadingGroupsConfig, setLoadingGroupsConfig] = useState(false)
   const [groupAssignProfileDialogOpen, setGroupAssignProfileDialogOpen] = useState(false)
   const [groupAssignPeriodsDialogOpen, setGroupAssignPeriodsDialogOpen] = useState(false)
+  const [groupAssignMatchingDialogOpen, setGroupAssignMatchingDialogOpen] = useState(false)
   const [selectedGroupForConfig, setSelectedGroupForConfig] = useState(null)
   const [groupProfileId, setGroupProfileId] = useState('')
   const [groupPeriodAssignments, setGroupPeriodAssignments] = useState([]) // [{period_id, profile_id}]
   const [savingGroupProfile, setSavingGroupProfile] = useState(false)
   const [savingGroupPeriods, setSavingGroupPeriods] = useState(false)
+  const [savingGroupMatching, setSavingGroupMatching] = useState(false)
 
   // Edit common regex dialog state
   const [editCommonDialogOpen, setEditCommonDialogOpen] = useState(false)
@@ -2045,14 +2180,16 @@ export default function ChannelConfiguration() {
       const configMap = {}
       await Promise.all(groups.map(async (group) => {
         try {
-          const [periodsRes] = await Promise.all([
-            automationAPI.getGroupPeriods(group.id)
+          const [periodsRes, regexCfgRes] = await Promise.all([
+            automationAPI.getGroupPeriods(group.id),
+            regexAPI.getGroupConfig(group.id).catch(() => ({ data: {} }))
           ])
           configMap[group.id] = {
-            periods: periodsRes.data || []
+            periods: periodsRes.data || [],
+            matching: regexCfgRes.data || {}
           }
         } catch {
-          configMap[group.id] = { periods: [] }
+          configMap[group.id] = { periods: [], matching: {} }
         }
       }))
       setGroupsConfig(configMap)
@@ -2098,6 +2235,11 @@ export default function ChannelConfiguration() {
     setGroupAssignPeriodsDialogOpen(true)
   }
 
+  const handleOpenGroupAssignMatching = (group) => {
+    setSelectedGroupForConfig(group)
+    setGroupAssignMatchingDialogOpen(true)
+  }
+
   const handleSaveGroupPeriods = async (assignments, replace = false) => {
     if (!selectedGroupForConfig || assignments.length === 0) return
     try {
@@ -2138,6 +2280,50 @@ export default function ChannelConfiguration() {
         description: err.response?.data?.error || "Failed to remove period from group",
         variant: "destructive"
       })
+    }
+  }
+
+  const handleSaveGroupMatching = async (payload) => {
+    if (!selectedGroupForConfig) return
+    try {
+      setSavingGroupMatching(true)
+      await regexAPI.saveGroupConfig(selectedGroupForConfig.id, payload)
+      toast({
+        title: 'Success',
+        description: `Group matching updated for "${selectedGroupForConfig.name}"`
+      })
+      setGroupAssignMatchingDialogOpen(false)
+      await loadGroupsConfig()
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: err.response?.data?.error || 'Failed to update group matching',
+        variant: 'destructive'
+      })
+    } finally {
+      setSavingGroupMatching(false)
+    }
+  }
+
+  const handleDeleteGroupMatching = async () => {
+    if (!selectedGroupForConfig) return
+    try {
+      setSavingGroupMatching(true)
+      await regexAPI.deleteGroupConfig(selectedGroupForConfig.id)
+      toast({
+        title: 'Success',
+        description: `Group matching cleared for "${selectedGroupForConfig.name}"`
+      })
+      setGroupAssignMatchingDialogOpen(false)
+      await loadGroupsConfig()
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: err.response?.data?.error || 'Failed to clear group matching',
+        variant: 'destructive'
+      })
+    } finally {
+      setSavingGroupMatching(false)
     }
   }
 
@@ -2234,6 +2420,11 @@ export default function ChannelConfiguration() {
       const channel = channels.find(ch => ch.id === contextChannelId)
       const profile = profiles.find(p => p.id === channel?.automation_profile_id)
       const channelPatternConfig = patterns[contextChannelId] || patterns[String(contextChannelId)] || {}
+      const channelGroupId = channel?.group_id ?? channel?.channel_group_id
+      const groupMatchingConfig = channelGroupId ? ((groupsConfig[channelGroupId] || {}).matching || {}) : {}
+      const effectivePatternConfig = Object.keys(channelPatternConfig).length > 0
+        ? channelPatternConfig
+        : groupMatchingConfig
 
       // Prepare request data based on mode
       let requestData = {
@@ -2254,16 +2445,16 @@ export default function ChannelConfiguration() {
         }]
       } else if (mode === 'global') {
         // Full channel configuration test
-        requestData.match_by_tvg_id = channelPatternConfig.match_by_tvg_id || false
+        requestData.match_by_tvg_id = effectivePatternConfig.match_by_tvg_id || false
 
         // Reconstruct regex patterns from stored config
         let regexPatterns = []
-        if (channelPatternConfig.regex_patterns) {
-          regexPatterns = channelPatternConfig.regex_patterns
-        } else if (channelPatternConfig.regex) {
-          regexPatterns = channelPatternConfig.regex.map(p => ({
+        if (effectivePatternConfig.regex_patterns) {
+          regexPatterns = effectivePatternConfig.regex_patterns
+        } else if (effectivePatternConfig.regex) {
+          regexPatterns = effectivePatternConfig.regex.map(p => ({
             pattern: p,
-            m3u_accounts: channelPatternConfig.m3u_accounts
+            m3u_accounts: effectivePatternConfig.m3u_accounts
           }))
         }
 
@@ -2309,7 +2500,7 @@ export default function ChannelConfiguration() {
         setTestingPattern(false)
       }
     }
-  }, [newPattern, editingChannelId, channels, selectedM3uAccounts, toast, patterns, profiles, testResults])
+  }, [newPattern, editingChannelId, channels, selectedM3uAccounts, toast, patterns, profiles, testResults, groupsConfig])
 
   const handlePreviewMatch = useCallback((channelId, mode) => {
     setTestResults(null)
@@ -3809,7 +4000,13 @@ export default function ChannelConfiguration() {
                 ) : (
                   <div className="space-y-3">
                     {groups.map((group) => {
-                      const config = groupsConfig[group.id] || { periods: [] }
+                      const config = groupsConfig[group.id] || { periods: [], matching: {} }
+                      const matching = config.matching || {}
+                      const matchingPatterns = Array.isArray(matching.regex_patterns)
+                        ? matching.regex_patterns
+                        : []
+                      const matchingPatternCount = matchingPatterns.length
+                      const groupTvgEnabled = Boolean(matching.match_by_tvg_id)
                       return (
                         <Card key={group.id} className="border">
                           <CardContent className="p-4">
@@ -3851,6 +4048,21 @@ export default function ChannelConfiguration() {
                                     </div>
                                   )}
                                 </div>
+
+                                {/* Matching section */}
+                                <div className="space-y-1 mt-4">
+                                  <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
+                                    Matching
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    <Badge variant="outline" className="text-xs">
+                                      {matchingPatternCount} regex pattern{matchingPatternCount !== 1 ? 's' : ''}
+                                    </Badge>
+                                    <Badge variant={groupTvgEnabled ? 'default' : 'secondary'} className="text-xs">
+                                      TVG-ID {groupTvgEnabled ? 'On' : 'Off'}
+                                    </Badge>
+                                  </div>
+                                </div>
                               </div>
 
                               {/* Action buttons */}
@@ -3868,6 +4080,20 @@ export default function ChannelConfiguration() {
                                     </Button>
                                   </TooltipTrigger>
                                   <TooltipContent>Assign automation periods and profiles to group</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenGroupAssignMatching(group)}
+                                      className="h-8"
+                                    >
+                                      <Edit2 className="h-4 w-4 mr-1" />
+                                      Matching
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Configure group regex and TVG-ID matching</TooltipContent>
                                 </Tooltip>
                               </div>
                             </div>
@@ -3934,6 +4160,19 @@ export default function ChannelConfiguration() {
             group={selectedGroupForConfig}
             onSave={handleSaveGroupPeriods}
             saving={savingGroupPeriods}
+          />
+        )}
+
+        {/* Group Matching Dialog */}
+        {selectedGroupForConfig && (
+          <GroupAssignMatchingDialog
+            open={groupAssignMatchingDialogOpen}
+            onOpenChange={setGroupAssignMatchingDialogOpen}
+            group={selectedGroupForConfig}
+            initialConfig={(groupsConfig[selectedGroupForConfig.id] || {}).matching || {}}
+            onSave={handleSaveGroupMatching}
+            onDelete={handleDeleteGroupMatching}
+            saving={savingGroupMatching}
           />
         )}
 

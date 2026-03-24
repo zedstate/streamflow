@@ -125,6 +125,9 @@ export const regexAPI = {
   getPatterns: () => api.get('/regex-patterns'),
   addPattern: (pattern) => api.post('/regex-patterns', pattern),
   deletePattern: (channelId) => api.delete(`/regex-patterns/${channelId}`),
+  getGroupConfig: (groupId) => api.get(`/channels/groups/${groupId}/regex-config`),
+  saveGroupConfig: (groupId, config) => api.post(`/channels/groups/${groupId}/regex-config`, config),
+  deleteGroupConfig: (groupId) => api.delete(`/channels/groups/${groupId}/regex-config`),
   testPattern: (data) => api.post('/test-regex', data),
   testPatternLive: (data) => api.post('/test-regex-live', data),
   /**
@@ -144,6 +147,7 @@ export const regexAPI = {
   massEditPreview: (data) => api.post('/regex-patterns/mass-edit-preview', data),
   massEdit: (data) => api.post('/regex-patterns/mass-edit', data),
   updateMatchSettings: (channelId, settings) => api.post(`/channels/${channelId}/match-settings`, settings),
+  updateGroupMatchSettings: (groupId, settings) => api.post(`/channels/groups/${groupId}/match-settings`, settings),
   testMatchLive: (data) => api.post('/test-match-live', data),
   updateBulkMatchSettings: (data) => api.post('/regex-patterns/bulk-settings', data),
 };

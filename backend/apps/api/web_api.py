@@ -1000,6 +1000,99 @@ def update_channel_match_settings(channel_id):
         logger.error(f"Error updating match settings for channel {channel_id}: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
 
+
+@app.route('/api/channels/groups/<int:group_id>/regex-config', methods=['GET'])
+def get_group_regex_config(group_id):
+    """Get regex matching config for a channel group."""
+    try:
+        matcher = get_regex_matcher()
+        matcher.reload_patterns()
+        cfg = matcher.get_group_pattern(group_id) or {
+            "name": "",
+            "enabled": True,
+            "match_by_tvg_id": False,
+            "regex_patterns": []
+        }
+        return jsonify(cfg), 200
+    except Exception as e:
+        logger.error(f"Error getting regex config for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/<int:group_id>/regex-config', methods=['POST'])
+def upsert_group_regex_config(group_id):
+    """Add or update regex matching config for a channel group."""
+    try:
+        data = request.get_json() or {}
+        matcher = get_regex_matcher()
+
+        regex_patterns = data.get('regex_patterns')
+        if regex_patterns is None:
+            # Backward-compatible shorthand
+            regex_patterns = data.get('regex', [])
+
+        if not isinstance(regex_patterns, list):
+            return jsonify({"error": "regex_patterns must be a list"}), 400
+
+        enabled = bool(data.get('enabled', True))
+        match_by_tvg_id = bool(data.get('match_by_tvg_id', False))
+
+        name = data.get('name', '')
+        if not name:
+            try:
+                udi = get_udi_manager()
+                group = udi.get_channel_group_by_id(group_id)
+                if isinstance(group, dict):
+                    name = group.get('name', '')
+            except Exception:
+                pass
+
+        m3u_accounts = data.get('m3u_accounts')
+        matcher.add_group_pattern(
+            group_id=group_id,
+            name=name,
+            regex_patterns=regex_patterns,
+            enabled=enabled,
+            match_by_tvg_id=match_by_tvg_id,
+            m3u_accounts=m3u_accounts,
+        )
+
+        return jsonify({"message": "Group regex config updated successfully"}), 200
+    except ValueError as e:
+        logger.warning(f"Validation error upserting group regex config for group {group_id}: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error upserting regex config for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/<int:group_id>/regex-config', methods=['DELETE'])
+def delete_group_regex_config(group_id):
+    """Delete regex matching config for a channel group."""
+    try:
+        matcher = get_regex_matcher()
+        matcher.delete_group_pattern(group_id)
+        return jsonify({"message": "Group regex config deleted successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error deleting regex config for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/<int:group_id>/match-settings', methods=['POST'])
+def update_group_match_settings(group_id):
+    """Update match settings for a group (e.g., match_by_tvg_id)."""
+    try:
+        data = request.get_json() or {}
+        matcher = get_regex_matcher()
+
+        if 'match_by_tvg_id' in data:
+            matcher.set_group_match_by_tvg_id(group_id, bool(data['match_by_tvg_id']))
+
+        return jsonify({"message": "Group match settings updated successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error updating match settings for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
 @app.route('/api/regex-patterns/bulk', methods=['POST'])
 def add_bulk_regex_patterns():
     """Add the same regex patterns to multiple channels."""
@@ -6032,9 +6125,10 @@ def create_acestream_channel_session_impl(
         try:
             from apps.automation.automated_stream_manager import RegexChannelMatcher
             regex_matcher = RegexChannelMatcher()
-            match_config = regex_matcher.get_channel_match_config(str(channel_id))
+            group_id = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
+            match_config = regex_matcher.get_channel_match_config(str(channel_id), group_id)
             resolved_match_by_tvg_id = match_config.get('match_by_tvg_id', False)
-            channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=None)
+            channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=None, group_id=group_id)
             if channel_regex:
                 resolved_regex = channel_regex
             logger.info(
@@ -6764,7 +6858,8 @@ def create_stream_session():
                 regex_matcher = get_regex_matcher()
                 
                 # Get match config to check for match_by_tvg_id
-                match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                group_id = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
+                match_config = regex_matcher.get_channel_match_config(str(channel_id), group_id)
                 match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                 
                 # Get regex filter
@@ -6772,7 +6867,7 @@ def create_stream_session():
                 # This ensures that if match_by_tvg_id is False AND no regex is set, we match NOTHING.
                 # Previously we defaulted to ".*" which matched EVERYTHING.
                 default_regex = None
-                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex, group_id=group_id)
                 
                 logger.info(f"Using channel config for manual session: regex='{regex_filter}', match_by_tvg_id={match_by_tvg_id}")
             except Exception as e:
@@ -6862,13 +6957,14 @@ def create_group_stream_sessions():
                         regex_matcher = get_regex_matcher()
                         
                         # Get match config
-                        match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                        group_id_for_channel = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
+                        match_config = regex_matcher.get_channel_match_config(str(channel_id), group_id_for_channel)
                         match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                         
                         # Get regex filter with appropriate default
                         # Default to None so we don't match everything by default if no rules exist
                         default_regex = None
-                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex, group_id=group_id_for_channel)
                     except Exception:
                         channel_regex = None
                 
