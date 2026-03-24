@@ -3762,8 +3762,8 @@ class StreamCheckerService:
                     from apps.automation.automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
-                    # Run validation - respects automation_controls.remove_non_matching_streams setting
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    # Run validation scoped to this channel only
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams(channel_id=channel_id)
                     if validation_results.get("streams_removed", 0) > 0:
                         logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams")
                     else:
@@ -3782,9 +3782,9 @@ class StreamCheckerService:
                     from apps.automation.automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
-                    # Run full discovery (this will add new matching streams but skip dead ones)
+                    # Run discovery scoped to this channel only
                     # Skip automatic check trigger since we'll perform the check explicitly in Step 6
-                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
+                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True, channel_id=channel_id)
                     if assignments:
                         logger.info(f"✓ Stream matching completed")
                     else:
