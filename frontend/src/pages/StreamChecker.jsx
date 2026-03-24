@@ -380,10 +380,29 @@ export default function StreamChecker() {
             </div>
 
             {/* Streams Detail Progress List */}
-            {progress.streams_detail && progress.streams_detail.length > 0 && (
+            {progress.streams_detail && progress.streams_detail.length > 0 && (() => {
+              // Sort: completed/dead/error by score desc first, then checking, then pending.
+              // Re-evaluates on every render so the table self-organises as results arrive.
+              const STATUS_ORDER = { completed: 0, dead: 0, error: 0, checking: 1, pending: 2 }
+              const maxWorkers = status?.parallel?.max_workers || 6
+              const rowHeight = 44  // px — accounts for both single and double-line rows
+              const headerHeight = 32  // px — h-8
+              const visibleRows = Math.max(6, Math.min(maxWorkers, progress.streams_detail.length))
+              const tableMaxHeight = visibleRows * rowHeight + headerHeight
+
+              const sortedStreams = [...progress.streams_detail].sort((a, b) => {
+                const oa = STATUS_ORDER[a.status] ?? 2
+                const ob = STATUS_ORDER[b.status] ?? 2
+                if (oa !== ob) return oa - ob
+                const sa = a.score != null ? a.score : -Infinity
+                const sb = b.score != null ? b.score : -Infinity
+                return sb - sa
+              })
+
+              return (
               <div className="mt-4">
                 <Label className="text-sm font-semibold mb-2 block">Stream Progress Tracking</Label>
-                <div className="rounded-md border max-h-64 overflow-y-auto w-full">
+                <div className="rounded-md border overflow-y-auto w-full" style={{ maxHeight: `${tableMaxHeight}px` }}>
                   <table className="w-full text-sm text-left">
                     <thead className="bg-muted sticky top-0 z-10 text-xs text-muted-foreground uppercase h-8">
                       <tr>
@@ -395,7 +414,7 @@ export default function StreamChecker() {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {progress.streams_detail.map((stream) => (
+                      {sortedStreams.map((stream) => (
                         <tr key={stream.id} className="hover:bg-muted/50 transition-colors bg-card">
                           <td className="px-3 py-1.5 align-middle">
                             <div className="font-medium max-w-[200px] truncate" title={stream.name}>
@@ -438,7 +457,8 @@ export default function StreamChecker() {
                   </table>
                 </div>
               </div>
-            )}
+              )
+            })()}
           </CardContent>
         </Card>
       )}
