@@ -365,6 +365,9 @@ function StepContent({ step }) {
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">Bitrate</TableHead>
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground">Codec</TableHead>
                       <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground text-right">Score</TableHead>
+                      {details.checked_streams.some(s => s.loop_probe_ran) && (
+                        <TableHead className="h-7 text-[10px] uppercase font-bold text-muted-foreground text-right">Loop</TableHead>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -396,6 +399,23 @@ function StepContent({ step }) {
                         <TableCell className="py-1 text-right font-mono text-xs">
                           {s.score !== undefined && s.score !== null ? s.score.toFixed(2) : '-'}
                         </TableCell>
+                        {details.checked_streams.some(s => s.loop_probe_ran) && (
+                          <TableCell className="py-1 text-right">
+                            {s.loop_probe_ran ? (
+                              s.loop_detected === true ? (
+                                <span className="text-amber-500 font-medium text-xs">
+                                  ⚠ {s.loop_duration_secs ? `${s.loop_duration_secs.toFixed(1)}s` : 'Loop'}
+                                </span>
+                              ) : s.loop_detected === false ? (
+                                <span className="text-muted-foreground text-xs">✓</span>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
+                              )
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>
