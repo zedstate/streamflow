@@ -1192,7 +1192,7 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, groups, profiles, patterns, selectedChannels, onToggleChannel, onEditRegex, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel, m3uAccounts, onUpdateMatchSettings, onPreviewMatch, onRefresh }) {
+function RegexTableRow({ channel, group, groups, groupsConfig, profiles, patterns, selectedChannels, onToggleChannel, onEditRegex, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel, m3uAccounts, onUpdateMatchSettings, onPreviewMatch, onRefresh }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
   const [channelPeriods, setChannelPeriods] = useState([])
@@ -1205,7 +1205,12 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
   const isChecking = checkingChannel === channel.id
 
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
-  const matchByTvgId = channelPatterns?.match_by_tvg_id || false
+  const channelGroupId = channel?.group_id ?? channel?.channel_group_id
+  const groupMatchingConfig = channelGroupId ? ((groupsConfig?.[channelGroupId] || {}).matching || {}) : {}
+  const hasChannelMatchingConfig = Boolean(channelPatterns) && Object.keys(channelPatterns || {}).length > 0
+  const effectiveMatchingConfig = hasChannelMatchingConfig ? channelPatterns : groupMatchingConfig
+  const matchByTvgId = Boolean(effectiveMatchingConfig?.match_by_tvg_id)
+  const isTvgInherited = !hasChannelMatchingConfig && Boolean(channelGroupId)
   const patternCount = normalizePatternData(channelPatterns).length
 
   const loadChannelPeriods = useCallback(async () => {
@@ -1313,9 +1318,16 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
             <span className="text-sm text-muted-foreground">No patterns</span>
           )}
           {matchByTvgId && (
-            <Badge variant="default" className="text-xs">
-              TVG-ID
-            </Badge>
+            <>
+              <Badge variant="default" className="text-xs">
+                TVG-ID
+              </Badge>
+              {isTvgInherited && (
+                <Badge variant="outline" className="text-xs">
+                  From Group
+                </Badge>
+              )}
+            </>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -1445,7 +1457,12 @@ function RegexTableRow({ channel, group, groups, profiles, patterns, selectedCha
                   onCheckedChange={(checked) => onUpdateMatchSettings(channel.id, { match_by_tvg_id: checked })}
                 />
                 <Label htmlFor={`tvg-match-${channel.id}`} className="flex flex-col cursor-pointer">
-                  <span className="font-medium">Match by TVG-ID</span>
+                  <span className="font-medium flex items-center gap-2">
+                    Match by TVG-ID
+                    {isTvgInherited && (
+                      <Badge variant="outline" className="text-[10px]">From Group</Badge>
+                    )}
+                  </span>
                   <span className="font-normal text-xs text-muted-foreground">
                     Automatically match streams with TVG-ID "{channel.tvg_id || 'N/A'}"
                   </span>
@@ -3707,6 +3724,7 @@ export default function ChannelConfiguration() {
                               channel={channel}
                               group={group}
                               groups={groups}
+                              groupsConfig={groupsConfig}
                               profiles={profiles}
                               patterns={patterns}
                               selectedChannels={selectedChannels}
