@@ -115,9 +115,20 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
           management_reason: entry.management_reason || null,
         }
         const history = metricsHistoryRef.current[streamId] || []
-        // Avoid duplicate timestamps
-        if (history.length === 0 || history[history.length - 1].timestamp < now) {
-          metricsHistoryRef.current[streamId] = [...history, snapshot].slice(-MAX_METRICS_HISTORY)
+        // On first load, seed an anchor point at management_since so the timeline
+        // reflects the correct state timestamp rather than starting at the first poll.
+        if (history.length === 0 && entry.management_since) {
+          const sinceTs = Math.floor(entry.management_since)
+          const seedSnapshot = {
+            ...snapshot,
+            timestamp: sinceTs,
+          }
+          metricsHistoryRef.current[streamId] = [seedSnapshot]
+        }
+        // Avoid duplicate timestamps (re-read ref since it may have been seeded above)
+        const current = metricsHistoryRef.current[streamId] || []
+        if (current.length === 0 || current[current.length - 1].timestamp < now) {
+          metricsHistoryRef.current[streamId] = [...current, snapshot].slice(-MAX_METRICS_HISTORY)
         }
       })
 
@@ -266,7 +277,7 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
 
   const minTime = useMemo(() => {
     if (!session) return 0
-    let min = session.created_at ? Math.floor(new Date(session.created_at).getTime() / 1000) : Math.floor(Date.now() / 1000)
+    let min = session.created_at ? Math.floor(session.created_at) : Math.floor(Date.now() / 1000)
     Object.values(metricsHistoryRef.current).forEach((history) => {
       if (history.length > 0 && history[0].timestamp < min) min = history[0].timestamp
     })
@@ -276,7 +287,7 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
   const maxTime = useMemo(() => {
     if (!session) return Math.floor(Date.now() / 1000)
     if (session.is_active) return Math.floor(Date.now() / 1000)
-    let max = session.created_at ? Math.floor(new Date(session.created_at).getTime() / 1000) : 0
+    let max = session.created_at ? Math.floor(session.created_at) : 0
     Object.values(metricsHistoryRef.current).forEach((history) => {
       if (history.length > 0) {
         const last = history[history.length - 1]
