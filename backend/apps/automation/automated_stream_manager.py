@@ -1882,8 +1882,10 @@ class AutomatedStreamManager:
                 if group_id is not None:
                     channel_to_group_map[str(channel_id)] = group_id
                 
+                # Resolve group key from either UDI shape to include group-only period assignments.
+                effective_group_id = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
                 # Get effective configuration - only channels with automation periods participate
-                config = automation_config.get_effective_configuration(channel_id, channel.get('group_id'))
+                config = automation_config.get_effective_configuration(channel_id, effective_group_id)
                 
                 # Skip channels without automation periods assigned
                 if not config:
@@ -2314,7 +2316,7 @@ class AutomatedStreamManager:
             channel_validation_settings = {}
             for channel in all_channels:
                 channel_id = channel.get('id')
-                channel_group_id = channel.get('channel_group_id') # Ensure we use correct key for group ID from UDI
+                channel_group_id = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
                 
                 # Get effective configuration - only channels with automation periods participate
                 config = automation_config.get_effective_configuration(channel_id, channel_group_id)
@@ -2565,8 +2567,10 @@ class AutomatedStreamManager:
             
             for channel in channels:
                 channel_id = channel.get('id')
+                # Resolve group key from either UDI shape to include group-only period assignments.
+                effective_group_id = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
                 # Get effective configuration - only channels with automation periods participate
-                config = automation_config.get_effective_configuration(channel_id, channel.get('group_id'))
+                config = automation_config.get_effective_configuration(channel_id, effective_group_id)
                 if config and config.get('periods'):
                     for period_info in config['periods']:
                         p_id = period_info.get('id')
@@ -2685,7 +2689,9 @@ class AutomatedStreamManager:
                         
                         for ch_id in channels_to_quality_check:
                             channel_data = udi.get_channel_by_id(ch_id)
-                            group_id = channel_data.get('channel_group_id') if channel_data else None
+                            group_id = None
+                            if channel_data:
+                                group_id = channel_data.get('group_id') if channel_data.get('group_id') is not None else channel_data.get('channel_group_id')
                             config = automation_config.get_effective_configuration(ch_id, group_id)
                             
                             if config:
