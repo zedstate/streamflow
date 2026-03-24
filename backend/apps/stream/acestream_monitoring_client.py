@@ -118,11 +118,11 @@ class AceStreamMonitoringClient:
         return self._request("POST", "/ace/monitor/legacy/start", json=payload)
 
     def list_sessions(self) -> Dict[str, Any]:
-        data = self._request("GET", "/ace/monitor/legacy")
+        data = self._request("GET", "/ace/monitor/legacy", params={"include_recent_status": "false"})
         return data if isinstance(data, dict) else {"items": []}
 
     def get_session(self, monitor_id: str) -> Dict[str, Any]:
-        data = self._request("GET", f"/ace/monitor/legacy/{monitor_id}")
+        data = self._request("GET", f"/ace/monitor/legacy/{monitor_id}", params={"include_recent_status": "false"})
         return data if isinstance(data, dict) else {}
 
     def stop_session(self, monitor_id: str) -> Any:
