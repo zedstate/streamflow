@@ -1353,6 +1353,11 @@ class StreamCheckerService:
             "channel_layout": stream_data.get("channel_layout"),
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
+            "quality_score": stream_data.get("score"),
+            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else None,
+            "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
+            "loop_score_penalty": stream_data.get("loop_score_penalty"),
+            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else None,
         }
         
         # Clean up the payload, removing any None values or N/A values
