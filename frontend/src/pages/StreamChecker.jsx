@@ -383,7 +383,7 @@ export default function StreamChecker() {
             {progress.streams_detail && progress.streams_detail.length > 0 && (() => {
               // Sort: completed/dead/error by score desc first, then checking, then pending.
               // Re-evaluates on every render so the table self-organises as results arrive.
-              const STATUS_ORDER = { completed: 0, dead: 0, error: 0, checking: 1, pending: 2 }
+              const STATUS_ORDER = { completed: 0, dead: 0, error: 0, loop_detected: 0, probing: 1, checking: 2, pending: 3 }
               const maxWorkers = status?.parallel?.max_workers || 6
               const rowHeight = 44  // px — accounts for both single and double-line rows
               const headerHeight = 32  // px — h-8
@@ -432,6 +432,8 @@ export default function StreamChecker() {
                             {stream.status === 'completed' && <Badge variant="success" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Completed</Badge>}
                             {stream.status === 'error' && <Badge variant="destructive" className="text-[10px]">Error</Badge>}
                             {stream.status === 'dead' && <Badge variant="destructive" className="text-[10px]">Dead</Badge>}
+                            {stream.status === 'probing' && <Badge variant="outline" className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 animate-pulse">Probing</Badge>}
+                            {stream.status === 'loop_detected' && <Badge variant="outline" className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">⚠ Loop</Badge>}
                           </td>
                           <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
                             {stream.status === 'completed' ? (
