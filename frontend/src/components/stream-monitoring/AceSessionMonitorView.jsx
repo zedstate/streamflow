@@ -104,11 +104,12 @@ function AceSessionMonitorView({ sessionId, onBack, onStop, onDelete }) {
         if (!streamId) return
         const monitor = entry.monitor || {}
         const latest = monitor.latest_status || {}
+        const livepos = latest.livepos || {}
         const snapshot = {
           timestamp: now,
           speed_down: latest.speed_down != null ? Number(latest.speed_down) : null,
           peers: latest.peers != null ? Number(latest.peers) : null,
-          last_ts: latest.last_ts != null ? Number(latest.last_ts) : null,
+          last_ts: livepos.last_ts != null ? Number(livepos.last_ts) : null,
           management_score: Number(entry.management_score || 0),
           management_state: entry.management_state || 'review',
           management_reason: entry.management_reason || null,
@@ -512,9 +513,7 @@ const PEERS_GOOD = 5           // green at or above this
 const PEERS_OK = 2             // yellow at or above this, red below
 
 function getSpeedColor(kbps) {
-  if (kbps > SPEED_DOWN_GOOD) return 'text-green-600 dark:text-green-400'
-  if (kbps > SPEED_DOWN_OK) return 'text-yellow-600 dark:text-yellow-400'
-  return 'text-red-600 dark:text-red-400'
+  return 'text-green-600 dark:text-green-400'
 }
 
 function getPeersColor(peers) {
