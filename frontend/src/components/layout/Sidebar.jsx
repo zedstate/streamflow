@@ -39,7 +39,34 @@ const menuItems = [
 export function Sidebar({ isCollapsed, setIsCollapsed }) {
   const [isOpen, setIsOpen] = useState(false)
   const [version, setVersion] = useState(null)
+  const [buildDate, setBuildDate] = useState(null)
   const location = useLocation()
+
+  const formatVersionLabel = (rawVersion) => {
+    if (!rawVersion) return ''
+    const v = String(rawVersion).trim()
+    if (!v) return ''
+
+    // Prefix semantic versions with "v" (e.g., 1.2.3 -> v1.2.3),
+    // but keep dev/fallback strings as-is (e.g., dev-unknown).
+    const looksLikeSemver = /^v?\d+\.\d+\.\d+(?:[-+].*)?$/.test(v)
+    if (looksLikeSemver) {
+      return v.startsWith('v') ? v : `v${v}`
+    }
+    return v
+  }
+
+  const formatBuildDateLabel = (rawBuildDate) => {
+    if (!rawBuildDate) return null
+    const parsed = new Date(rawBuildDate)
+    if (Number.isNaN(parsed.getTime())) {
+      return String(rawBuildDate)
+    }
+    const year = parsed.getFullYear()
+    const month = String(parsed.getMonth() + 1).padStart(2, '0')
+    const day = String(parsed.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
 
   useEffect(() => {
     // Fetch version on mount
@@ -47,13 +74,17 @@ export function Sidebar({ isCollapsed, setIsCollapsed }) {
       try {
         const response = await versionAPI.getVersion()
         setVersion(response.data.version)
+        setBuildDate(response.data.build_date || null)
       } catch (error) {
         console.error('Failed to fetch version:', error)
         setVersion('dev-unknown')
+        setBuildDate(null)
       }
     }
     fetchVersion()
   }, [])
+
+  const buildDateLabel = formatBuildDateLabel(buildDate)
 
   return (
     <>
@@ -174,12 +205,14 @@ export function Sidebar({ isCollapsed, setIsCollapsed }) {
               <ThemeToggle />
             </div>
           </div>
-          {version && (
+          {(buildDateLabel || version) && (
             <div className={cn(
               "pt-2 text-[10px] text-muted-foreground text-center font-mono opacity-60",
               isCollapsed ? "w-full overflow-hidden truncate px-1" : ""
             )}>
-              {isCollapsed ? version.split('-')[0] : `v${version}`}
+              {buildDateLabel
+                ? (isCollapsed ? buildDateLabel.slice(5) : `Build ${buildDateLabel}`)
+                : (isCollapsed ? version.split('-')[0] : formatVersionLabel(version))}
             </div>
           )}
         </div>

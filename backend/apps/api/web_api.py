@@ -577,15 +577,32 @@ def health_check_stripped():
 def get_version():
     """Get application version."""
     try:
+        build_date = None
         version_file = Path(__file__).parent / 'version.txt'
         if version_file.exists():
             version = version_file.read_text().strip()
+
+            # Prefer build date embedded in CI version strings (e.g. branch-20260324).
+            date_match = re.search(r'(?<!\d)(20\d{6})(?!\d)', version)
+            if date_match:
+                try:
+                    build_date = datetime.strptime(date_match.group(1), '%Y%m%d').date().isoformat()
+                except ValueError:
+                    build_date = None
+
+            # Fallback: use version file modified date as latest build date.
+            if not build_date:
+                try:
+                    build_date = datetime.fromtimestamp(version_file.stat().st_mtime).date().isoformat()
+                except Exception:
+                    build_date = None
         else:
             version = "dev-unknown"
-        return jsonify({"version": version})
+
+        return jsonify({"version": version, "build_date": build_date})
     except Exception as e:
         logger.error(f"Failed to read version: {e}")
-        return jsonify({"version": "dev-unknown"})
+        return jsonify({"version": "dev-unknown", "build_date": None})
 
 # Legacy automation endpoints removed. Using newer implementations in 'Automation Service API' section.
 
