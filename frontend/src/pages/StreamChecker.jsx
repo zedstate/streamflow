@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -32,6 +32,7 @@ const PAGINATION_MAX_VISIBLE_PAGES = 5
 
 export default function StreamChecker() {
   const [status, setStatus] = useState(null)
+  const [tick, setTick] = useState(0)  // increments every second to drive countdown re-renders
   const [progress, setProgress] = useState(null)
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -59,6 +60,12 @@ export default function StreamChecker() {
     }, pollInterval)
     return () => clearInterval(interval)
   }, [status?.checking, status?.queue?.queue_size])
+
+  // 1-second tick to drive smooth countdown rendering independent of poll frequency
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const loadData = async () => {
     try {
@@ -416,6 +423,7 @@ export default function StreamChecker() {
                         <th className="px-3 py-1 font-medium">Stream</th>
                         <th className="px-3 py-1 font-medium">Account</th>
                         <th className="px-3 py-1 font-medium text-center">Status</th>
+                        <th className="px-3 py-1 font-medium text-center">Countdown</th>
                         <th className="px-3 py-1 font-medium text-right">Specs</th>
                         <th className="px-3 py-1 font-medium text-right">Score</th>
                       </tr>
@@ -441,6 +449,20 @@ export default function StreamChecker() {
                             {stream.status === 'dead' && <Badge variant="destructive" className="text-[10px]">Dead</Badge>}
                             {stream.status === 'probing' && <Badge variant="outline" className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 animate-pulse">Probing</Badge>}
                             {stream.status === 'loop_detected' && <Badge variant="outline" className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">⚠ Loop</Badge>}
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-center text-xs font-mono tabular-nums">
+                            {(() => {
+                              const active = stream.status === 'checking' || stream.status === 'probing'
+                              if (!active || !stream.started_at || !progress.stream_duration) return '-'
+                              const elapsed = Math.floor((Date.now() - new Date(stream.started_at).getTime()) / 1000)
+                              const remaining = Math.max(0, progress.stream_duration - elapsed)
+                              if (remaining === 0) return <span className="text-muted-foreground/50">—</span>
+                              const m = Math.floor(remaining / 60)
+                              const s = remaining % 60
+                              return m > 0
+                                ? <span className="text-foreground">{m}m {String(s).padStart(2,'0')}s</span>
+                                : <span className={remaining <= 10 ? "text-amber-500" : "text-foreground"}>{remaining}s</span>
+                            })()}
                           </td>
                           <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
                             {stream.status === 'completed' ? (
