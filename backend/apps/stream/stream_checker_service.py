@@ -765,7 +765,7 @@ class StreamCheckerProgress:
     
     def update(self, channel_id: int, channel_name: str, current: int, total: int,
                current_stream: str = '', status: str = 'checking', step: str = '', step_detail: str = '',
-               streams_detail: Optional[Dict] = None):
+               streams_detail: Optional[Dict] = None, stream_duration: Optional[int] = None):
         """Update progress information."""
         from apps.database.manager import get_db_manager
         with self.lock:
@@ -779,6 +779,7 @@ class StreamCheckerProgress:
                 'status': status,
                 'step': step,
                 'step_detail': step_detail,
+                'stream_duration': stream_duration,
                 'timestamp': datetime.now().isoformat()
             }
             if streams_detail is not None:
@@ -1891,6 +1892,7 @@ class StreamCheckerService:
                 stream_id = stream.get('id')
                 if stream_id in stream_statuses:
                     stream_statuses[stream_id]['status'] = 'checking'
+                    stream_statuses[stream_id]['started_at'] = datetime.now().isoformat()
                     self.progress.update(
                         channel_id=channel_id,
                         channel_name=channel_name,
@@ -1900,7 +1902,8 @@ class StreamCheckerService:
                         status='analyzing',
                         step='Analyzing streams with account limits',
                         step_detail=f'Started checking {stream.get("name", "Unknown")}',
-                        streams_detail=list(stream_statuses.values())
+                        streams_detail=list(stream_statuses.values()),
+                        stream_duration=analysis_params.get('ffmpeg_duration', 30)
                     )
             
             def progress_callback(completed, total, result):
@@ -1941,7 +1944,8 @@ class StreamCheckerService:
                     status='analyzing',
                     step='Analyzing streams with account limits',
                     step_detail=f'Completed {completed}/{total}',
-                    streams_detail=list(stream_statuses.values())
+                    streams_detail=list(stream_statuses.values()),
+                    stream_duration=analysis_params.get('ffmpeg_duration', 30)
                 )
             
             if streams_to_check:
@@ -3102,9 +3106,11 @@ class StreamCheckerService:
                     probe_detail[sid] = dict(entry)  # shallow copy — safe to mutate
 
         eligible_ids = {s.get('stream_id') for s in eligible}
+        probe_start = datetime.now().isoformat()
         for sid, entry in probe_detail.items():
             if sid in eligible_ids:
                 entry['status'] = 'probing'
+                entry['started_at'] = probe_start
 
         # Reset progress bar for loop testing phase so the UI reflects
         # what's happening rather than showing a frozen 100% from quality analysis.
@@ -3117,7 +3123,8 @@ class StreamCheckerService:
                 status='analyzing',
                 step='Loop testing',
                 step_detail=f'Probing {total} stream(s) for looping content',
-                streams_detail=list(probe_detail.values()) if probe_detail else None
+                streams_detail=list(probe_detail.values()) if probe_detail else None,
+                stream_duration=_LOOP_PROBE_DURATION
             )
 
         global_limit = self.config.get('concurrent_streams.global_limit', 10)
@@ -3211,7 +3218,8 @@ class StreamCheckerService:
                             status='analyzing',
                             step='Loop testing',
                             step_detail=f'Completed {completed[0]}/{total}: {stream_name}',
-                            streams_detail=list(probe_detail.values()) if probe_detail else None
+                            streams_detail=list(probe_detail.values()) if probe_detail else None,
+                            stream_duration=_LOOP_PROBE_DURATION
                         )
 
         with ThreadPoolExecutor(max_workers=global_limit) as executor:
