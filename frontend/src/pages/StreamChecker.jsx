@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -32,6 +32,7 @@ const PAGINATION_MAX_VISIBLE_PAGES = 5
 
 export default function StreamChecker() {
   const [status, setStatus] = useState(null)
+  const [tick, setTick] = useState(0)  // increments every second to drive countdown re-renders
   const [progress, setProgress] = useState(null)
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -59,6 +60,12 @@ export default function StreamChecker() {
     }, pollInterval)
     return () => clearInterval(interval)
   }, [status?.checking, status?.queue?.queue_size])
+
+  // 1-second tick to drive smooth countdown rendering independent of poll frequency
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const loadData = async () => {
     try {
@@ -380,22 +387,49 @@ export default function StreamChecker() {
             </div>
 
             {/* Streams Detail Progress List */}
-            {progress.streams_detail && progress.streams_detail.length > 0 && (
+            {progress.streams_detail && progress.streams_detail.length > 0 && (() => {
+              // Sort: completed/dead/error by score desc first, then checking, then pending.
+              // Re-evaluates on every render so the table self-organises as results arrive.
+              // Sort order switches based on which phase is active.
+              // During quality analysis: completed rises, dead/error sink.
+              // During loop testing: probing streams rise to top so active
+              // probes are immediately visible above completed streams.
+              const isLoopPhase = progress.step === 'Loop testing'
+              const STATUS_ORDER = isLoopPhase
+                ? { probing: 0, loop_detected: 1, completed: 2, checking: 3, pending: 4, error: 5, dead: 5 }
+                : { completed: 0, checking: 1, pending: 2, error: 3, dead: 3 }
+              const maxWorkers = status?.parallel?.max_workers || 6
+              const rowHeight = 44  // px — accounts for both single and double-line rows
+              const headerHeight = 32  // px — h-8
+              const visibleRows = Math.max(6, Math.min(maxWorkers, progress.streams_detail.length))
+              const tableMaxHeight = visibleRows * rowHeight + headerHeight
+
+              const sortedStreams = [...progress.streams_detail].sort((a, b) => {
+                const oa = STATUS_ORDER[a.status] ?? 2
+                const ob = STATUS_ORDER[b.status] ?? 2
+                if (oa !== ob) return oa - ob
+                const sa = a.score != null ? a.score : -Infinity
+                const sb = b.score != null ? b.score : -Infinity
+                return sb - sa
+              })
+
+              return (
               <div className="mt-4">
                 <Label className="text-sm font-semibold mb-2 block">Stream Progress Tracking</Label>
-                <div className="rounded-md border max-h-64 overflow-y-auto w-full">
+                <div className="rounded-md border overflow-y-auto w-full" style={{ maxHeight: `${tableMaxHeight}px` }}>
                   <table className="w-full text-sm text-left">
                     <thead className="bg-muted sticky top-0 z-10 text-xs text-muted-foreground uppercase h-8">
                       <tr>
                         <th className="px-3 py-1 font-medium">Stream</th>
                         <th className="px-3 py-1 font-medium">Account</th>
                         <th className="px-3 py-1 font-medium text-center">Status</th>
+                        <th className="px-3 py-1 font-medium text-center">Countdown</th>
                         <th className="px-3 py-1 font-medium text-right">Specs</th>
                         <th className="px-3 py-1 font-medium text-right">Score</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {progress.streams_detail.map((stream) => (
+                      {sortedStreams.map((stream) => (
                         <tr key={stream.id} className="hover:bg-muted/50 transition-colors bg-card">
                           <td className="px-3 py-1.5 align-middle">
                             <div className="font-medium max-w-[200px] truncate" title={stream.name}>
@@ -413,6 +447,22 @@ export default function StreamChecker() {
                             {stream.status === 'completed' && <Badge variant="success" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Completed</Badge>}
                             {stream.status === 'error' && <Badge variant="destructive" className="text-[10px]">Error</Badge>}
                             {stream.status === 'dead' && <Badge variant="destructive" className="text-[10px]">Dead</Badge>}
+                            {stream.status === 'probing' && <Badge variant="outline" className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 animate-pulse">Probing</Badge>}
+                            {stream.status === 'loop_detected' && <Badge variant="outline" className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">⚠ Loop</Badge>}
+                          </td>
+                          <td className="px-3 py-1.5 align-middle text-center text-xs font-mono tabular-nums">
+                            {(() => {
+                              const active = stream.status === 'checking' || stream.status === 'probing'
+                              if (!active || !stream.started_at || !progress.stream_duration) return '-'
+                              const elapsed = Math.floor((Date.now() - new Date(stream.started_at).getTime()) / 1000)
+                              const remaining = Math.max(0, progress.stream_duration - elapsed)
+                              if (remaining === 0) return <span className="text-muted-foreground/50">—</span>
+                              const m = Math.floor(remaining / 60)
+                              const s = remaining % 60
+                              return m > 0
+                                ? <span className="text-foreground">{m}m {String(s).padStart(2,'0')}s</span>
+                                : <span className={remaining <= 10 ? "text-amber-500" : "text-foreground"}>{remaining}s</span>
+                            })()}
                           </td>
                           <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
                             {stream.status === 'completed' ? (
@@ -438,7 +488,8 @@ export default function StreamChecker() {
                   </table>
                 </div>
               </div>
-            )}
+              )
+            })()}
           </CardContent>
         </Card>
       )}

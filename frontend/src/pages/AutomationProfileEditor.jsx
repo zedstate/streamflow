@@ -34,6 +34,7 @@ const DEFAULT_PROFILE = {
         enabled: true,
         allow_revive: true,
         check_all_streams: false,
+        loop_check_enabled: false,
         stream_limit: 0,
         min_resolution: 'any',
         min_fps: 0,
@@ -46,7 +47,8 @@ const DEFAULT_PROFILE = {
         resolution: 0.35,
         fps: 0.15,
         codec: 0.10,
-        prefer_h265: true
+        prefer_h265: true,
+        loop_penalty: 0
     }
 }
 
@@ -457,6 +459,18 @@ export default function AutomationProfileEditor() {
                                                 </div>
                                             </div>
 
+                                            <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
+                                                <Switch
+                                                    id="loop_check_enabled"
+                                                    checked={profile.stream_checking.loop_check_enabled ?? false}
+                                                    onCheckedChange={(checked) => updateProfile('stream_checking.loop_check_enabled', checked)}
+                                                />
+                                                <div className="space-y-0.5">
+                                                    <Label htmlFor="loop_check_enabled" className="cursor-pointer font-medium">Check scored streams for looping?</Label>
+                                                    <p className="text-[10px] text-muted-foreground">Checks top 25% of streams with a score greater than 0.50</p>
+                                                </div>
+                                            </div>
+
 
                                             <div className="space-y-2">
                                                 <Label htmlFor="s_limit">Stream Limit per Channel</Label>
@@ -673,6 +687,23 @@ export default function AutomationProfileEditor() {
                                                     min={0}
                                                     max={1}
                                                 />
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <Label htmlFor="loop_penalty" className="text-xs">Looping Punishment</Label>
+                                                <Input
+                                                    id="loop_penalty"
+                                                    type="number"
+                                                    step="0.01"
+                                                    value={profile.scoring_weights.loop_penalty ?? 0}
+                                                    onChange={(e) => {
+                                                        const val = parseFloat(e.target.value) || 0
+                                                        updateProfile('scoring_weights.loop_penalty', Math.min(0, Math.max(-0.25, val)))
+                                                    }}
+                                                    min={-0.25}
+                                                    max={0}
+                                                />
+                                                <p className="text-[10px] text-muted-foreground">Score penalty for looping streams (0 = disabled, min -0.25)</p>
                                             </div>
                                         </div>
 

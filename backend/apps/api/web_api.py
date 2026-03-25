@@ -650,8 +650,11 @@ def get_channels():
             # Also include explicit assignment for UI logic if needed
             ch_copy['assigned_profile_id'] = automation_config.get_channel_assignment(ch_copy.get('id'))
 
-            # Get automation periods count
-            periods = automation_config.get_channel_periods(ch_copy.get('id'))
+            # Get automation periods count (including group-inherited periods)
+            periods = automation_config.get_effective_channel_periods(
+                ch_copy.get('id'),
+                ch_copy.get('channel_group_id')
+            )
             ch_copy['automation_periods_count'] = len(periods)
 
             channels_with_profiles.append(ch_copy)
@@ -995,6 +998,99 @@ def update_channel_match_settings(channel_id):
         return jsonify({"message": "Match settings updated successfully"})
     except Exception as e:
         logger.error(f"Error updating match settings for channel {channel_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/<int:group_id>/regex-config', methods=['GET'])
+def get_group_regex_config(group_id):
+    """Get regex matching config for a channel group."""
+    try:
+        matcher = get_regex_matcher()
+        matcher.reload_patterns()
+        cfg = matcher.get_group_pattern(group_id) or {
+            "name": "",
+            "enabled": True,
+            "match_by_tvg_id": False,
+            "regex_patterns": []
+        }
+        return jsonify(cfg), 200
+    except Exception as e:
+        logger.error(f"Error getting regex config for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/<int:group_id>/regex-config', methods=['POST'])
+def upsert_group_regex_config(group_id):
+    """Add or update regex matching config for a channel group."""
+    try:
+        data = request.get_json() or {}
+        matcher = get_regex_matcher()
+
+        regex_patterns = data.get('regex_patterns')
+        if regex_patterns is None:
+            # Backward-compatible shorthand
+            regex_patterns = data.get('regex', [])
+
+        if not isinstance(regex_patterns, list):
+            return jsonify({"error": "regex_patterns must be a list"}), 400
+
+        enabled = bool(data.get('enabled', True))
+        match_by_tvg_id = bool(data.get('match_by_tvg_id', False))
+
+        name = data.get('name', '')
+        if not name:
+            try:
+                udi = get_udi_manager()
+                group = udi.get_channel_group_by_id(group_id)
+                if isinstance(group, dict):
+                    name = group.get('name', '')
+            except Exception:
+                pass
+
+        m3u_accounts = data.get('m3u_accounts')
+        matcher.add_group_pattern(
+            group_id=group_id,
+            name=name,
+            regex_patterns=regex_patterns,
+            enabled=enabled,
+            match_by_tvg_id=match_by_tvg_id,
+            m3u_accounts=m3u_accounts,
+        )
+
+        return jsonify({"message": "Group regex config updated successfully"}), 200
+    except ValueError as e:
+        logger.warning(f"Validation error upserting group regex config for group {group_id}: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error upserting regex config for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/<int:group_id>/regex-config', methods=['DELETE'])
+def delete_group_regex_config(group_id):
+    """Delete regex matching config for a channel group."""
+    try:
+        matcher = get_regex_matcher()
+        matcher.delete_group_pattern(group_id)
+        return jsonify({"message": "Group regex config deleted successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error deleting regex config for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/<int:group_id>/match-settings', methods=['POST'])
+def update_group_match_settings(group_id):
+    """Update match settings for a group (e.g., match_by_tvg_id)."""
+    try:
+        data = request.get_json() or {}
+        matcher = get_regex_matcher()
+
+        if 'match_by_tvg_id' in data:
+            matcher.set_group_match_by_tvg_id(group_id, bool(data['match_by_tvg_id']))
+
+        return jsonify({"message": "Group match settings updated successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error updating match settings for group {group_id}: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/regex-patterns/bulk', methods=['POST'])
@@ -4361,6 +4457,135 @@ def assign_automation_profile_group():
         return jsonify({"error": "Internal Server Error"}), 500
 
 
+@app.route('/api/channels/groups/<int:group_id>/automation-periods', methods=['GET'])
+@log_function_call
+def get_group_automation_periods(group_id):
+    """Get all automation periods assigned to a group."""
+    try:
+        automation_config = get_automation_config_manager()
+        period_assignments = automation_config.get_group_periods(group_id)
+
+        periods = []
+        for pid, profile_id in period_assignments.items():
+            period = automation_config.get_period(pid)
+            if period:
+                period_copy = period.copy()
+                period_copy['profile_id'] = profile_id
+                profile = automation_config.get_profile(profile_id)
+                if profile:
+                    period_copy['profile_name'] = profile.get('name')
+                periods.append(period_copy)
+
+        return jsonify(periods), 200
+
+    except Exception as e:
+        logger.error(f"Error getting automation periods for group {group_id}: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/assign-groups', methods=['POST'])
+@log_function_call
+def assign_period_to_groups(period_id):
+    """Assign an automation period to one or more groups with a profile."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        group_ids = data.get('group_ids')
+        profile_id = data.get('profile_id')
+        replace = data.get('replace', False)
+
+        if not group_ids or not isinstance(group_ids, list):
+            return jsonify({"error": "group_ids list is required"}), 400
+        if not profile_id:
+            return jsonify({"error": "profile_id is required"}), 400
+
+        if automation_config.assign_period_to_groups(period_id, group_ids, profile_id, replace):
+            return jsonify({
+                "message": f"Period {period_id} with profile {profile_id} assigned to {len(group_ids)} groups",
+                "group_ids": group_ids
+            }), 200
+        else:
+            return jsonify({"error": "Failed to assign period to groups"}), 500
+
+    except Exception as e:
+        logger.error(f"Error assigning period to groups: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/automation/periods/<period_id>/remove-groups', methods=['POST'])
+@log_function_call
+def remove_period_from_groups(period_id):
+    """Remove an automation period from specific groups."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        group_ids = data.get('group_ids')
+
+        if not group_ids or not isinstance(group_ids, list):
+            return jsonify({"error": "group_ids list is required"}), 400
+
+        if automation_config.remove_period_from_groups(period_id, group_ids):
+            return jsonify({
+                "message": f"Period {period_id} removed from {len(group_ids)} groups"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to remove period from groups"}), 500
+
+    except Exception as e:
+        logger.error(f"Error removing period from groups: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/channels/groups/batch/assign-periods', methods=['POST'])
+@log_function_call
+def batch_assign_periods_to_groups():
+    """Batch assign automation periods to multiple groups with profiles.
+
+    Expects format:
+    {
+        "group_ids": [1, 2, 3],
+        "period_assignments": [
+            {"period_id": "period1", "profile_id": "profile1"},
+            {"period_id": "period2", "profile_id": "profile2"}
+        ],
+        "replace": false
+    }
+    """
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        group_ids = data.get('group_ids')
+        period_assignments = data.get('period_assignments')
+        replace = data.get('replace', False)
+
+        if not group_ids or not isinstance(group_ids, list):
+            return jsonify({"error": "group_ids list is required"}), 400
+        if not period_assignments or not isinstance(period_assignments, list):
+            return jsonify({"error": "period_assignments list is required"}), 400
+
+        for assignment in period_assignments:
+            if 'period_id' not in assignment or 'profile_id' not in assignment:
+                return jsonify({"error": "Each period assignment must have period_id and profile_id"}), 400
+
+        is_first = True
+        for assignment in period_assignments:
+            pid = assignment['period_id']
+            profile_id = assignment['profile_id']
+            automation_config.assign_period_to_groups(pid, group_ids, profile_id, replace and is_first)
+            is_first = False
+
+        return jsonify({
+            "message": f"Assigned {len(period_assignments)} period-profile pairs to {len(group_ids)} groups"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error batch assigning periods to groups: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
 # ==================== Automation Periods API ====================
 # Manage automation periods - multiple scheduled automation configurations per channel
 
@@ -4649,12 +4874,16 @@ def get_batch_period_usage():
 @app.route('/api/channels/<int:channel_id>/automation-periods', methods=['GET'])
 @log_function_call
 def get_channel_automation_periods(channel_id):
-    """Get all automation periods assigned to a channel."""
+    """Get all automation periods assigned to a channel (including group-inherited ones)."""
     try:
         automation_config = get_automation_config_manager()
-        # get_channel_periods returns a dict {period_id: profile_id}
-        period_assignments = automation_config.get_channel_periods(channel_id)
-        
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(channel_id)
+        group_id = channel.get('channel_group_id') if channel else None
+
+        # get_effective_channel_periods merges group-level and channel-level assignments
+        period_assignments = automation_config.get_effective_channel_periods(channel_id, group_id)
+
         periods = []
         for pid, profile_id in period_assignments.items():
             period = automation_config.get_period(pid)
@@ -4666,9 +4895,9 @@ def get_channel_automation_periods(channel_id):
                 if profile:
                     period_copy['profile_name'] = profile.get('name')
                 periods.append(period_copy)
-        
+
         return jsonify(periods), 200
-        
+
     except Exception as e:
         logger.error(f"Error getting automation periods for channel {channel_id}: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -5896,9 +6125,10 @@ def create_acestream_channel_session_impl(
         try:
             from apps.automation.automated_stream_manager import RegexChannelMatcher
             regex_matcher = RegexChannelMatcher()
-            match_config = regex_matcher.get_channel_match_config(str(channel_id))
+            group_id = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
+            match_config = regex_matcher.get_channel_match_config(str(channel_id), group_id)
             resolved_match_by_tvg_id = match_config.get('match_by_tvg_id', False)
-            channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=None)
+            channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=None, group_id=group_id)
             if channel_regex:
                 resolved_regex = channel_regex
             logger.info(
@@ -6628,7 +6858,8 @@ def create_stream_session():
                 regex_matcher = get_regex_matcher()
                 
                 # Get match config to check for match_by_tvg_id
-                match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                group_id = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
+                match_config = regex_matcher.get_channel_match_config(str(channel_id), group_id)
                 match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                 
                 # Get regex filter
@@ -6636,7 +6867,7 @@ def create_stream_session():
                 # This ensures that if match_by_tvg_id is False AND no regex is set, we match NOTHING.
                 # Previously we defaulted to ".*" which matched EVERYTHING.
                 default_regex = None
-                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex, group_id=group_id)
                 
                 logger.info(f"Using channel config for manual session: regex='{regex_filter}', match_by_tvg_id={match_by_tvg_id}")
             except Exception as e:
@@ -6726,13 +6957,14 @@ def create_group_stream_sessions():
                         regex_matcher = get_regex_matcher()
                         
                         # Get match config
-                        match_config = regex_matcher.get_channel_match_config(str(channel_id))
+                        group_id_for_channel = channel.get('group_id') if channel.get('group_id') is not None else channel.get('channel_group_id')
+                        match_config = regex_matcher.get_channel_match_config(str(channel_id), group_id_for_channel)
                         match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                         
                         # Get regex filter with appropriate default
                         # Default to None so we don't match everything by default if no rules exist
                         default_regex = None
-                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
+                        channel_regex = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex, group_id=group_id_for_channel)
                     except Exception:
                         channel_regex = None
                 
