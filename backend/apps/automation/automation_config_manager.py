@@ -308,6 +308,55 @@ class AutomationConfigManager:
         pid = self.get_effective_profile_id(channel_id, group_id)
         return self.get_profile(pid) if pid else None
 
+    # --- EPG Scheduled Profile Assignments ---
+
+    def assign_epg_scheduled_profile_to_channel(self, channel_id: int, profile_id: Optional[str]) -> bool:
+        assignments = self._get_config_dict("channel_epg_scheduled_assignments", {})
+        cid = str(channel_id)
+        if profile_id is None:
+            if cid in assignments: del assignments[cid]
+        else: assignments[cid] = str(profile_id)
+        return self._set_config_dict("channel_epg_scheduled_assignments", assignments)
+
+    def assign_epg_scheduled_profile_to_channels(self, channel_ids: List[int], profile_id: Optional[str]) -> bool:
+        assignments = self._get_config_dict("channel_epg_scheduled_assignments", {})
+        changed = False
+        for cid_raw in channel_ids:
+            cid = str(cid_raw)
+            if profile_id is None:
+                if cid in assignments: del assignments[cid]; changed = True
+            else:
+                if assignments.get(cid) != str(profile_id): assignments[cid] = str(profile_id); changed = True
+        if changed: return self._set_config_dict("channel_epg_scheduled_assignments", assignments)
+        return True
+
+    def assign_epg_scheduled_profile_to_group(self, group_id: int, profile_id: Optional[str]) -> bool:
+        assignments = self._get_config_dict("group_epg_scheduled_assignments", {})
+        gid = str(group_id)
+        if profile_id is None:
+            if gid in assignments: del assignments[gid]
+        else: assignments[gid] = str(profile_id)
+        return self._set_config_dict("group_epg_scheduled_assignments", assignments)
+
+    def get_channel_epg_scheduled_assignment(self, channel_id: int) -> Optional[str]:
+        return self._get_config_dict("channel_epg_scheduled_assignments", {}).get(str(channel_id))
+
+    def get_group_epg_scheduled_assignment(self, group_id: int) -> Optional[str]:
+        return self._get_config_dict("group_epg_scheduled_assignments", {}).get(str(group_id))
+
+    def get_effective_epg_scheduled_profile_id(self, channel_id: int, group_id: Optional[int] = None) -> Optional[str]:
+        cid = str(channel_id)
+        chan = self._get_config_dict("channel_epg_scheduled_assignments", {})
+        if cid in chan: return chan[cid]
+        if group_id is not None:
+            grp = self._get_config_dict("group_epg_scheduled_assignments", {})
+            if str(group_id) in grp: return grp[str(group_id)]
+        return None
+
+    def get_effective_epg_scheduled_profile(self, channel_id: int, group_id: Optional[int] = None) -> Optional[Dict]:
+        pid = self.get_effective_epg_scheduled_profile_id(channel_id, group_id)
+        return self.get_profile(pid) if pid else None
+
     # --- Automation Periods Management ---
 
     def get_all_periods(

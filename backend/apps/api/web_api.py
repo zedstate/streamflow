@@ -674,6 +674,14 @@ def get_channels():
             )
             ch_copy['automation_periods_count'] = len(periods)
 
+            # EPG scheduled profile override (channel-specific assignment, no fallback to group here)
+            ch_copy['channel_epg_scheduled_profile_id'] = automation_config.get_channel_epg_scheduled_assignment(ch_copy.get('id'))
+            # Effective EPG scheduled profile (channel > group hierarchy)
+            ch_copy['epg_scheduled_profile_id'] = automation_config.get_effective_epg_scheduled_profile_id(
+                ch_copy.get('id'),
+                ch_copy.get('channel_group_id')
+            )
+
             channels_with_profiles.append(ch_copy)
 
         # Apply custom channel order if configured (only for non-paginated responses)
@@ -4471,6 +4479,78 @@ def assign_automation_profile_group():
             
     except Exception as e:
         logger.error(f"Error assigning profile to group: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/automation/assign/epg-profile/channel', methods=['POST'])
+@log_function_call
+def assign_epg_scheduled_profile_channel():
+    """Assign an EPG scheduled automation profile to a channel."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        channel_id = data.get('channel_id')
+        profile_id = data.get('profile_id')  # None is valid (unassign)
+
+        if channel_id is None:
+            return jsonify({"error": "channel_id is required"}), 400
+
+        if automation_config.assign_epg_scheduled_profile_to_channel(channel_id, profile_id):
+            return jsonify({"message": f"EPG scheduled profile {profile_id} assigned to channel {channel_id}"}), 200
+        else:
+            return jsonify({"error": "Failed to assign EPG scheduled profile"}), 500
+
+    except Exception as e:
+        logger.error(f"Error assigning EPG scheduled profile to channel: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/automation/assign/epg-profile/channels', methods=['POST'])
+@log_function_call
+def assign_epg_scheduled_profile_channels():
+    """Assign an EPG scheduled automation profile to multiple channels."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        channel_ids = data.get('channel_ids')
+        profile_id = data.get('profile_id')  # None is valid (unassign)
+
+        if not channel_ids or not isinstance(channel_ids, list):
+            return jsonify({"error": "channel_ids list is required"}), 400
+
+        if automation_config.assign_epg_scheduled_profile_to_channels(channel_ids, profile_id):
+            return jsonify({"message": f"EPG scheduled profile {profile_id} assigned to {len(channel_ids)} channels"}), 200
+        else:
+            return jsonify({"error": "Failed to assign EPG scheduled profile to channels"}), 500
+
+    except Exception as e:
+        logger.error(f"Error assigning EPG scheduled profile to channels: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+
+
+@app.route('/api/automation/assign/epg-profile/group', methods=['POST'])
+@log_function_call
+def assign_epg_scheduled_profile_group():
+    """Assign an EPG scheduled automation profile to a channel group."""
+    try:
+        automation_config = get_automation_config_manager()
+        data = request.json
+
+        group_id = data.get('group_id')
+        profile_id = data.get('profile_id')  # None is valid (unassign)
+
+        if group_id is None:
+            return jsonify({"error": "group_id is required"}), 400
+
+        if automation_config.assign_epg_scheduled_profile_to_group(group_id, profile_id):
+            return jsonify({"message": f"EPG scheduled profile {profile_id} assigned to group {group_id}"}), 200
+        else:
+            return jsonify({"error": "Failed to assign EPG scheduled profile"}), 500
+
+    except Exception as e:
+        logger.error(f"Error assigning EPG scheduled profile to group: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
 
 

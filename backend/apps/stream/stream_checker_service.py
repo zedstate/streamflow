@@ -3593,7 +3593,7 @@ class StreamCheckerService:
                 
         return results
 
-    def check_single_channel(self, channel_id: int, program_name: Optional[str] = None) -> Dict:
+    def check_single_channel(self, channel_id: int, program_name: Optional[str] = None, is_epg_scheduled: bool = False) -> Dict:
         """Check a single channel immediately and return results.
         
         This performs a targeted channel refresh for a single channel:
@@ -3616,6 +3616,7 @@ class StreamCheckerService:
         Args:
             channel_id: ID of the channel to check
             program_name: Optional program name if this is a scheduled EPG check
+            is_epg_scheduled: If True, prefer the channel's EPG scheduled profile over the period profile
             
         Returns:
             Dict with check results and statistics
@@ -3659,8 +3660,19 @@ class StreamCheckerService:
             
             # channel dict is available in local scope
             channel_group_id = channel.get('channel_group_id')
-            config = automation_config.get_effective_configuration(channel_id, channel_group_id)
-            profile = config.get('profile') if config else None
+
+            # If this is an EPG scheduled check, prefer the EPG scheduled profile override
+            profile = None
+            if is_epg_scheduled:
+                epg_profile = automation_config.get_effective_epg_scheduled_profile(channel_id, channel_group_id)
+                if epg_profile:
+                    profile = epg_profile
+                    logger.info(f"Channel {channel_name}: using EPG scheduled profile '{epg_profile.get('name')}'")
+
+            # Fall back to the active period-based profile if no EPG profile was found
+            if profile is None:
+                config = automation_config.get_effective_configuration(channel_id, channel_group_id)
+                profile = config.get('profile') if config else None
             
             matching_enabled = False
             checking_enabled = False
