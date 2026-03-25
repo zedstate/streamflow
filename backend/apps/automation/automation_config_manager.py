@@ -314,8 +314,10 @@ class AutomationConfigManager:
         assignments = self._get_config_dict("channel_epg_scheduled_assignments", {})
         cid = str(channel_id)
         if profile_id is None:
-            if cid in assignments: del assignments[cid]
-        else: assignments[cid] = str(profile_id)
+            if cid in assignments:
+                del assignments[cid]
+        else:
+            assignments[cid] = str(profile_id)
         return self._set_config_dict("channel_epg_scheduled_assignments", assignments)
 
     def assign_epg_scheduled_profile_to_channels(self, channel_ids: List[int], profile_id: Optional[str]) -> bool:
@@ -324,18 +326,25 @@ class AutomationConfigManager:
         for cid_raw in channel_ids:
             cid = str(cid_raw)
             if profile_id is None:
-                if cid in assignments: del assignments[cid]; changed = True
+                if cid in assignments:
+                    del assignments[cid]
+                    changed = True
             else:
-                if assignments.get(cid) != str(profile_id): assignments[cid] = str(profile_id); changed = True
-        if changed: return self._set_config_dict("channel_epg_scheduled_assignments", assignments)
+                if assignments.get(cid) != str(profile_id):
+                    assignments[cid] = str(profile_id)
+                    changed = True
+        if changed:
+            return self._set_config_dict("channel_epg_scheduled_assignments", assignments)
         return True
 
     def assign_epg_scheduled_profile_to_group(self, group_id: int, profile_id: Optional[str]) -> bool:
         assignments = self._get_config_dict("group_epg_scheduled_assignments", {})
         gid = str(group_id)
         if profile_id is None:
-            if gid in assignments: del assignments[gid]
-        else: assignments[gid] = str(profile_id)
+            if gid in assignments:
+                del assignments[gid]
+        else:
+            assignments[gid] = str(profile_id)
         return self._set_config_dict("group_epg_scheduled_assignments", assignments)
 
     def get_channel_epg_scheduled_assignment(self, channel_id: int) -> Optional[str]:
