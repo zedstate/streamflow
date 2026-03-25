@@ -1613,6 +1613,10 @@ class StreamCheckerService:
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
+        batch_config = self.config.get('batch_operations', {})
+        batch_enabled = batch_config.get('enabled', True)
+        batch_size = batch_config.get('batch_size', 10)
+        batch_stats_list = []
         
         try:
             from apps.automation.automation_config_manager import get_automation_config_manager
@@ -1952,9 +1956,6 @@ class StreamCheckerService:
                 # Process results - ALL checks are complete at this point
                 # Collect stats for batch update to minimize API calls
                 batch_stats_list = []
-                batch_config = self.config.get('batch_operations', {})
-                batch_enabled = batch_config.get('enabled', True)
-                batch_size = batch_config.get('batch_size', 10)
                 
                 for analyzed in results:
                     # Prepare stats for batch update
