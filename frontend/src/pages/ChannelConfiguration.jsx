@@ -1454,13 +1454,13 @@ function RegexTableRow({ channel, group, groups, groupsConfig, profiles, pattern
               </h4>
               <Select
                 value={channel.channel_epg_scheduled_profile_id || ''}
-                onValueChange={(v) => onAssignEpgProfile(channel.id, v || null)}
+                onValueChange={(v) => onAssignEpgProfile(channel.id, v === 'none' ? null : v)}
               >
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue placeholder="Use period profile (default)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">— Use period profile (default) —</SelectItem>
+                  <SelectItem value="none">— Use period profile (default) —</SelectItem>
                   {profiles.map((p) => (
                     <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                   ))}
@@ -4337,12 +4337,15 @@ export default function ChannelConfiguration() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Automation Profile</Label>
-                <Select value={groupProfileId} onValueChange={setGroupProfileId}>
+                <Select
+                  value={groupProfileId}
+                  onValueChange={(v) => setGroupProfileId(v === 'none' ? '' : v)}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a profile (or clear to remove)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— Remove profile assignment —</SelectItem>
+                    <SelectItem value="none">— Remove profile assignment —</SelectItem>
                     {profiles.map((profile) => (
                       <SelectItem key={profile.id} value={profile.id}>
                         {profile.name}
@@ -4405,12 +4408,15 @@ export default function ChannelConfiguration() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>EPG Scheduled Profile</Label>
-                <Select value={groupEpgProfileId} onValueChange={setGroupEpgProfileId}>
+                <Select
+                  value={groupEpgProfileId}
+                  onValueChange={(v) => setGroupEpgProfileId(v === 'none' ? '' : v)}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a profile (or clear to remove)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— Remove EPG profile assignment —</SelectItem>
+                    <SelectItem value="none">— Remove EPG profile assignment —</SelectItem>
                     {profiles.map((profile) => (
                       <SelectItem key={profile.id} value={profile.id}>
                         {profile.name}
