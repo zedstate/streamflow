@@ -36,7 +36,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, cast
 from dataclasses import asdict
 from flask import Flask, request, jsonify, send_from_directory, send_file, make_response, Response
 from flask_cors import CORS
@@ -672,27 +672,65 @@ def get_channels():
         for channel in channels:
             # Create a copy to avoid modifying the cached UDI object
             ch_copy = channel.copy()
+            channel_id = ch_copy.get('id')
+            group_id = ch_copy.get('channel_group_id')
+
+            if channel_id is None:
+                ch_copy['assigned_profile_id'] = None
+                ch_copy['group_profile_id'] = None
+                ch_copy['automation_profile_source'] = 'default'
+                ch_copy['automation_periods_count'] = 0
+                ch_copy['channel_periods_count'] = 0
+                ch_copy['group_periods_count'] = 0
+                ch_copy['automation_periods_source'] = 'none'
+                ch_copy['channel_epg_scheduled_profile_id'] = None
+                ch_copy['epg_scheduled_profile_id'] = None
+                channels_with_profiles.append(ch_copy)
+                continue
+
+            channel_id = cast(int, channel_id)
+            group_id = cast(Optional[int], group_id)
+
             # Get effective profile (explicit assignment > group assignment > default)
             ch_copy['automation_profile_id'] = automation_config.get_effective_profile_id(
-                ch_copy.get('id'), 
-                ch_copy.get('channel_group_id')
+                channel_id,
+                group_id
             )
             # Also include explicit assignment for UI logic if needed
-            ch_copy['assigned_profile_id'] = automation_config.get_channel_assignment(ch_copy.get('id'))
+            ch_copy['assigned_profile_id'] = automation_config.get_channel_assignment(channel_id)
+            ch_copy['group_profile_id'] = automation_config.get_group_assignment(group_id) if group_id is not None else None
+            if ch_copy['assigned_profile_id']:
+                ch_copy['automation_profile_source'] = 'channel'
+            elif ch_copy['group_profile_id']:
+                ch_copy['automation_profile_source'] = 'group'
+            else:
+                ch_copy['automation_profile_source'] = 'default'
 
             # Get automation periods count (including group-inherited periods)
             periods = automation_config.get_effective_channel_periods(
-                ch_copy.get('id'),
-                ch_copy.get('channel_group_id')
+                channel_id,
+                group_id
             )
             ch_copy['automation_periods_count'] = len(periods)
 
+            # Expose period source for UI badges: channel override vs inherited from group.
+            channel_periods = automation_config.get_channel_periods(channel_id)
+            group_periods = automation_config.get_group_periods(group_id) if group_id is not None else {}
+            ch_copy['channel_periods_count'] = len(channel_periods)
+            ch_copy['group_periods_count'] = len(group_periods)
+            if ch_copy['channel_periods_count'] > 0:
+                ch_copy['automation_periods_source'] = 'channel'
+            elif ch_copy['group_periods_count'] > 0:
+                ch_copy['automation_periods_source'] = 'group'
+            else:
+                ch_copy['automation_periods_source'] = 'none'
+
             # EPG scheduled profile override (channel-specific assignment, no fallback to group here)
-            ch_copy['channel_epg_scheduled_profile_id'] = automation_config.get_channel_epg_scheduled_assignment(ch_copy.get('id'))
+            ch_copy['channel_epg_scheduled_profile_id'] = automation_config.get_channel_epg_scheduled_assignment(channel_id)
             # Effective EPG scheduled profile (channel > group hierarchy)
             ch_copy['epg_scheduled_profile_id'] = automation_config.get_effective_epg_scheduled_profile_id(
-                ch_copy.get('id'),
-                ch_copy.get('channel_group_id')
+                channel_id,
+                group_id
             )
 
             channels_with_profiles.append(ch_copy)

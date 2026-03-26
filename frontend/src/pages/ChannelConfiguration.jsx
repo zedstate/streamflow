@@ -1212,6 +1212,10 @@ function RegexTableRow({ channel, group, groups, groupsConfig, profiles, pattern
   const matchByTvgId = Boolean(effectiveMatchingConfig?.match_by_tvg_id)
   const isTvgInherited = !hasChannelMatchingConfig && Boolean(channelGroupId)
   const patternCount = normalizePatternData(channelPatterns).length
+  const isProfileChannelOverride = channel?.automation_profile_source === 'channel' || Boolean(channel?.assigned_profile_id)
+  const isProfileGroupBased = channel?.automation_profile_source === 'group' || (!isProfileChannelOverride && Boolean(channel?.group_profile_id))
+  const isPeriodChannelOverride = channel?.automation_periods_source === 'channel' || Number(channel?.channel_periods_count || 0) > 0
+  const isPeriodGroupBased = channel?.automation_periods_source === 'group' || (!isPeriodChannelOverride && Number(channel?.group_periods_count || 0) > 0)
 
   const loadChannelPeriods = useCallback(async () => {
     try {
@@ -1303,8 +1307,18 @@ function RegexTableRow({ channel, group, groups, groupsConfig, profiles, pattern
         <div className="flex items-center">
           <span className="font-medium truncate">{channel.name}</span>
         </div>
-        <div className="flex items-center text-sm text-muted-foreground truncate">
-          {group?.name || '-'}
+        <div className="flex items-center text-sm text-muted-foreground">
+          <div className="min-w-0">
+            <div className="truncate">{group?.name || '-'}</div>
+            <div className="flex items-center gap-1 mt-1 flex-wrap">
+              <Badge variant={isProfileChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
+                Profile: {isProfileChannelOverride ? 'Override' : isProfileGroupBased ? 'Group' : 'Default'}
+              </Badge>
+              <Badge variant={isPeriodChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
+                Periods: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
+              </Badge>
+            </div>
+          </div>
         </div>
         <div className="flex items-center">
           <Badge variant="outline" className="text-xs font-normal">
