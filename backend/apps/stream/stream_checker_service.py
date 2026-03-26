@@ -765,7 +765,7 @@ class StreamCheckerProgress:
     
     def update(self, channel_id: int, channel_name: str, current: int, total: int,
                current_stream: str = '', status: str = 'checking', step: str = '', step_detail: str = '',
-               streams_detail: Optional[Dict] = None, stream_duration: Optional[int] = None):
+               streams_detail: Optional[Dict] = None):
         """Update progress information."""
         from apps.database.manager import get_db_manager
         with self.lock:
@@ -777,9 +777,7 @@ class StreamCheckerProgress:
                 'percentage': round((current / total * 100) if total > 0 else 0, 1),
                 'current_stream_name': current_stream,
                 'status': status,
-                'step': step,
                 'step_detail': step_detail,
-                'stream_duration': stream_duration,
                 'timestamp': datetime.now().isoformat()
             }
             if streams_detail is not None:
@@ -1270,25 +1268,10 @@ class StreamCheckerService:
             "channel_layout": stream_data.get("channel_layout"),
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
-            "quality_score": stream_data.get("score"),
-            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else False,
-            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else False,
-            "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
-            "loop_score_penalty": stream_data.get("loop_score_penalty"),
         }
-
-        # Clean up the payload — remove None and N/A values but preserve False
-        # for boolean loop fields so stale True values from previous runs are
-        # explicitly overwritten in Dispatcharr rather than left unchanged by merge.
-        PRESERVE_FALSE = {'loop_probe_ran', 'loop_detected'}
-        stream_stats_payload = {
-            k: v for k, v in stream_stats_payload.items()
-            if v not in [None, "N/A"] or (v is None and k not in PRESERVE_FALSE)
-        }
-        # Explicitly keep False booleans for loop fields
-        for k in PRESERVE_FALSE:
-            if k in stream_stats_payload or stream_data.get(k) is False:
-                stream_stats_payload[k] = stream_data.get(k) if stream_data.get(k) is not None else False
+        
+        # Clean up the payload, removing any None values or N/A values
+        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
         
         if not stream_stats_payload:
             logger.debug(f"No data to update for stream {stream_id}. Skipping.")
@@ -1366,28 +1349,11 @@ class StreamCheckerService:
             "channel_layout": stream_data.get("channel_layout"),
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
-            "quality_score": stream_data.get("score"),
-            # Explicitly write False for non-probed streams so stale True values
-            # from previous runs are overwritten in Dispatcharr. False must survive
-            # the None filter below — handled by the separate boolean cleanup step.
-            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else False,
-            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else False,
-            "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
-            "loop_score_penalty": stream_data.get("loop_score_penalty"),
         }
         
-        # Clean up the payload — remove None and N/A but preserve False for
-        # boolean loop fields so stale True values from previous runs are
-        # explicitly overwritten in Dispatcharr rather than left by merge.
-        PRESERVE_FALSE = {'loop_probe_ran', 'loop_detected'}
-        stream_stats_payload = {
-            k: v for k, v in stream_stats_payload.items()
-            if v not in [None, "N/A"] or (v is None and k not in PRESERVE_FALSE)
-        }
-        for k in PRESERVE_FALSE:
-            if k in stream_stats_payload or stream_data.get(k) is False:
-                stream_stats_payload[k] = stream_data.get(k) if stream_data.get(k) is not None else False
-
+        # Clean up the payload, removing any None values or N/A values
+        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+        
         if not stream_stats_payload:
             logger.debug(f"No data to update for stream {stream_id}. Skipping.")
             return None
@@ -1633,8 +1599,6 @@ class StreamCheckerService:
         stream_limit = 0
         allow_revive = True
         grace_period = False
-        loop_check_enabled = False
-        loop_penalty = 0.0
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -1657,13 +1621,7 @@ class StreamCheckerService:
                 priority_m3u_ids = profile_stream_checking.get('m3u_priority', [])
                 priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
                 grace_period = profile_stream_checking.get('grace_period', False)
-                loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
                 scoring_weights = profile.get('scoring_weights', None)
-                loop_penalty = float(
-                    (scoring_weights or {}).get('loop_penalty', 0.0)
-                )
-                # Clamp to valid range: -0.25 to 0.0
-                loop_penalty = max(-0.25, min(0.0, loop_penalty))
                 
                 # Also check if checking is enabled at all for this profile
                 if not profile_stream_checking.get('enabled', False):
@@ -1892,7 +1850,6 @@ class StreamCheckerService:
                 stream_id = stream.get('id')
                 if stream_id in stream_statuses:
                     stream_statuses[stream_id]['status'] = 'checking'
-                    stream_statuses[stream_id]['started_at'] = datetime.now().isoformat()
                     self.progress.update(
                         channel_id=channel_id,
                         channel_name=channel_name,
@@ -1902,8 +1859,7 @@ class StreamCheckerService:
                         status='analyzing',
                         step='Analyzing streams with account limits',
                         step_detail=f'Started checking {stream.get("name", "Unknown")}',
-                        streams_detail=list(stream_statuses.values()),
-                        stream_duration=analysis_params.get('ffmpeg_duration', 30)
+                        streams_detail=list(stream_statuses.values())
                     )
             
             def progress_callback(completed, total, result):
@@ -1944,8 +1900,7 @@ class StreamCheckerService:
                     status='analyzing',
                     step='Analyzing streams with account limits',
                     step_detail=f'Completed {completed}/{total}',
-                    streams_detail=list(stream_statuses.values()),
-                    stream_duration=analysis_params.get('ffmpeg_duration', 30)
+                    streams_detail=list(stream_statuses.values())
                 )
             
             if streams_to_check:
@@ -2075,40 +2030,13 @@ class StreamCheckerService:
                     analyzed_streams.extend(cached_analyzed_streams)
                     logger.info(f"Merged {len(cached_analyzed_streams)} cached streams with {len(results)} new results. Total candidates: {len(analyzed_streams)}")
 
+                if batch_enabled and batch_stats_list:
+                    logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
+                    successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
+                    logger.info(f"Batch update complete: {successful} successful, {failed} failed")
+                
                 logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
-
-            # Run loop probes on eligible streams (top 25% scoring >= 0.5).
-            # Called after all streams are scored and analyzed_streams is fully
-            # assembled so the complete score distribution is available.
-            # Gated on the per-profile loop_check_enabled flag.
-            if loop_check_enabled:
-                analysis_params_lp = self.config.get('stream_analysis', {})
-                self._run_loop_probes(
-                    analyzed_streams,
-                    user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
-                    loop_penalty=loop_penalty,
-                    channel_id=channel_id,
-                    channel_name=channel_name,
-                    streams_detail=list(stream_statuses.values()),
-                    probe_duration=analysis_params_lp.get('loop_probe_duration', 360),
-                )
-            else:
-                logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
-
-            # Batch stats write after probes so the persisted score and loop
-            # fields reflect the penalised score from this run.
-            if batch_enabled and batch_stats_list:
-                # Rebuild batch list with updated scores post-penalty
-                batch_stats_list = []
-                for analyzed in analyzed_streams:
-                    stats_item = self._prepare_stream_stats_for_batch(analyzed)
-                    if stats_item:
-                        batch_stats_list.append(stats_item)
-            if batch_enabled and batch_stats_list:
-                logger.info(f"Batch updating stats for {len(batch_stats_list)} streams (batch_size={batch_size})")
-                successful, failed = batch_update_stream_stats(batch_stats_list, batch_size=batch_size)
-                logger.info(f"Batch update complete: {successful} successful, {failed} failed")
-
+            
             # Sort streams by score (highest first)
             self.progress.update(
                 channel_id=channel_id,
@@ -2228,13 +2156,7 @@ class StreamCheckerService:
                         stream_stat['score'] = round(analyzed.get('score', 0), 2)
                     else:
                         stream_stat['score'] = round(analyzed.get('score', 0), 2)
-
-                    # Include loop detection results if the probe ran
-                    if analyzed.get('loop_probe_ran'):
-                        stream_stat['loop_probe_ran']      = True
-                        stream_stat['loop_detected']       = analyzed.get('loop_detected')
-                        stream_stat['loop_duration_secs']  = analyzed.get('loop_duration_secs')
-
+                    
                     # Clean up N/A values for cleaner JSON
                     cleaned_stat = {k: v for k, v in stream_stat.items() if v not in [None]}
                     stream_stats.append(cleaned_stat)
@@ -2373,8 +2295,6 @@ class StreamCheckerService:
         stream_limit = 0
         allow_revive = True
         grace_period = False
-        loop_check_enabled = False
-        loop_penalty = 0.0
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -2397,13 +2317,7 @@ class StreamCheckerService:
                 priority_m3u_ids = profile_stream_checking.get('m3u_priority', [])
                 priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
                 grace_period = profile_stream_checking.get('grace_period', False)
-                loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
                 scoring_weights = profile.get('scoring_weights', None)
-                loop_penalty = float(
-                    (scoring_weights or {}).get('loop_penalty', 0.0)
-                )
-                # Clamp to valid range: -0.25 to 0.0
-                loop_penalty = max(-0.25, min(0.0, loop_penalty))
                 
                 # Also check if checking is enabled at all for this profile
                 if not profile_stream_checking.get('enabled', False):
@@ -2752,32 +2666,7 @@ class StreamCheckerService:
                     score = self._calculate_stream_score(analyzed, priority_m3u_ids, priority_mode)
                     analyzed['score'] = score
                     analyzed_streams.append(analyzed)
-
-            # Run loop probes on eligible streams — all streams scored, full
-            # distribution known for top-percentile calculation.
-            # Gated on the per-profile loop_check_enabled flag.
-            if loop_check_enabled:
-                analysis_params_lp = self.config.get('stream_analysis', {})
-                self._run_loop_probes(
-                    analyzed_streams,
-                    user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
-                    loop_penalty=loop_penalty,
-                    channel_id=channel_id,
-                    channel_name=channel_name,
-                    streams_detail=None,
-                    probe_duration=analysis_params_lp.get('loop_probe_duration', 360),
-                )
-                # Write stats for all probed streams so loop fields
-                # (loop_probe_ran, loop_detected, loop_duration_secs) are
-                # persisted to the database regardless of whether a penalty
-                # was applied. Streams with a penalty get their updated score
-                # persisted here too.
-                for analyzed in analyzed_streams:
-                    if analyzed.get('loop_probe_ran'):
-                        self._update_stream_stats(analyzed)
-            else:
-                logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
-
+            
             # Sort streams by score (highest first)
             self.progress.update(
                 channel_id=channel_id,
@@ -2910,13 +2799,7 @@ class StreamCheckerService:
                             # Include original status from analysis if present
                             if 'status' in analyzed:
                                 stream_stat['analysis_status'] = analyzed.get('status')
-
-                        # Include loop detection results if the probe ran
-                        if analyzed.get('loop_probe_ran'):
-                            stream_stat['loop_probe_ran']      = True
-                            stream_stat['loop_detected']       = analyzed.get('loop_detected')
-                            stream_stat['loop_duration_secs']  = analyzed.get('loop_duration_secs')
-
+                        
                         # Clean up N/A values for cleaner output
                         stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
                         stream_stats.append(stream_stat)
@@ -3021,241 +2904,6 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
-    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, channel_id: int = 0, channel_name: str = '', streams_detail: Optional[list] = None, probe_duration: int = 360) -> None:
-        """
-        Run loop detection probes on eligible streams in parallel with
-        per-account concurrent limits, then write results back into each
-        stream's analyzed dict.
-
-        Eligibility criteria (both must be met):
-          1. score >= LOOP_PROBE_SCORE_THRESHOLD (stream is healthy)
-          2. stream is in the top LOOP_PROBE_TOP_PERCENTILE of all scored streams
-
-        Dead streams (score == 0) and cached streams are never probed.
-
-        Parallelism uses AccountStreamLimiter directly rather than
-        SmartStreamScheduler to avoid:
-          - URL double-transformation (analyzed dicts already carry the
-            transformed URL used by quality analysis)
-          - Progress/start callback conflicts with the quality analysis UI
-          - Result-shape mismatch (probe returns a tuple, not a dict)
-
-        Account ID comes from the UDI stream record ('m3u_account_id' column,
-        mapped to 'm3u_account' integer expected by AccountStreamLimiter).
-
-        Results written into each analyzed dict (always present after this call):
-          analyzed['loop_detected']      True / False / None (not probed / error)
-          analyzed['loop_duration_secs'] float or None
-          analyzed['loop_probe_ran']     True / False
-
-        After all probes complete, applies loop_penalty to the score of any
-        confirmed looping stream (loop_detected is True). Score is floored at
-        0.0 — a looping stream is still better than no stream.
-
-        Args:
-            analyzed_streams: List of analyzed stream dicts, each with 'score' set.
-            user_agent:       HTTP User-Agent forwarded to FFmpeg.
-            loop_penalty:     Negative float (e.g. -0.25) subtracted from score
-                              of looping streams. 0.0 = no penalty.
-        """
-        import threading
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        from apps.stream.stream_check_utils import _probe_stream_for_loops
-        from apps.stream.concurrent_stream_limiter import get_account_limiter
-
-        LOOP_PROBE_SCORE_THRESHOLD = 0.5
-        LOOP_PROBE_TOP_PERCENTILE  = 0.25   # top 25%
-
-        # Initialise loop fields on every stream so callers can always read them
-        for s in analyzed_streams:
-            s.setdefault('loop_detected', None)
-            s.setdefault('loop_duration_secs', None)
-            s.setdefault('loop_probe_ran', False)
-
-        # Build candidate pool: alive, scored at or above threshold, not cached
-        candidates = [
-            s for s in analyzed_streams
-            if s.get('score', 0) >= LOOP_PROBE_SCORE_THRESHOLD
-            and s.get('status') != 'cached'
-        ]
-
-        if not candidates:
-            logger.info("[loop-probe] No streams meet eligibility criteria — skipping all probes")
-            return
-
-        # Rank by score descending, take top percentile (minimum 1)
-        candidates_sorted = sorted(candidates, key=lambda s: s.get('score', 0), reverse=True)
-        cutoff  = max(1, int(len(candidates_sorted) * LOOP_PROBE_TOP_PERCENTILE))
-        eligible = candidates_sorted[:cutoff]
-
-        total = len(eligible)
-        logger.info(
-            f"[loop-probe] {total} stream(s) eligible for loop probe "
-            f"(top {int(LOOP_PROBE_TOP_PERCENTILE * 100)}% of {len(candidates_sorted)} "
-            f"scoring >= {LOOP_PROBE_SCORE_THRESHOLD}) — running in parallel"
-        )
-
-        # Build a mutable streams_detail dict for the loop probe phase.
-        # Reuse the snapshot passed in from quality analysis (preserves specs/scores
-        # for non-probed streams). Mark eligible streams as 'probing' so the UI
-        # shows which streams are actively being tested.
-        # Keyed by stream_id for O(1) updates inside _probe_one threads.
-        probe_detail: dict = {}
-        if streams_detail:
-            for entry in streams_detail:
-                sid = entry.get('id') or entry.get('stream_id')
-                if sid is not None:
-                    probe_detail[sid] = dict(entry)  # shallow copy — safe to mutate
-
-        eligible_ids = {s.get('stream_id') for s in eligible}
-        probe_start = datetime.now().isoformat()
-        for sid, entry in probe_detail.items():
-            if sid in eligible_ids:
-                entry['status'] = 'probing'
-                entry['started_at'] = probe_start
-
-        # Reset progress bar for loop testing phase so the UI reflects
-        # what's happening rather than showing a frozen 100% from quality analysis.
-        if channel_id:
-            self.progress.update(
-                channel_id=channel_id,
-                channel_name=channel_name,
-                current=0,
-                total=total,
-                status='analyzing',
-                step='Loop testing',
-                step_detail=f'Probing {total} stream(s) for looping content',
-                streams_detail=list(probe_detail.values()) if probe_detail else None,
-                stream_duration=probe_duration
-            )
-
-        global_limit = self.config.get('concurrent_streams.global_limit', 10)
-        account_limiter = get_account_limiter()
-        udi = get_udi_manager()
-        results_lock = threading.Lock()
-        completed = [0]
-
-        def _probe_one(stream: dict) -> None:
-            """Run one loop probe with account slot acquire/release."""
-            stream_url  = stream.get('stream_url', '')
-            stream_name = stream.get('stream_name', 'Unknown')
-            stream_id   = stream.get('stream_id')
-            score       = stream.get('score', 0)
-
-            # Resolve numeric account ID from UDI.
-            # analyzed dicts carry stream_id from quality analysis — use that
-            # to look up the raw stream record which has m3u_account_id.
-            account_id = None
-            try:
-                raw_stream = udi.get_stream_by_id(int(stream_id)) if stream_id else None
-                if raw_stream:
-                    # SQL storage uses m3u_account_id; AccountStreamLimiter
-                    # expects the integer under the key 'm3u_account'
-                    account_id = raw_stream.get('m3u_account_id') or raw_stream.get('m3u_account')
-            except Exception:
-                pass
-
-            # Build a short readable tag for log messages
-            try:
-                from urllib.parse import urlparse as _up
-                _p    = _up(stream_url)
-                _segs = [seg for seg in _p.path.split('/') if seg]
-                tag   = f"{_p.hostname}/{_segs[-1]}" if _segs else (_p.hostname or stream_url[:20])
-            except Exception:
-                tag = stream_url[:30]
-
-            # Acquire account slot — same mechanism used by quality analysis.
-            # Timeout of 60s: if the account is saturated (e.g. live viewers
-            # consuming all slots) we skip rather than block indefinitely.
-            acquired, reason = account_limiter.acquire(account_id, timeout=60)
-            if not acquired:
-                logger.info(
-                    f"[loop-probe:{tag}] Skipping '{stream_name}' — "
-                    f"account slot unavailable ({reason})"
-                )
-                return
-
-            try:
-                logger.info(
-                    f"[loop-probe:{tag}] Probing '{stream_name}' "
-                    f"(ID: {stream_id}, score: {score:.2f})"
-                )
-                loop_detected, loop_duration, frames = _probe_stream_for_loops(
-                    url=stream_url,
-                    stream_tag=tag,
-                    user_agent=user_agent,
-                )
-                stream['loop_detected']      = loop_detected
-                stream['loop_duration_secs'] = loop_duration
-                stream['loop_probe_ran']     = True
-
-            except Exception as e:
-                logger.error(
-                    f"[loop-probe:{tag}] Probe failed for '{stream_name}': {e}"
-                )
-                # loop_detected remains None — distinguishable from clean (False)
-                # or detected (True)
-            finally:
-                account_limiter.release(account_id)
-                with results_lock:
-                    completed[0] += 1
-                    logger.info(
-                        f"[loop-probe] Completed {completed[0]}/{total}: {stream_name}"
-                    )
-                    # Update this stream's entry in probe_detail so the grid
-                    # reflects the probe outcome immediately.
-                    if probe_detail and stream_id in probe_detail:
-                        loop_result = stream.get('loop_detected')
-                        if loop_result is True:
-                            probe_detail[stream_id]['status'] = 'loop_detected'
-                        else:
-                            probe_detail[stream_id]['status'] = 'completed'
-
-                    if channel_id:
-                        self.progress.update(
-                            channel_id=channel_id,
-                            channel_name=channel_name,
-                            current=completed[0],
-                            total=total,
-                            status='analyzing',
-                            step='Loop testing',
-                            step_detail=f'Completed {completed[0]}/{total}: {stream_name}',
-                            streams_detail=list(probe_detail.values()) if probe_detail else None,
-                            stream_duration=probe_duration
-                        )
-
-        with ThreadPoolExecutor(max_workers=global_limit) as executor:
-            futures = {executor.submit(_probe_one, stream): stream for stream in eligible}
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    stream = futures[future]
-                    logger.error(
-                        f"[loop-probe] Unhandled error for stream "
-                        f"{stream.get('stream_name', 'Unknown')}: {e}"
-                    )
-
-        logger.info(f"[loop-probe] Parallel probe complete — {completed[0]}/{total} streams probed")
-
-        # Apply score penalty to confirmed looping streams.
-        # Only fires when loop_penalty is non-zero and loop_detected is True.
-        # Score is floored at 0.0 — looping is bad but the stream still exists.
-        if loop_penalty < 0.0:
-            penalised = 0
-            for stream in analyzed_streams:
-                if stream.get('loop_detected') is True:
-                    original = stream.get('score', 0.0)
-                    stream['score'] = round(max(0.0, original + loop_penalty), 2)
-                    stream['loop_score_penalty'] = loop_penalty
-                    logger.info(
-                        f"[loop-probe] Penalty applied to '{stream.get('stream_name', 'Unknown')}': "
-                        f"{original:.2f} → {stream['score']:.2f} (penalty={loop_penalty:+.2f})"
-                    )
-                    penalised += 1
-            if penalised:
-                logger.info(f"[loop-probe] Score penalty applied to {penalised} looping stream(s)")
-
     def _calculate_stream_score(self, stream_data: Dict, priority_m3u_ids: List[int] = None, priority_mode: str = 'absolute', scoring_weights: Dict = None) -> float:
         """Calculate a quality score for a stream based on analysis.
         
@@ -3853,8 +3501,8 @@ class StreamCheckerService:
                     from apps.automation.automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
-                    # Run validation scoped to this channel only
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams(channel_id=channel_id)
+                    # Run validation - respects automation_controls.remove_non_matching_streams setting
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
                     if validation_results.get("streams_removed", 0) > 0:
                         logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams")
                     else:
@@ -3873,9 +3521,9 @@ class StreamCheckerService:
                     from apps.automation.automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
                     
-                    # Run discovery scoped to this channel only
+                    # Run full discovery (this will add new matching streams but skip dead ones)
                     # Skip automatic check trigger since we'll perform the check explicitly in Step 6
-                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True, channel_id=channel_id)
+                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
                     if assignments:
                         logger.info(f"✓ Stream matching completed")
                     else:
@@ -3913,11 +3561,7 @@ class StreamCheckerService:
             else:
                 logger.info(f"Step 6/6: Skipping stream checking (checking is disabled for this channel)")
             
-            # Gather statistics after check using centralized utility.
-            # Refresh UDI cache first so stream_stats reflect the post-probe
-            # database state — loop fields written by _update_stream_stats
-            # won't be visible otherwise.
-            udi.refresh_streams()
+            # Gather statistics after check using centralized utility
             streams = fetch_channel_streams(channel_id)
             total_streams = len(streams)
             
@@ -3933,16 +3577,8 @@ class StreamCheckerService:
                 'stream_details': []
             }
             
-            # Sort streams by persisted quality_score descending so the
-            # highest-ranked streams (including any that were loop-probed)
-            # appear first. No arbitrary cap — all streams are included so
-            # loop results are never hidden by a slice.
-            streams_sorted = sorted(
-                streams,
-                key=lambda s: (s.get('stream_stats') or {}).get('quality_score') or 0,
-                reverse=True
-            )
-            for stream in streams_sorted:
+            # Add top stream details using centralized extraction
+            for stream in streams[:10]:  # Top 10 streams
                 # Extract stats using centralized utility
                 extracted_stats = extract_stream_stats(stream)
                 formatted_stats = format_stream_stats_for_display(extracted_stats)
@@ -3980,8 +3616,7 @@ class StreamCheckerService:
                 if m3u_account_id:
                     m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
                 
-                # Build stream detail dict — include loop results if persisted
-                stream_detail = {
+                check_stats['stream_details'].append({
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
                     'resolution': formatted_stats['resolution'],
@@ -3991,18 +3626,7 @@ class StreamCheckerService:
                     'score': score,
                     'm3u_account': m3u_account_name,
                     'hdr_format': extracted_stats.get('hdr_format')
-                }
-
-                # Loop detection results are persisted to stream_stats by
-                # _prepare_stream_stats_for_batch / _update_stream_stats.
-                # Read them back here so the single-channel changelog entry
-                # shows the Loop column the same as the batch path.
-                if stream_stats.get('loop_probe_ran'):
-                    stream_detail['loop_probe_ran']     = True
-                    stream_detail['loop_detected']      = stream_stats.get('loop_detected')
-                    stream_detail['loop_duration_secs'] = stream_stats.get('loop_duration_secs')
-
-                check_stats['stream_details'].append(stream_detail)
+                })
             
             # Calculate duration
             end_time = time_module.time()

@@ -636,24 +636,13 @@ class SchedulingService:
                 regex_matcher = self._get_regex_matcher()
                 
                 # Get match config
-                group_id = event.get('group_id') if event.get('group_id') is not None else event.get('channel_group_id')
-                if group_id is None:
-                    try:
-                        from apps.udi import get_udi_manager
-                        udi = get_udi_manager()
-                        channel_data = udi.get_channel_by_id(int(channel_id))
-                        if isinstance(channel_data, dict):
-                            group_id = channel_data.get('group_id') if channel_data.get('group_id') is not None else channel_data.get('channel_group_id')
-                    except Exception:
-                        group_id = None
-
-                match_config = regex_matcher.get_channel_match_config(str(channel_id), group_id)
+                match_config = regex_matcher.get_channel_match_config(str(channel_id))
                 match_by_tvg_id = match_config.get('match_by_tvg_id', False)
                 
                 # Get regex filter with appropriate default
                 # Default to None so we don't match everything by default if no rules exist
                 default_regex = None
-                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex, group_id=group_id)
+                regex_filter = regex_matcher.get_channel_regex_filter(str(channel_id), default=default_regex)
                 
                 logger.info(f"Using regex filter for channel {channel_id}: {regex_filter}, match_by_tvg_id={match_by_tvg_id}")
             except Exception as e:
