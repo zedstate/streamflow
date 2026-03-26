@@ -264,3 +264,7 @@ export const schedulingAPI = {
 export const versionAPI = {
   getVersion: () => api.get('/version'),
 };
+
+export const environmentAPI = {
+  getEnvironment: () => api.get('/environment'),
+};
