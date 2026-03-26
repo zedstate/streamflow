@@ -178,8 +178,10 @@ class AutomationConfigManager:
         from apps.database.models import AutomationProfile
         from apps.database.connection import get_session
         if not profile_id: return None
-        try: pid = int(profile_id)
-        except: return None
+        try:
+            pid = int(profile_id)
+        except (TypeError, ValueError):
+            return None
         session = get_session()
         try:
             p = session.query(AutomationProfile).filter(AutomationProfile.id == pid).first()
@@ -206,8 +208,9 @@ class AutomationConfigManager:
             session.add(p)
             session.commit()
             return str(p.id)
-        except:
+        except Exception as e:
             session.rollback()
+            logger.error("Failed to create automation profile: %s", e)
             return None
         finally:
             session.close()
@@ -215,8 +218,10 @@ class AutomationConfigManager:
     def update_profile(self, profile_id: str, profile_data: Dict) -> bool:
         from apps.database.models import AutomationProfile
         from apps.database.connection import get_session
-        try: pid = int(profile_id)
-        except: return False
+        try:
+            pid = int(profile_id)
+        except (TypeError, ValueError):
+            return False
         session = get_session()
         try:
             p = session.query(AutomationProfile).filter(AutomationProfile.id == pid).first()
@@ -231,8 +236,9 @@ class AutomationConfigManager:
             p.extra_settings = current_extra
             session.commit()
             return True
-        except:
+        except Exception as e:
             session.rollback()
+            logger.error("Failed to update automation profile %s: %s", profile_id, e)
             return False
         finally:
             session.close()
@@ -240,8 +246,10 @@ class AutomationConfigManager:
     def delete_profile(self, profile_id: str) -> bool:
         from apps.database.models import AutomationProfile
         from apps.database.connection import get_session
-        try: pid = int(profile_id)
-        except: return False
+        try:
+            pid = int(profile_id)
+        except (TypeError, ValueError):
+            return False
         session = get_session()
         try:
             p = session.query(AutomationProfile).filter(AutomationProfile.id == pid).first()
@@ -253,8 +261,9 @@ class AutomationConfigManager:
                 if assignments[c] == str(pid): del assignments[c]
             self._set_config_dict("channel_period_assignments", assignments)
             return True
-        except:
+        except Exception as e:
             session.rollback()
+            logger.error("Failed to delete automation profile %s: %s", profile_id, e)
             return False
         finally:
             session.close()
@@ -413,11 +422,15 @@ class AutomationConfigManager:
     def get_period(self, period_id: str) -> Optional[Dict]:
         from apps.database.models import AutomationPeriod
         from apps.database.connection import get_session
-        try: pid = int(period_id)
-        except: return None
+        try:
+            pid = int(period_id)
+        except (TypeError, ValueError):
+            return None
         session = get_session()
-        try: return self._period_to_dict(session.query(AutomationPeriod).get(pid))
-        finally: session.close()
+        try:
+            return self._period_to_dict(session.query(AutomationPeriod).get(pid))
+        finally:
+            session.close()
 
     def create_period(self, period_data: Dict) -> Optional[str]:
         from apps.database.models import AutomationPeriod
@@ -440,14 +453,20 @@ class AutomationConfigManager:
             session.add(p)
             session.commit()
             return str(p.id)
-        except: session.rollback(); return None
-        finally: session.close()
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to create automation period: %s", e)
+            return None
+        finally:
+            session.close()
 
     def update_period(self, period_id: str, period_data: Dict) -> bool:
         from apps.database.models import AutomationPeriod
         from apps.database.connection import get_session
-        try: pid = int(period_id)
-        except: return False
+        try:
+            pid = int(period_id)
+        except (TypeError, ValueError):
+            return False
         session = get_session()
         try:
             p = session.query(AutomationPeriod).get(pid)
@@ -469,15 +488,22 @@ class AutomationConfigManager:
             elif "cron_schedule" in period_data:
                 p.cron_schedule = str(period_data["cron_schedule"])
 
-            session.commit(); return True
-        except: session.rollback(); return False
-        finally: session.close()
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to update automation period %s: %s", period_id, e)
+            return False
+        finally:
+            session.close()
 
     def delete_period(self, period_id: str) -> bool:
         from apps.database.models import AutomationPeriod
         from apps.database.connection import get_session
-        try: pid = int(period_id)
-        except: return False
+        try:
+            pid = int(period_id)
+        except (TypeError, ValueError):
+            return False
         session = get_session()
         try:
             p = session.query(AutomationPeriod).get(pid)
@@ -517,8 +543,12 @@ class AutomationConfigManager:
                     self._set_config_dict("group_period_assignments", group_assignments)
 
             return True
-        except: session.rollback(); return False
-        finally: session.close()
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to delete automation period %s: %s", period_id, e)
+            return False
+        finally:
+            session.close()
 
     def assign_period_to_channels(self, period_id: str, channel_ids: List[int], profile_id: str, replace: bool = False) -> bool:
         assignments = self._get_config_dict("channel_period_assignments", {})
@@ -602,11 +632,16 @@ class AutomationConfigManager:
             from apps.udi import get_udi_manager
             udi = get_udi_manager()
             udi_channels = udi.get_channels() or []
-            valid_channel_ids = {
-                int(ch.get('id'))
-                for ch in udi_channels
-                if isinstance(ch, dict) and ch.get('id') is not None
-            }
+            # When UDI has no loaded channel inventory (for example in isolated
+            # tests or before initialization), do not filter explicit assignments.
+            if udi_channels:
+                valid_channel_ids = {
+                    int(ch.get('id'))
+                    for ch in udi_channels
+                    if isinstance(ch, dict) and ch.get('id') is not None
+                }
+            else:
+                valid_channel_ids = None
         except Exception:
             valid_channel_ids = None
 

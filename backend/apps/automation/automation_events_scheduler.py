@@ -22,6 +22,11 @@ logger = setup_logging(__name__)
 CACHE_VALIDITY_SECONDS = 300  # 5 minutes
 CACHE_STALENESS_THRESHOLD_SECONDS = 3600  # 1 hour
 
+# Compatibility constants retained for legacy tests/tools that monkeypatch
+# scheduler cache paths. Cache persistence now uses database settings.
+CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
+EVENTS_CACHE_FILE = CONFIG_DIR / 'automation_events_cache.json'
+
 # Try to import croniter for cron expression support
 try:
     from croniter import croniter
