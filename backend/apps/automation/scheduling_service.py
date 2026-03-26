@@ -558,7 +558,8 @@ class SchedulingService:
                 # Execute traditional stream check
                 result = stream_checker_service.check_single_channel(
                     channel_id, 
-                    program_name=program_title
+                    program_name=program_title,
+                    is_epg_scheduled=True
                 )
                 success = result.get('success', False)
                 

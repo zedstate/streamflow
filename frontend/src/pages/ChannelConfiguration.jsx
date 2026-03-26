@@ -14,7 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelOrderAPI, automationAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2, ArrowRight, Clock, Calendar } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Edit2, ArrowRight, Clock, Calendar, CalendarClock } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
@@ -1192,7 +1192,7 @@ function SortableChannelItem({ channel }) {
   )
 }
 
-function RegexTableRow({ channel, group, groups, groupsConfig, profiles, patterns, selectedChannels, onToggleChannel, onEditRegex, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel, m3uAccounts, onUpdateMatchSettings, onPreviewMatch, onRefresh }) {
+function RegexTableRow({ channel, group, groups, groupsConfig, profiles, patterns, selectedChannels, onToggleChannel, onEditRegex, onDeletePattern, expandedRowId, onToggleExpanded, onCheckChannel, checkingChannel, m3uAccounts, onUpdateMatchSettings, onPreviewMatch, onRefresh, onAssignEpgProfile }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
   const [channelPeriods, setChannelPeriods] = useState([])
@@ -1442,6 +1442,35 @@ function RegexTableRow({ channel, group, groups, groupsConfig, profiles, pattern
               }}
             />
           </div>
+
+          <Separator />
+
+          {/* EPG Scheduled Profile */}
+          {onAssignEpgProfile && (
+            <div>
+              <h4 className="font-medium text-sm flex items-center gap-2 mb-2">
+                <CalendarClock className="h-4 w-4" />
+                EPG Scheduled Profile
+              </h4>
+              <Select
+                value={channel.channel_epg_scheduled_profile_id || ''}
+                onValueChange={(v) => onAssignEpgProfile(channel.id, v || null)}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Use period profile (default)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">— Use period profile (default) —</SelectItem>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                When set, this profile overrides the automation period profile for EPG scheduled stream checks.
+              </p>
+            </div>
+          )}
 
           <Separator />
 
@@ -1904,6 +1933,7 @@ export default function ChannelConfiguration() {
   // Automation Profile state
   const [profiles, setProfiles] = useState([])
   const [assignProfileId, setAssignProfileId] = useState('')
+  const [assignEpgProfileId, setAssignEpgProfileId] = useState('')
 
   // M3U account filtering state for regex patterns
   const [m3uAccounts, setM3uAccounts] = useState([])  // All M3U accounts
@@ -1932,12 +1962,15 @@ export default function ChannelConfiguration() {
   const [groupAssignProfileDialogOpen, setGroupAssignProfileDialogOpen] = useState(false)
   const [groupAssignPeriodsDialogOpen, setGroupAssignPeriodsDialogOpen] = useState(false)
   const [groupAssignMatchingDialogOpen, setGroupAssignMatchingDialogOpen] = useState(false)
+  const [groupAssignEpgProfileDialogOpen, setGroupAssignEpgProfileDialogOpen] = useState(false)
   const [selectedGroupForConfig, setSelectedGroupForConfig] = useState(null)
   const [groupProfileId, setGroupProfileId] = useState('')
   const [groupPeriodAssignments, setGroupPeriodAssignments] = useState([]) // [{period_id, profile_id}]
   const [savingGroupProfile, setSavingGroupProfile] = useState(false)
   const [savingGroupPeriods, setSavingGroupPeriods] = useState(false)
   const [savingGroupMatching, setSavingGroupMatching] = useState(false)
+  const [groupEpgProfileId, setGroupEpgProfileId] = useState('')
+  const [savingGroupEpgProfile, setSavingGroupEpgProfile] = useState(false)
 
   // Edit common regex dialog state
   const [editCommonDialogOpen, setEditCommonDialogOpen] = useState(false)
@@ -2181,6 +2214,42 @@ export default function ChannelConfiguration() {
     }
   }
 
+  const handleBatchAssignEpgProfile = async (profileId) => {
+    if (selectedChannels.size === 0) {
+      toast({
+        title: "No Channels Selected",
+        description: "Please select at least one channel",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      setLoading(true)
+      const channelIds = Array.from(selectedChannels)
+      const targetProfileId = profileId === 'none' ? null : profileId
+
+      await automationAPI.assignEpgChannels(channelIds, targetProfileId)
+
+      toast({
+        title: "Success",
+        description: `EPG scheduled profile ${targetProfileId ? 'assigned to' : 'removed from'} ${channelIds.length} channels`,
+      })
+
+      loadData()
+    } catch (err) {
+      console.error('Failed to batch assign EPG scheduled profile:', err)
+      toast({
+        title: "Error",
+        description: "Failed to assign EPG scheduled profile to channels",
+        variant: "destructive"
+      })
+    } finally {
+      setLoading(false)
+      setAssignEpgProfileId('')
+    }
+  }
+
   const handleBatchAssignPeriods = () => {
     if (selectedChannels.size === 0) {
       toast({
@@ -2255,6 +2324,35 @@ export default function ChannelConfiguration() {
     setSelectedGroupForConfig(group)
     setGroupPeriodAssignments([])
     setGroupAssignPeriodsDialogOpen(true)
+  }
+
+  const handleOpenGroupAssignEpgProfile = (group) => {
+    setSelectedGroupForConfig(group)
+    setGroupEpgProfileId('')
+    setGroupAssignEpgProfileDialogOpen(true)
+  }
+
+  const handleSaveGroupEpgProfile = async () => {
+    if (!selectedGroupForConfig) return
+    try {
+      setSavingGroupEpgProfile(true)
+      await automationAPI.assignEpgGroup(selectedGroupForConfig.id, groupEpgProfileId || null)
+      toast({
+        title: "Success",
+        description: groupEpgProfileId
+          ? `EPG scheduled profile assigned to group "${selectedGroupForConfig.name}"`
+          : `EPG scheduled profile removed from group "${selectedGroupForConfig.name}"`
+      })
+      setGroupAssignEpgProfileDialogOpen(false)
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to assign EPG scheduled profile to group",
+        variant: "destructive"
+      })
+    } finally {
+      setSavingGroupEpgProfile(false)
+    }
   }
 
   const handleOpenGroupAssignMatching = (group) => {
@@ -2374,6 +2472,31 @@ export default function ChannelConfiguration() {
       toast({
         title: "Error",
         description: "Failed to update match settings",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleAssignEpgProfile = async (channelId, profileId) => {
+    try {
+      await automationAPI.assignEpgChannel(channelId, profileId)
+      // Update channel state locally so the dropdown reflects the change immediately
+      setChannels(prev => prev.map(ch =>
+        ch.id === channelId
+          ? { ...ch, channel_epg_scheduled_profile_id: profileId || null, epg_scheduled_profile_id: profileId || null }
+          : ch
+      ))
+      toast({
+        title: "Success",
+        description: profileId
+          ? "EPG scheduled profile assigned to channel"
+          : "EPG scheduled profile removed from channel"
+      })
+    } catch (err) {
+      console.error('Failed to assign EPG scheduled profile:', err)
+      toast({
+        title: "Error",
+        description: "Failed to assign EPG scheduled profile",
         variant: "destructive"
       })
     }
@@ -3609,6 +3732,31 @@ export default function ChannelConfiguration() {
 
                     <Separator orientation="vertical" className="h-6 hidden lg:block" />
 
+                    {/* Section: EPG Profile */}
+                    <div className="flex items-center gap-3">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">EPG Profile</div>
+                      <Select
+                        value={assignEpgProfileId}
+                        onValueChange={(v) => {
+                          setAssignEpgProfileId(v)
+                          handleBatchAssignEpgProfile(v)
+                        }}
+                        disabled={selectedChannels.size === 0}
+                      >
+                        <SelectTrigger className="h-8 w-[160px] text-xs">
+                          <SelectValue placeholder="Assign EPG profile…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">— Remove EPG profile —</SelectItem>
+                          {profiles.map((profile) => (
+                            <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <Separator orientation="vertical" className="h-6 hidden lg:block" />
+
                     <div className="flex items-center gap-2 ml-auto">
                       <Badge variant="secondary" className="whitespace-nowrap text-[10px]">
                         {selectedChannels.size} selected
@@ -3739,6 +3887,7 @@ export default function ChannelConfiguration() {
                               onUpdateMatchSettings={handleUpdateMatchSettings}
                               onPreviewMatch={handlePreviewMatch}
                               onRefresh={loadData}
+                              onAssignEpgProfile={handleAssignEpgProfile}
                             />
                           )
                         })}
@@ -4118,6 +4267,20 @@ export default function ChannelConfiguration() {
                                   </TooltipTrigger>
                                   <TooltipContent>Configure group regex and TVG-ID matching</TooltipContent>
                                 </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenGroupAssignEpgProfile(group)}
+                                      className="h-8"
+                                    >
+                                      <CalendarClock className="h-4 w-4 mr-1" />
+                                      EPG Profile
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Assign EPG scheduled profile to group</TooltipContent>
+                                </Tooltip>
                               </div>
                             </div>
                           </CardContent>
@@ -4198,6 +4361,50 @@ export default function ChannelConfiguration() {
             saving={savingGroupMatching}
           />
         )}
+
+        {/* Group Assign EPG Profile Dialog */}
+        <Dialog open={groupAssignEpgProfileDialogOpen} onOpenChange={setGroupAssignEpgProfileDialogOpen}>
+          <DialogContent className="sm:max-w-[450px]">
+            <DialogHeader>
+              <DialogTitle>Assign EPG Scheduled Profile to Group</DialogTitle>
+              <DialogDescription>
+                {selectedGroupForConfig
+                  ? `Assign an EPG scheduled profile to group "${selectedGroupForConfig.name}". When an EPG scheduled check fires, channels in this group will use this profile instead of their automation period profile.`
+                  : ''}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>EPG Scheduled Profile</Label>
+                <Select value={groupEpgProfileId} onValueChange={setGroupEpgProfileId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a profile (or clear to remove)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">— Remove EPG profile assignment —</SelectItem>
+                    {profiles.map((profile) => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Select a profile to use for EPG scheduled stream checks, or choose the empty option to remove the current assignment.
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setGroupAssignEpgProfileDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveGroupEpgProfile} disabled={savingGroupEpgProfile}>
+                {savingGroupEpgProfile && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Regex Pattern Dialog */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
