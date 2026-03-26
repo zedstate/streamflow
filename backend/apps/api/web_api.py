@@ -4543,12 +4543,18 @@ def assign_epg_scheduled_profile_channels():
         return jsonify({"error": "Internal Server Error"}), 500
 
 
-@app.route('/api/automation/assign/epg-profile/group', methods=['POST'])
+@app.route('/api/automation/assign/epg-profile/group', methods=['GET', 'POST'])
 @log_function_call
 def assign_epg_scheduled_profile_group():
-    """Assign an EPG scheduled automation profile to a channel group."""
+    """GET: Return all group→EPG-profile assignments.
+    POST: Assign (or remove) an EPG scheduled automation profile for a channel group."""
     try:
         automation_config = get_automation_config_manager()
+
+        if request.method == 'GET':
+            assignments = automation_config.get_all_group_epg_scheduled_assignments()
+            return jsonify(assignments), 200
+
         data = request.json
 
         group_id = data.get('group_id')
@@ -6227,6 +6233,33 @@ def create_acestream_channel_session_impl(
         channel_tvg_id = channel.get('tvg_id')
         logo_id = channel.get('logo_id')
         channel_logo_url = f"/api/channels/logos/{logo_id}/cache" if logo_id else channel.get('logo_url')
+
+        # ── Check for an existing AceStream session for this channel ──
+        # If one is already running, update its EPG info instead of creating a duplicate.
+        store = _ace_channel_sessions_store()
+        for existing_sid, existing_session in store.items():
+            if existing_session.get('channel_id') == int(channel_id):
+                if epg_event_title is not None:
+                    existing_session['epg_event_title'] = epg_event_title
+                    existing_session['epg_event_description'] = epg_event_description
+                    existing_session['epg_event_start'] = epg_event_start
+                    existing_session['epg_event_end'] = epg_event_end
+                    existing_session['epg_event_id'] = epg_event_id
+                    _save_ace_channel_sessions_store(store)
+                    logger.info(
+                        f"Updated EPG info on existing AceStream session {existing_sid} "
+                        f"for channel {channel_id}: '{epg_event_title}'"
+                    )
+                else:
+                    logger.info(
+                        f"Reusing existing AceStream session {existing_sid} for channel {channel_id}"
+                    )
+                return {
+                    'session_id': existing_sid,
+                    'message': 'Reused existing AceStream channel session',
+                    'monitor_count': len(existing_session.get('entries', [])),
+                }, 200
+
 
         # ── Stream discovery: always load from channel's automation profile ──
         # Mirrors what create_session_from_event does for FFmpeg-based sessions.

@@ -347,6 +347,11 @@ class AutomationConfigManager:
             assignments[gid] = str(profile_id)
         return self._set_config_dict("group_epg_scheduled_assignments", assignments)
 
+    def get_all_group_epg_scheduled_assignments(self) -> Dict[str, str]:
+        """Return all group→EPG-profile assignments as {group_id_str: profile_id_str}."""
+        result = self._get_config_dict("group_epg_scheduled_assignments", {})
+        return result if isinstance(result, dict) else {}
+
     def get_channel_epg_scheduled_assignment(self, channel_id: int) -> Optional[str]:
         return self._get_config_dict("channel_epg_scheduled_assignments", {}).get(str(channel_id))
 
