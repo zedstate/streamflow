@@ -1312,10 +1312,10 @@ function RegexTableRow({ channel, group, groups, groupsConfig, profiles, pattern
             <div className="truncate">{group?.name || '-'}</div>
             <div className="flex items-center gap-1 mt-1 flex-wrap">
               <Badge variant={isProfileChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
-                Profile: {isProfileChannelOverride ? 'Override' : isProfileGroupBased ? 'Group' : 'Default'}
+                EPG: {isProfileChannelOverride ? 'Override' : isProfileGroupBased ? 'Group' : 'Default'}
               </Badge>
               <Badge variant={isPeriodChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
-                Periods: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
+                Automation: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
               </Badge>
             </div>
           </div>
@@ -2334,6 +2334,8 @@ export default function ChannelConfiguration() {
           : `Automation profile removed from group "${selectedGroupForConfig.name}"`
       })
       setGroupAssignProfileDialogOpen(false)
+      await loadData()
+      await loadGroupsConfig()
     } catch (err) {
       toast({
         title: "Error",
@@ -2370,6 +2372,7 @@ export default function ChannelConfiguration() {
           : `EPG scheduled profile removed from group "${selectedGroupForConfig.name}"`
       })
       setGroupAssignEpgProfileDialogOpen(false)
+      await loadData()
       await loadGroupsConfig()
     } catch (err) {
       toast({
