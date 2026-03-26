@@ -577,11 +577,25 @@ def health_check_stripped():
 def get_version():
     """Get application version."""
     try:
-        version_file = Path(__file__).parent / 'version.txt'
-        if version_file.exists():
-            version = version_file.read_text().strip()
-        else:
-            version = "dev-unknown"
+        # Prefer explicit env override, then try known file locations used by CI/builds.
+        env_version = os.getenv('STREAMFLOW_VERSION')
+        if env_version:
+            return jsonify({"version": env_version})
+
+        candidate_files = [
+            Path(__file__).parent / 'version.txt',      # legacy location: /app/apps/api/version.txt
+            Path(__file__).parents[2] / 'version.txt',  # CI location after Docker COPY: /app/version.txt
+            Path(__file__).parents[2] / 'static' / 'version.txt',  # frontend build artifact
+        ]
+
+        version = "dev-unknown"
+        for version_file in candidate_files:
+            if version_file.exists():
+                value = version_file.read_text().strip()
+                if value:
+                    version = value
+                    break
+
         return jsonify({"version": version})
     except Exception as e:
         logger.error(f"Failed to read version: {e}")
