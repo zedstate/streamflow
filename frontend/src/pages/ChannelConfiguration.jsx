@@ -2269,20 +2269,31 @@ export default function ChannelConfiguration() {
     try {
       setLoadingGroupsConfig(true)
       const configMap = {}
-      await Promise.all(groups.map(async (group) => {
-        try {
-          const [periodsRes, regexCfgRes] = await Promise.all([
-            automationAPI.getGroupPeriods(group.id),
-            regexAPI.getGroupConfig(group.id).catch(() => ({ data: {} }))
-          ])
-          configMap[group.id] = {
-            periods: periodsRes.data || [],
-            matching: regexCfgRes.data || {}
+      const [, epgAssignmentsRes] = await Promise.all([
+        Promise.all(groups.map(async (group) => {
+          try {
+            const [periodsRes, regexCfgRes] = await Promise.all([
+              automationAPI.getGroupPeriods(group.id),
+              regexAPI.getGroupConfig(group.id).catch(() => ({ data: {} }))
+            ])
+            configMap[group.id] = {
+              periods: periodsRes.data || [],
+              matching: regexCfgRes.data || {}
+            }
+          } catch {
+            configMap[group.id] = { periods: [], matching: {} }
           }
-        } catch {
+        })),
+        automationAPI.getGroupEpgAssignments().catch(() => ({ data: {} }))
+      ])
+      const epgAssignments = epgAssignmentsRes.data || {}
+      // Merge EPG profile assignments into configMap
+      groups.forEach((group) => {
+        if (!configMap[group.id]) {
           configMap[group.id] = { periods: [], matching: {} }
         }
-      }))
+        configMap[group.id].epg_profile_id = epgAssignments[String(group.id)] || null
+      })
       setGroupsConfig(configMap)
     } catch (err) {
       console.error('Failed to load groups config:', err)
@@ -2328,7 +2339,8 @@ export default function ChannelConfiguration() {
 
   const handleOpenGroupAssignEpgProfile = (group) => {
     setSelectedGroupForConfig(group)
-    setGroupEpgProfileId('')
+    const currentAssignment = (groupsConfig[group.id] || {}).epg_profile_id || ''
+    setGroupEpgProfileId(currentAssignment)
     setGroupAssignEpgProfileDialogOpen(true)
   }
 
@@ -2344,6 +2356,7 @@ export default function ChannelConfiguration() {
           : `EPG scheduled profile removed from group "${selectedGroupForConfig.name}"`
       })
       setGroupAssignEpgProfileDialogOpen(false)
+      await loadGroupsConfig()
     } catch (err) {
       toast({
         title: "Error",
@@ -4179,6 +4192,9 @@ export default function ChannelConfiguration() {
                         : []
                       const matchingPatternCount = matchingPatterns.length
                       const groupTvgEnabled = Boolean(matching.match_by_tvg_id)
+                      const groupEpgProfile = config.epg_profile_id
+                        ? (profiles || []).find(p => String(p.id) === String(config.epg_profile_id))
+                        : null
                       return (
                         <Card key={group.id} className="border">
                           <CardContent className="p-4">
@@ -4235,6 +4251,19 @@ export default function ChannelConfiguration() {
                                     </Badge>
                                   </div>
                                 </div>
+
+                                {/* EPG Profile section */}
+                                {groupEpgProfile && (
+                                  <div className="space-y-1 mt-4">
+                                    <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
+                                      EPG Profile
+                                    </div>
+                                    <Badge variant="outline" className="gap-1 text-xs">
+                                      <CalendarClock className="h-3 w-3" />
+                                      {groupEpgProfile.name}
+                                    </Badge>
+                                  </div>
+                                )}
                               </div>
 
                               {/* Action buttons */}

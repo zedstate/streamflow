@@ -544,8 +544,18 @@ class SchedulingService:
                         # Start the session
                         from apps.stream.stream_session_manager import get_session_manager
                         session_manager = get_session_manager()
-                        
-                        if session_manager.start_session(session_id):
+
+                        existing = session_manager.sessions.get(session_id)
+                        if existing and existing.is_active:
+                            # Session was already running (EPG fired while a monitoring
+                            # session for this channel was active); EPG info was updated
+                            # inside create_session – treat this as success.
+                            logger.info(
+                                f"Monitoring session {session_id} is already active for event "
+                                f"{event_id}; EPG info updated"
+                            )
+                            success = True
+                        elif session_manager.start_session(session_id):
                             logger.info(f"Started monitoring session {session_id} for event {event_id}")
                             success = True
                         else:
