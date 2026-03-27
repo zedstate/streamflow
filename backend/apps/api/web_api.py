@@ -1628,11 +1628,13 @@ def assign_automation_profile_channels():
     )
 
 
-@app.route('/api/automation/assign/group', methods=['POST'])
+@app.route('/api/automation/assign/group', methods=['GET', 'POST'])
 @log_function_call
 def assign_automation_profile_group():
-    """Assign an automation profile to a channel group."""
+    """GET: Return all group→automation-profile assignments.
+    POST: Assign (or remove) an automation profile for a channel group."""
     return assign_automation_profile_group_response(
+        method=request.method,
         payload=request.get_json(silent=True),
         get_automation_config_manager=get_automation_config_manager,
     )

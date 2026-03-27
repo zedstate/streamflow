@@ -377,12 +377,18 @@ def assign_automation_profile_channels_response(
 
 def assign_automation_profile_group_response(
     *,
+    method: str,
     payload: Optional[Dict[str, Any]],
     get_automation_config_manager: Callable[[], Any],
 ):
-    """Assign an automation profile to a channel group."""
+    """Get or assign/remove automation profile mappings for channel groups."""
     try:
         automation_config = get_automation_config_manager()
+
+        if method == "GET":
+            assignments = automation_config.get_all_group_assignments()
+            return jsonify(assignments), 200
+
         data = SingleEntityProfileAssignmentSchema.from_payload(payload or {}, entity_field="group_id")
         group_id = data.entity_id
         profile_id = data.profile_id

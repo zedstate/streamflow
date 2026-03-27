@@ -61,6 +61,7 @@ export const automationAPI = {
   assignChannel: (channelId, profileId) => api.post('/automation/assign/channel', { channel_id: channelId, profile_id: profileId }),
   assignChannels: (channelIds, profileId) => api.post('/automation/assign/channels', { channel_ids: channelIds, profile_id: profileId }),
   assignGroup: (groupId, profileId) => api.post('/automation/assign/group', { group_id: groupId, profile_id: profileId }),
+  getGroupAssignments: () => api.get('/automation/assign/group'),
 
   // EPG Scheduled Profile Assignments
   assignEpgChannel: (channelId, profileId) => api.post('/automation/assign/epg-profile/channel', { channel_id: channelId, profile_id: profileId }),

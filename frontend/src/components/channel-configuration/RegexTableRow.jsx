@@ -148,10 +148,10 @@ export function RegexTableRow({
             <div className="truncate">{group?.name || '-'}</div>
             <div className="flex items-center gap-1 mt-1 flex-wrap">
               <Badge variant={isProfileChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
-                EPG: {isProfileChannelOverride ? 'Override' : isProfileGroupBased ? 'Group' : 'Default'}
+                Profile: {isProfileChannelOverride ? 'Override' : isProfileGroupBased ? 'Group' : 'Default'}
               </Badge>
               <Badge variant={isPeriodChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
-                Automation: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
+                Periods: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
               </Badge>
             </div>
           </div>
