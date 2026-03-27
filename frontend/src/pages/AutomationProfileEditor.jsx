@@ -11,7 +11,6 @@ import { Badge } from '@/components/ui/badge.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
 import { Checkbox } from '@/components/ui/checkbox.jsx'
 import { Loader2, ArrowLeft, Save, AlertCircle, ArrowUp, ArrowDown, Check, GripVertical } from 'lucide-react'
-import { Slider } from '@/components/ui/slider.jsx'
 import { automationAPI, m3uAPI } from '@/services/api.js'
 import { useToast } from '@/hooks/use-toast.js'
 import { cn } from '@/lib/utils'
@@ -36,7 +35,6 @@ const DEFAULT_PROFILE = {
         remove_dead_streams: true,
         check_all_streams: false,
         loop_check_enabled: false,
-        max_loop_duration: 120,
         stream_limit: 0,
         min_resolution: 'any',
         min_fps: 0,
@@ -402,7 +400,7 @@ export default function AutomationProfileEditor() {
                         </div>
                     )}
 
-                    {/* Step 3: Stream Checking - Updated with Loop Duration Slider */}
+                    {/* Step 3: Stream Checking */}
                     {activeStep === 'stream_checking' && (
                         <div className="space-y-2 pb-6">
                             <p className="text-sm text-muted-foreground mb-6">
@@ -453,8 +451,6 @@ export default function AutomationProfileEditor() {
                                                     <p className="text-[10px] text-muted-foreground">When disabled, dead streams are kept in channel ordering during this profile&apos;s checks.</p>
                                                 </div>
                                             </div>
-
-                                            {/* Loop Check Toggle */}
                                             <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
                                                 <Switch
                                                     id="loop_check_enabled"
@@ -465,29 +461,6 @@ export default function AutomationProfileEditor() {
                                                     <Label htmlFor="loop_check_enabled" className="cursor-pointer font-medium">Check scored streams for looping?</Label>
                                                     <p className="text-[10px] text-muted-foreground">Checks top 25% of streams with a score greater than 0.50</p>
                                                 </div>
-                                            </div>
-
-                                            {/* New: Maximum Loop Duration Slider */}
-                                            <div className={`space-y-3 p-3 rounded-md border ${!profile.stream_checking.loop_check_enabled ? 'opacity-50' : ''}`}>
-                                                <div className="flex items-center justify-between">
-                                                    <Label className="text-sm font-medium">Maximum Loop Duration to Detect</Label>
-                                                    <span className="text-sm font-mono text-muted-foreground">
-                                                        {profile.stream_checking.max_loop_duration ?? 120}s
-                                                    </span>
-                                                </div>
-                                                <Slider
-                                                    id="max_loop_duration"
-                                                    min={10}
-                                                    max={240}
-                                                    step={10}
-                                                    disabled={!profile.stream_checking.loop_check_enabled}
-                                                    value={[profile.stream_checking.max_loop_duration ?? 120]}
-                                                    onValueChange={([val]) => updateProfile('stream_checking.max_loop_duration', val)}
-                                                />
-                                                <p className="text-[10px] text-muted-foreground">
-                                                    Detects loops up to {profile.stream_checking.max_loop_duration ?? 120}s in length.
-                                                    Will probe each stream for ~{Math.max(60, Math.min(720, (profile.stream_checking.max_loop_duration ?? 120) * 3))}s.
-                                                </p>
                                             </div>
 
                                             <div className="space-y-2">
