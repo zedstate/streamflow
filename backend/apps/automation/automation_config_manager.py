@@ -256,10 +256,84 @@ class AutomationConfigManager:
             if not p: return False
             session.delete(p)
             session.commit()
-            assignments = self._get_config_dict("channel_period_assignments", {})
-            for c in list(assignments.keys()):
-                if assignments[c] == str(pid): del assignments[c]
-            self._set_config_dict("channel_period_assignments", assignments)
+            pid_str = str(pid)
+
+            # Remove from channel-level profile assignments
+            channel_assignments = self._get_config_dict("channel_assignments", {})
+            if isinstance(channel_assignments, dict):
+                changed = False
+                for cid in list(channel_assignments.keys()):
+                    if channel_assignments[cid] == pid_str:
+                        del channel_assignments[cid]
+                        changed = True
+                if changed:
+                    self._set_config_dict("channel_assignments", channel_assignments)
+
+            # Remove from group-level profile assignments
+            group_assignments = self._get_config_dict("group_assignments", {})
+            if isinstance(group_assignments, dict):
+                changed = False
+                for gid in list(group_assignments.keys()):
+                    if group_assignments[gid] == pid_str:
+                        del group_assignments[gid]
+                        changed = True
+                if changed:
+                    self._set_config_dict("group_assignments", group_assignments)
+
+            # Remove from channel-level EPG scheduled profile assignments
+            channel_epg = self._get_config_dict("channel_epg_scheduled_assignments", {})
+            if isinstance(channel_epg, dict):
+                changed = False
+                for cid in list(channel_epg.keys()):
+                    if channel_epg[cid] == pid_str:
+                        del channel_epg[cid]
+                        changed = True
+                if changed:
+                    self._set_config_dict("channel_epg_scheduled_assignments", channel_epg)
+
+            # Remove from group-level EPG scheduled profile assignments
+            group_epg = self._get_config_dict("group_epg_scheduled_assignments", {})
+            if isinstance(group_epg, dict):
+                changed = False
+                for gid in list(group_epg.keys()):
+                    if group_epg[gid] == pid_str:
+                        del group_epg[gid]
+                        changed = True
+                if changed:
+                    self._set_config_dict("group_epg_scheduled_assignments", group_epg)
+
+            # Remove deleted profile from channel period assignment maps
+            channel_period_assignments = self._get_config_dict("channel_period_assignments", {})
+            if isinstance(channel_period_assignments, dict):
+                changed = False
+                for cid, period_map in list(channel_period_assignments.items()):
+                    if not isinstance(period_map, dict):
+                        continue
+                    for period_id in list(period_map.keys()):
+                        if period_map[period_id] == pid_str:
+                            del period_map[period_id]
+                            changed = True
+                    if not period_map:
+                        del channel_period_assignments[cid]
+                if changed:
+                    self._set_config_dict("channel_period_assignments", channel_period_assignments)
+
+            # Remove deleted profile from group period assignment maps
+            group_period_assignments = self._get_config_dict("group_period_assignments", {})
+            if isinstance(group_period_assignments, dict):
+                changed = False
+                for gid, period_map in list(group_period_assignments.items()):
+                    if not isinstance(period_map, dict):
+                        continue
+                    for period_id in list(period_map.keys()):
+                        if period_map[period_id] == pid_str:
+                            del period_map[period_id]
+                            changed = True
+                    if not period_map:
+                        del group_period_assignments[gid]
+                if changed:
+                    self._set_config_dict("group_period_assignments", group_period_assignments)
+
             return True
         except Exception as e:
             session.rollback()
@@ -303,6 +377,11 @@ class AutomationConfigManager:
 
     def get_group_assignment(self, group_id: int) -> Optional[str]:
         return self._get_config_dict("group_assignments", {}).get(str(group_id))
+
+    def get_all_group_assignments(self) -> Dict[str, str]:
+        """Return all group→automation-profile assignments as {group_id_str: profile_id_str}."""
+        result = self._get_config_dict("group_assignments", {})
+        return result if isinstance(result, dict) else {}
 
     def get_effective_profile_id(self, channel_id: int, group_id: Optional[int] = None) -> Optional[str]:
         cid = str(channel_id)

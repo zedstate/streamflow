@@ -78,7 +78,7 @@ const normalizePatternData = (channelPatterns) => {
 }
 
 // Dialog for assigning automation periods to a group
-function GroupAssignPeriodsDialog({ open, onOpenChange, group, onSave, saving }) {
+function GroupAssignPeriodsDialog({ open, onOpenChange, group, initialPeriods, onSave, saving }) {
   const [allPeriods, setAllPeriods] = useState([])
   const [allProfiles, setAllProfiles] = useState([])
   const [periodAssignments, setPeriodAssignments] = useState({})  // {period_id: profile_id}
@@ -100,7 +100,16 @@ function GroupAssignPeriodsDialog({ open, onOpenChange, group, onSave, saving })
       ])
       setAllPeriods(periodsResponse.data || [])
       setAllProfiles(profilesResponse.data || [])
-      setPeriodAssignments({})
+      // Pre-populate with existing group period assignments
+      const existing = {}
+      if (Array.isArray(initialPeriods)) {
+        initialPeriods.forEach((p) => {
+          if (p.id && p.profile_id) {
+            existing[p.id] = p.profile_id
+          }
+        })
+      }
+      setPeriodAssignments(existing)
     } catch (err) {
       console.error('Failed to load data:', err)
       toast({
@@ -771,7 +780,7 @@ export default function ChannelConfiguration() {
     try {
       setLoadingGroupsConfig(true)
       const configMap = {}
-      const [, epgAssignmentsRes] = await Promise.all([
+      const [, epgAssignmentsRes, profileAssignmentsRes] = await Promise.all([
         Promise.all(groups.map(async (group) => {
           try {
             const [periodsRes, regexCfgRes] = await Promise.all([
@@ -786,15 +795,18 @@ export default function ChannelConfiguration() {
             configMap[group.id] = { periods: [], matching: {} }
           }
         })),
-        automationAPI.getGroupEpgAssignments().catch(() => ({ data: {} }))
+        automationAPI.getGroupEpgAssignments().catch(() => ({ data: {} })),
+        automationAPI.getGroupAssignments().catch(() => ({ data: {} }))
       ])
       const epgAssignments = epgAssignmentsRes.data || {}
-      // Merge EPG profile assignments into configMap
+      const profileAssignments = profileAssignmentsRes.data || {}
+      // Merge EPG and automation profile assignments into configMap
       groups.forEach((group) => {
         if (!configMap[group.id]) {
           configMap[group.id] = { periods: [], matching: {} }
         }
         configMap[group.id].epg_profile_id = epgAssignments[String(group.id)] || null
+        configMap[group.id].profile_id = profileAssignments[String(group.id)] || null
       })
       setGroupsConfig(configMap)
     } catch (err) {
@@ -806,7 +818,8 @@ export default function ChannelConfiguration() {
 
   const handleOpenGroupAssignProfile = (group) => {
     setSelectedGroupForConfig(group)
-    setGroupProfileId('')
+    const currentAssignment = (groupsConfig[group.id] || {}).profile_id || ''
+    setGroupProfileId(currentAssignment)
     setGroupAssignProfileDialogOpen(true)
   }
 
@@ -2211,6 +2224,31 @@ export default function ChannelConfiguration() {
 
                     <Separator orientation="vertical" className="h-6 hidden lg:block" />
 
+                    {/* Section: Automation Profile */}
+                    <div className="flex items-center gap-3">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Profile</div>
+                      <Select
+                        value={assignProfileId}
+                        onValueChange={(v) => {
+                          setAssignProfileId(v)
+                          handleBatchAssignProfile(v)
+                        }}
+                        disabled={selectedChannels.size === 0}
+                      >
+                        <SelectTrigger className="h-8 w-[160px] text-xs">
+                          <SelectValue placeholder="Assign profile…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">— Remove profile —</SelectItem>
+                          {profiles.map((profile) => (
+                            <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <Separator orientation="vertical" className="h-6 hidden lg:block" />
+
                     {/* Section: Periods */}
                     <div className="flex items-center gap-3">
                       <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Periods</div>
@@ -2697,6 +2735,9 @@ export default function ChannelConfiguration() {
                         : []
                       const matchingPatternCount = matchingPatterns.length
                       const groupTvgEnabled = Boolean(matching.match_by_tvg_id)
+                      const groupAutomationProfile = config.profile_id
+                        ? (profiles || []).find(p => String(p.id) === String(config.profile_id))
+                        : null
                       const groupEpgProfile = config.epg_profile_id
                         ? (profiles || []).find(p => String(p.id) === String(config.epg_profile_id))
                         : null
@@ -2712,8 +2753,23 @@ export default function ChannelConfiguration() {
                                   </Badge>
                                 </div>
 
-                                {/* Periods section */}
+                                {/* Automation Profile section */}
                                 <div className="space-y-1">
+                                  <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
+                                    Automation Profile
+                                  </div>
+                                  {groupAutomationProfile ? (
+                                    <Badge variant="outline" className="gap-1 text-xs">
+                                      <Activity className="h-3 w-3" />
+                                      {groupAutomationProfile.name}
+                                    </Badge>
+                                  ) : (
+                                    <p className="text-sm text-muted-foreground italic">No profile assigned</p>
+                                  )}
+                                </div>
+
+                                {/* Periods section */}
+                                <div className="space-y-1 mt-4">
                                   <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
                                     Automation Periods ({config.periods.length})
                                   </div>
@@ -2758,21 +2814,37 @@ export default function ChannelConfiguration() {
                                 </div>
 
                                 {/* EPG Profile section */}
-                                {groupEpgProfile && (
-                                  <div className="space-y-1 mt-4">
-                                    <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
-                                      EPG Profile
-                                    </div>
+                                <div className="space-y-1 mt-4">
+                                  <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
+                                    EPG Profile
+                                  </div>
+                                  {groupEpgProfile ? (
                                     <Badge variant="outline" className="gap-1 text-xs">
                                       <CalendarClock className="h-3 w-3" />
                                       {groupEpgProfile.name}
                                     </Badge>
-                                  </div>
-                                )}
+                                  ) : (
+                                    <p className="text-sm text-muted-foreground italic">No profile assigned</p>
+                                  )}
+                                </div>
                               </div>
 
                               {/* Action buttons */}
-                              <div className="flex gap-2 flex-shrink-0">
+                              <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenGroupAssignProfile(group)}
+                                      className="h-8"
+                                    >
+                                      <Activity className="h-4 w-4 mr-1" />
+                                      Profile
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Assign automation profile to group</TooltipContent>
+                                </Tooltip>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button
@@ -2782,7 +2854,7 @@ export default function ChannelConfiguration() {
                                       className="h-8"
                                     >
                                       <Clock className="h-4 w-4 mr-1" />
-                                      Period and Profile
+                                      Periods
                                     </Button>
                                   </TooltipTrigger>
                                   <TooltipContent>Assign automation periods and profiles to group</TooltipContent>
@@ -2881,6 +2953,7 @@ export default function ChannelConfiguration() {
             open={groupAssignPeriodsDialogOpen}
             onOpenChange={setGroupAssignPeriodsDialogOpen}
             group={selectedGroupForConfig}
+            initialPeriods={(groupsConfig[selectedGroupForConfig.id] || {}).periods || []}
             onSave={handleSaveGroupPeriods}
             saving={savingGroupPeriods}
           />
