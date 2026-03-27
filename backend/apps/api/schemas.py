@@ -23,17 +23,6 @@ def _parse_bool(value: Any, *, field_name: str) -> bool:
     raise ValidationError(f"{field_name} must be a boolean")
 
 
-def _parse_int_clamped(value: Any, *, field_name: str, min_val: int, max_val: int) -> int:
-    """Parse value as int and clamp to [min_val, max_val]. Raises ValidationError on non-numeric input."""
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        raise ValidationError(
-            f"{field_name} must be an integer between {min_val} and {max_val}"
-        ) from None
-    return max(min_val, min(max_val, parsed))
-
-
 def _ensure_non_empty_list(value: Any, *, field_name: str) -> List[Any]:
     if not isinstance(value, list) or len(value) == 0:
         raise ValidationError(f"{field_name} must be a non-empty list")
@@ -55,14 +44,6 @@ def _normalize_profile_payload(data: Dict[str, Any]) -> Dict[str, Any]:
         normalized_stream_checking["remove_dead_streams"] = _parse_bool(
             normalized_stream_checking["remove_dead_streams"],
             field_name="stream_checking.remove_dead_streams",
-        )
-
-    if "max_loop_duration" in normalized_stream_checking:
-        normalized_stream_checking["max_loop_duration"] = _parse_int_clamped(
-            normalized_stream_checking["max_loop_duration"],
-            field_name="stream_checking.max_loop_duration",
-            min_val=10,
-            max_val=240,
         )
 
     normalized["stream_checking"] = normalized_stream_checking
