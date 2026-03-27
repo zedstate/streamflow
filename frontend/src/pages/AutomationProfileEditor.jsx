@@ -18,7 +18,6 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
-
 const DEFAULT_PROFILE = {
     name: '',
     description: '',
@@ -63,7 +62,6 @@ export default function AutomationProfileEditor() {
     const { profileId } = useParams()
     const navigate = useNavigate()
     const { toast } = useToast()
-
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [profile, setProfile] = useState(null)
@@ -77,7 +75,6 @@ export default function AutomationProfileEditor() {
     const loadData = async () => {
         try {
             setLoading(true)
-
             // Fetch M3U accounts for the selection list
             const m3uResponse = await m3uAPI.getAccounts()
             setM3uAccounts(m3uResponse.data.accounts || [])
@@ -156,10 +153,8 @@ export default function AutomationProfileEditor() {
                 newData[field] = value
             }
             return newData
-
         })
     }
-
 
     const handleSave = async () => {
         if (!profile.name) {
@@ -170,7 +165,6 @@ export default function AutomationProfileEditor() {
             })
             return
         }
-
         try {
             setSaving(true)
             if (profileId === 'new') {
@@ -254,14 +248,11 @@ export default function AutomationProfileEditor() {
 
             {/* Progress Line UI */}
             <div className="relative pt-12 pb-4">
-                {/* Connecting Line */}
                 <div className="absolute top-[4.25rem] left-0 w-full h-1 bg-muted -translate-y-1/2 z-0" />
-
                 <div className="flex justify-between items-center relative z-10">
                     {STEPS.map((step, index) => {
                         const enabled = isStepEnabled(step.id)
                         const active = activeStep === step.id
-
                         return (
                             <div key={step.id} className="flex flex-col items-center">
                                 <button
@@ -307,7 +298,6 @@ export default function AutomationProfileEditor() {
                                 checked={isStepEnabled(activeStep)}
                                 onCheckedChange={(checked) => {
                                     if (activeStep === 'm3u_update' && checked) {
-                                        // When enabling playlist updating, tick every playlist
                                         setProfile(prev => ({
                                             ...prev,
                                             m3u_update: {
@@ -333,12 +323,10 @@ export default function AutomationProfileEditor() {
                             <p className="text-sm text-muted-foreground">
                                 Automatically pick up changes from M3U playlists for channels assigned to this profile.
                             </p>
-
                             {profile.m3u_update.enabled ? (
                                 <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
                                     <Label className="text-sm font-semibold">Playlists to Update</Label>
                                     <p className="text-xs text-muted-foreground mb-4">Select specific playlists to follow. Leave empty to update from any playlist that matches the channel.</p>
-
                                     <div className="grid gap-3 max-h-[300px] overflow-y-auto">
                                         {m3uAccounts.map(account => (
                                             <div key={account.id} className="flex items-center space-x-3 p-2 hover:bg-muted/50 rounded-md transition-colors">
@@ -353,8 +341,6 @@ export default function AutomationProfileEditor() {
                                                         } else {
                                                             newPlaylists = current.filter(id => id !== account.id)
                                                         }
-
-                                                        // If user unticks all playlists, disabled the option
                                                         if (newPlaylists.length === 0) {
                                                             setProfile(prev => ({
                                                                 ...prev,
@@ -384,6 +370,7 @@ export default function AutomationProfileEditor() {
                         </div>
                     )}
 
+                    {/* Step 2: Stream Matching */}
                     {activeStep === 'stream_matching' && (
                         <div className="space-y-4">
                             <p className="text-sm text-muted-foreground">
@@ -391,8 +378,6 @@ export default function AutomationProfileEditor() {
                             </p>
                             {profile.stream_matching.enabled ? (
                                 <div className="space-y-4">
-
-
                                     <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
                                         <Switch
                                             id="validate_streams"
@@ -404,7 +389,6 @@ export default function AutomationProfileEditor() {
                                             <p className="text-[10px] text-muted-foreground">Remove streams that no longer match the channel's Regex rules.</p>
                                         </div>
                                     </div>
-
                                 </div>
                             ) : (
                                 <div className="p-8 border-2 border-dashed rounded-lg text-center opacity-50">
@@ -422,7 +406,6 @@ export default function AutomationProfileEditor() {
                             <p className="text-sm text-muted-foreground mb-6">
                                 Validate stream quality and availability during automation cycles.
                             </p>
-
                             {profile.stream_checking.enabled && (
                                 <div className="grid gap-8">
                                     <div className="grid md:grid-cols-2 gap-8">
@@ -435,7 +418,6 @@ export default function AutomationProfileEditor() {
                                                 />
                                                 <Label htmlFor="revive" className="cursor-pointer font-medium">Allow Automatic Revive (Dead &rarr; Alive)</Label>
                                             </div>
-
                                             <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
                                                 <Switch
                                                     id="grace_period"
@@ -447,7 +429,6 @@ export default function AutomationProfileEditor() {
                                                     <p className="text-[10px] text-muted-foreground">Skip re-analyzing streams checked within the last 2 hours.</p>
                                                 </div>
                                             </div>
-
                                             <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
                                                 <Switch
                                                     id="check_all_streams"
@@ -459,7 +440,6 @@ export default function AutomationProfileEditor() {
                                                     <p className="text-[10px] text-muted-foreground">Check all streams assigned to the channel, not just matched ones.</p>
                                                 </div>
                                             </div>
-
                                             <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
                                                 <Switch
                                                     id="remove_dead_streams"
@@ -471,7 +451,6 @@ export default function AutomationProfileEditor() {
                                                     <p className="text-[10px] text-muted-foreground">When disabled, dead streams are kept in channel ordering during this profile&apos;s checks.</p>
                                                 </div>
                                             </div>
-
                                             <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
                                                 <Switch
                                                     id="loop_check_enabled"
@@ -483,7 +462,6 @@ export default function AutomationProfileEditor() {
                                                     <p className="text-[10px] text-muted-foreground">Checks top 25% of streams with a score greater than 0.50</p>
                                                 </div>
                                             </div>
-
 
                                             <div className="space-y-2">
                                                 <Label htmlFor="s_limit">Stream Limit per Channel</Label>
@@ -549,9 +527,9 @@ export default function AutomationProfileEditor() {
                                             </div>
                                         </div>
 
+                                        {/* M3U Priority Settings */}
                                         <div className="space-y-4">
                                             <Label className="font-semibold block border-b pb-2">M3U Priority Settings</Label>
-
                                             <div className="space-y-2">
                                                 <Label className="text-xs">Priority Mode</Label>
                                                 <Select
@@ -566,19 +544,14 @@ export default function AutomationProfileEditor() {
                                                     </SelectContent>
                                                 </Select>
                                             </div>
-
                                             <div className="space-y-2">
                                                 <Label className="text-xs">Playlist Priority Rank</Label>
                                                 <div className="border rounded-md divide-y overflow-hidden bg-background">
                                                     {(() => {
-                                                        // Show all available M3U playlists for priority settings
                                                         const allAvailableIds = m3uAccounts.map(a => a.id)
                                                         const pOrder = profile.stream_checking.m3u_priority || []
-
-                                                        // Sort by priority order, then include any new ones at the end
                                                         const sortedIds = [...new Set([...pOrder, ...allAvailableIds])]
-                                                            .filter(id => allAvailableIds.includes(id)) // Ensure we only show existing accounts
-
+                                                            .filter(id => allAvailableIds.includes(id))
                                                         return sortedIds.map((id, idx) => {
                                                             const acct = m3uAccounts.find(a => a.id === id)
                                                             return (
@@ -627,7 +600,6 @@ export default function AutomationProfileEditor() {
 
                                     {/* Scoring Weights Section */}
                                     <Separator className="my-6" />
-
                                     <div className="space-y-4">
                                         <div>
                                             <h4 className="font-semibold mb-1">Stream Quality Scoring</h4>
@@ -635,7 +607,6 @@ export default function AutomationProfileEditor() {
                                                 Adjust how different quality metrics are weighted when scoring streams
                                             </p>
                                         </div>
-
                                         <div className="grid gap-4 md:grid-cols-2">
                                             <div className="space-y-2">
                                                 <Label htmlFor="weight_bitrate" className="text-xs">Bitrate Weight</Label>
@@ -649,7 +620,6 @@ export default function AutomationProfileEditor() {
                                                     max={1}
                                                 />
                                             </div>
-
                                             <div className="space-y-2">
                                                 <Label htmlFor="weight_resolution" className="text-xs">Resolution Weight</Label>
                                                 <Input
@@ -662,7 +632,6 @@ export default function AutomationProfileEditor() {
                                                     max={1}
                                                 />
                                             </div>
-
                                             <div className="space-y-2">
                                                 <Label htmlFor="weight_fps" className="text-xs">FPS Weight</Label>
                                                 <Input
@@ -675,7 +644,6 @@ export default function AutomationProfileEditor() {
                                                     max={1}
                                                 />
                                             </div>
-
                                             <div className="space-y-2">
                                                 <Label htmlFor="weight_codec" className="text-xs">Codec Weight</Label>
                                                 <Input
@@ -688,7 +656,6 @@ export default function AutomationProfileEditor() {
                                                     max={1}
                                                 />
                                             </div>
-
                                             <div className="space-y-2">
                                                 <Label htmlFor="weight_hdr" className="text-xs">HDR Weight</Label>
                                                 <Input
@@ -701,7 +668,6 @@ export default function AutomationProfileEditor() {
                                                     max={1}
                                                 />
                                             </div>
-
                                             <div className="space-y-2">
                                                 <Label htmlFor="loop_penalty" className="text-xs">Looping Punishment</Label>
                                                 <Input
@@ -719,7 +685,6 @@ export default function AutomationProfileEditor() {
                                                 <p className="text-[10px] text-muted-foreground">Score penalty for looping streams (0 = disabled, min -0.25)</p>
                                             </div>
                                         </div>
-
                                         <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
                                             <Switch
                                                 id="prefer_h265"
@@ -736,8 +701,6 @@ export default function AutomationProfileEditor() {
                             )}
                         </div>
                     )}
-
-
                 </CardContent>
             </Card>
 
@@ -748,6 +711,6 @@ export default function AutomationProfileEditor() {
                     {profileId === 'new' ? 'Create Profile' : 'Save Changes'}
                 </Button>
             </div>
-        </div >
+        </div>
     )
 }

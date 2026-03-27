@@ -160,8 +160,6 @@ export default function StreamChecker() {
 
       // Validate that backend returned the page we requested
       if (paginationData.page && paginationData.page !== page) {
-        // Page mismatch - backend returned different page than requested
-        // This could happen if the requested page is out of bounds
         toast({
           title: "Warning",
           description: `Requested page ${page} but received page ${paginationData.page}`,
@@ -595,6 +593,22 @@ export default function StreamChecker() {
                       </p>
                     </div>
 
+                    <div className="space-y-2">
+                      <Label htmlFor="max_loop_duration">Loop Probe Duration (seconds)</Label>
+                      <Input
+                        id="max_loop_duration"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.max_loop_duration || 120}
+                        onChange={(e) => updateConfigValue('stream_analysis.max_loop_duration', Math.min(240, Math.max(20, parseInt(e.target.value) || 120)))}
+                        disabled={!configEditing}
+                        min={20}
+                        max={240}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Maximum loop period to detect — probes each stream for 3× this value (20–240 seconds)
+                      </p>
+                    </div>
+
                     <div className="space-y-2 md:col-span-2">
                       <Label htmlFor="user_agent">FFmpeg/FFprobe User Agent</Label>
                       <Input
@@ -790,23 +804,18 @@ export default function StreamChecker() {
                                     let startPage, endPage
 
                                     if (totalPages <= maxVisiblePages) {
-                                      // Show all pages if total is less than max
                                       startPage = 1
                                       endPage = totalPages
                                     } else {
-                                      // Calculate range to show current page in the middle when possible
                                       const halfVisible = Math.floor(maxVisiblePages / 2)
 
                                       if (currentPage <= halfVisible + 1) {
-                                        // Near the start
                                         startPage = 1
                                         endPage = maxVisiblePages
                                       } else if (currentPage >= totalPages - halfVisible) {
-                                        // Near the end
                                         startPage = totalPages - maxVisiblePages + 1
                                         endPage = totalPages
                                       } else {
-                                        // In the middle
                                         startPage = currentPage - halfVisible
                                         endPage = currentPage + halfVisible
                                       }
