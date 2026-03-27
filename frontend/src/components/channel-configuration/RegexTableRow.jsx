@@ -55,13 +55,17 @@ export function RegexTableRow({
   const matchByTvgId = Boolean(effectiveMatchingConfig?.match_by_tvg_id)
   const isTvgInherited = !hasChannelMatchingConfig && Boolean(channelGroupId)
   const patternCount = normalizePatternData(channelPatterns).length
-  const isProfileChannelOverride = channel?.automation_profile_source === 'channel' || Boolean(channel?.assigned_profile_id)
-  const isProfileGroupBased =
-    channel?.automation_profile_source === 'group' || (!isProfileChannelOverride && Boolean(channel?.group_profile_id))
   const isPeriodChannelOverride =
     channel?.automation_periods_source === 'channel' || Number(channel?.channel_periods_count || 0) > 0
   const isPeriodGroupBased =
     channel?.automation_periods_source === 'group' || (!isPeriodChannelOverride && Number(channel?.group_periods_count || 0) > 0)
+  const isEpgChannelOverride = Boolean(channel?.channel_epg_scheduled_profile_id)
+  const isEpgGroupBased = !isEpgChannelOverride && Boolean(groupsConfig?.[channelGroupId]?.epg_profile_id)
+  const groupMatchingPatternCount = Array.isArray(groupMatchingConfig?.regex_patterns)
+    ? groupMatchingConfig.regex_patterns.length
+    : 0
+  const isRegexChannelOverride = patternCount > 0
+  const isRegexGroupBased = !isRegexChannelOverride && groupMatchingPatternCount > 0
 
   const loadChannelPeriods = useCallback(async () => {
     try {
@@ -147,11 +151,11 @@ export function RegexTableRow({
           <div className="min-w-0">
             <div className="truncate">{group?.name || '-'}</div>
             <div className="flex items-center gap-1 mt-1 flex-wrap">
-              <Badge variant={isProfileChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
-                Profile: {isProfileChannelOverride ? 'Override' : isProfileGroupBased ? 'Group' : 'Default'}
-              </Badge>
               <Badge variant={isPeriodChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
-                Periods: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
+                Automation: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
+              </Badge>
+              <Badge variant={isEpgChannelOverride ? 'default' : 'outline'} className="text-[10px] h-5 px-1.5">
+                EPG Profile: {isEpgChannelOverride ? 'Override' : isEpgGroupBased ? 'Group' : 'None'}
               </Badge>
             </div>
           </div>
@@ -218,6 +222,11 @@ export function RegexTableRow({
               <h4 className="font-medium text-sm flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
                 Automation Periods
+                {isPeriodChannelOverride ? (
+                  <Badge variant="default" className="text-[10px]">Override</Badge>
+                ) : isPeriodGroupBased ? (
+                  <Badge variant="outline" className="text-[10px]">From Group</Badge>
+                ) : null}
               </h4>
               <Button size="sm" variant="outline" onClick={() => setAssignDialogOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />
@@ -282,6 +291,11 @@ export function RegexTableRow({
               <h4 className="font-medium text-sm flex items-center gap-2 mb-2">
                 <CalendarClock className="h-4 w-4" />
                 EPG Scheduled Profile
+                {isEpgChannelOverride ? (
+                  <Badge variant="default" className="text-[10px]">Override</Badge>
+                ) : isEpgGroupBased ? (
+                  <Badge variant="outline" className="text-[10px]">From Group</Badge>
+                ) : null}
               </h4>
               <Select
                 value={channel.channel_epg_scheduled_profile_id || ''}
@@ -342,7 +356,14 @@ export function RegexTableRow({
             </div>
 
             <div className="flex justify-between items-center mb-3">
-              <h4 className="font-medium text-sm">Regex Patterns</h4>
+              <h4 className="font-medium text-sm flex items-center gap-2">
+                Regex Patterns
+                {isRegexChannelOverride ? (
+                  <Badge variant="default" className="text-[10px]">Override</Badge>
+                ) : isRegexGroupBased ? (
+                  <Badge variant="outline" className="text-[10px]">From Group</Badge>
+                ) : null}
+              </h4>
               <Button size="sm" variant="outline" onClick={() => onEditRegex(channel.id, null)}>
                 <Plus className="h-4 w-4 mr-2" />
                 Add Pattern

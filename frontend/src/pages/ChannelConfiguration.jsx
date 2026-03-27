@@ -2735,9 +2735,6 @@ export default function ChannelConfiguration() {
                         : []
                       const matchingPatternCount = matchingPatterns.length
                       const groupTvgEnabled = Boolean(matching.match_by_tvg_id)
-                      const groupAutomationProfile = config.profile_id
-                        ? (profiles || []).find(p => String(p.id) === String(config.profile_id))
-                        : null
                       const groupEpgProfile = config.epg_profile_id
                         ? (profiles || []).find(p => String(p.id) === String(config.epg_profile_id))
                         : null
@@ -2753,23 +2750,8 @@ export default function ChannelConfiguration() {
                                   </Badge>
                                 </div>
 
-                                {/* Automation Profile section */}
-                                <div className="space-y-1">
-                                  <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
-                                    Automation Profile
-                                  </div>
-                                  {groupAutomationProfile ? (
-                                    <Badge variant="outline" className="gap-1 text-xs">
-                                      <Activity className="h-3 w-3" />
-                                      {groupAutomationProfile.name}
-                                    </Badge>
-                                  ) : (
-                                    <p className="text-sm text-muted-foreground italic">No profile assigned</p>
-                                  )}
-                                </div>
-
                                 {/* Periods section */}
-                                <div className="space-y-1 mt-4">
+                                <div className="space-y-1">
                                   <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">
                                     Automation Periods ({config.periods.length})
                                   </div>
@@ -2836,20 +2818,6 @@ export default function ChannelConfiguration() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => handleOpenGroupAssignProfile(group)}
-                                      className="h-8"
-                                    >
-                                      <Activity className="h-4 w-4 mr-1" />
-                                      Profile
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Assign automation profile to group</TooltipContent>
-                                </Tooltip>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
                                       onClick={() => handleOpenGroupAssignPeriods(group)}
                                       className="h-8"
                                     >
@@ -2899,53 +2867,6 @@ export default function ChannelConfiguration() {
             </Card>
           </TabsContent>
         </Tabs>
-
-        {/* Group Assign Profile Dialog */}
-        <Dialog open={groupAssignProfileDialogOpen} onOpenChange={setGroupAssignProfileDialogOpen}>
-          <DialogContent className="sm:max-w-[450px]">
-            <DialogHeader>
-              <DialogTitle>Assign Automation Profile to Group</DialogTitle>
-              <DialogDescription>
-                {selectedGroupForConfig
-                  ? `Assign an automation profile to group "${selectedGroupForConfig.name}". Channels in this group will use this profile unless they have a channel-specific assignment.`
-                  : ''}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>Automation Profile</Label>
-                <Select
-                  value={groupProfileId}
-                  onValueChange={(v) => setGroupProfileId(v === 'none' ? '' : v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a profile (or clear to remove)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">— Remove profile assignment —</SelectItem>
-                    {profiles.map((profile) => (
-                      <SelectItem key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Select a profile to assign, or choose the empty option to remove the current assignment.
-                </p>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setGroupAssignProfileDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleSaveGroupProfile} disabled={savingGroupProfile}>
-                {savingGroupProfile && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {/* Group Assign Periods Dialog */}
         {selectedGroupForConfig && (
