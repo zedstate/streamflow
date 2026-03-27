@@ -1206,6 +1206,7 @@ class StreamCheckerService:
                 stream_id = stream.get('id')
                 if stream_id in stream_statuses:
                     stream_statuses[stream_id]['status'] = 'checking'
+                    stream_statuses[stream_id]['started_at'] = datetime.now().isoformat()
                     self.progress.update(
                         channel_id=channel_id,
                         channel_name=channel_name,
@@ -1215,7 +1216,8 @@ class StreamCheckerService:
                         status='analyzing',
                         step='Analyzing streams with account limits',
                         step_detail=f'Started checking {stream.get("name", "Unknown")}',
-                        streams_detail=list(stream_statuses.values())
+                        streams_detail=list(stream_statuses.values()),
+                        stream_duration=analysis_params.get('ffmpeg_duration', 30)
                     )
             
             def progress_callback(completed, total, result):
@@ -1256,7 +1258,8 @@ class StreamCheckerService:
                     status='analyzing',
                     step='Analyzing streams with account limits',
                     step_detail=f'Completed {completed}/{total}',
-                    streams_detail=list(stream_statuses.values())
+                    streams_detail=list(stream_statuses.values()),
+                    stream_duration=analysis_params.get('ffmpeg_duration', 30)
                 )
             
             if streams_to_check:
@@ -1396,6 +1399,9 @@ class StreamCheckerService:
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
                     probe_duration=analysis_params_lp.get('max_loop_duration', 120) * 3,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    streams_detail=list(stream_statuses.values()),
                 )
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -1899,9 +1905,24 @@ class StreamCheckerService:
                 
                 if stream['id'] in stream_statuses:
                     stream_statuses[stream['id']]['status'] = 'checking'
+                    stream_statuses[stream['id']]['started_at'] = datetime.now().isoformat()
                 
                 # Analyze stream
                 analysis_params = self.config.get('stream_analysis', {})
+
+                # Push checking status + started_at to frontend before analyze_stream blocks
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=idx,
+                    total=total_streams,
+                    current_stream=stream.get('name', 'Unknown'),
+                    status='analyzing',
+                    step='Analyzing stream quality',
+                    step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})',
+                    streams_detail=list(stream_statuses.values()),
+                    stream_duration=analysis_params.get('ffmpeg_duration', 20)
+                )
                 
                 # Apply URL transformation if using M3U profile with search/replace patterns
                 stream_url = stream.get('url', '')
@@ -2076,6 +2097,9 @@ class StreamCheckerService:
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
                     probe_duration=analysis_params_lp.get('max_loop_duration', 120) * 3,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    streams_detail=list(stream_statuses.values()),
                 )
                 # Write stats for all probed streams so loop fields
                 # (loop_probe_ran, loop_detected, loop_duration_secs) are
@@ -2333,7 +2357,9 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
-    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, probe_duration: int = 360) -> None:
+    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0,
+                         probe_duration: int = 360, channel_id: int = 0, channel_name: str = '',
+                         streams_detail: Optional[list] = None) -> None:
         """
         Run loop detection probes on eligible streams in parallel with
         per-account concurrent limits, then write results back into each
@@ -2372,6 +2398,12 @@ class StreamCheckerService:
             probe_duration:   Seconds to run each FFmpeg probe. Derived from the
                               global max_loop_duration * 3. Clamped by
                               _probe_stream_for_loops to [60, 720]. Default 360.
+            channel_id:       Channel being checked — used for progress reporting.
+            channel_name:     Channel name — used for progress reporting.
+            streams_detail:   Snapshot of stream_statuses values from the calling
+                              check method. Used to build probe_detail for live
+                              frontend grid updates. None on paths where
+                              stream_statuses is not available.
         """
         import threading
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -2415,6 +2447,39 @@ class StreamCheckerService:
         udi = get_udi_manager()
         results_lock = threading.Lock()
         completed = [0]
+
+        # Build probe_detail from the streams_detail snapshot passed in by the
+        # calling check method. Keyed by integer stream id (same as stream_statuses).
+        # Only built when streams_detail is available — the grid stays frozen
+        # otherwise but the probes still run correctly.
+        probe_detail: dict = {}
+        if streams_detail:
+            for entry in streams_detail:
+                sid = entry.get('id') or entry.get('stream_id')
+                if sid is not None:
+                    probe_detail[sid] = dict(entry)  # shallow copy
+
+        # Mark eligible streams as 'probing' and stamp started_at
+        eligible_ids = {s.get('stream_id') for s in eligible}
+        probe_start = datetime.now().isoformat()
+        for sid, entry in probe_detail.items():
+            if sid in eligible_ids:
+                entry['status'] = 'probing'
+                entry['started_at'] = probe_start
+
+        # Emit phase-entry progress update so frontend transitions to loop phase
+        if channel_id and probe_detail:
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=total,
+                status='analyzing',
+                step='Loop testing',
+                step_detail=f'Probing {total} stream(s) for looping content',
+                streams_detail=list(probe_detail.values()),
+                stream_duration=probe_duration,
+            )
 
         def _probe_one(stream: dict) -> None:
             """Run one loop probe with account slot acquire/release."""
@@ -2481,6 +2546,24 @@ class StreamCheckerService:
                 account_limiter.release(account_id)
                 with results_lock:
                     completed[0] += 1
+                    # Update probe_detail entry with result for live grid
+                    if probe_detail and stream_id in probe_detail:
+                        loop_result = stream.get('loop_detected')
+                        probe_detail[stream_id]['status'] = (
+                            'loop_detected' if loop_result is True else 'completed'
+                        )
+                    if channel_id and probe_detail:
+                        self.progress.update(
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            current=completed[0],
+                            total=total,
+                            status='analyzing',
+                            step='Loop testing',
+                            step_detail=f'Completed {completed[0]}/{total}: {stream_name}',
+                            streams_detail=list(probe_detail.values()),
+                            stream_duration=probe_duration,
+                        )
                     logger.info(
                         f"[loop-probe] Completed {completed[0]}/{total}: {stream_name}"
                     )
