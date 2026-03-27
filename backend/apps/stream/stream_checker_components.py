@@ -34,11 +34,12 @@ class StreamCheckConfig:
             'day_of_month': 1  # DEPRECATED: kept for backward compatibility - Day of month for monthly checks (1-31)
         },
         'stream_analysis': {
-            'ffmpeg_duration': 30,  # seconds to analyze each stream
-            'timeout': 30,  # timeout for operations
-            'stream_startup_buffer': 10,  # seconds buffer for stream startup (max time before stream starts)
-            'retries': 1,  # retry attempts
-            'retry_delay': 10,  # seconds between retries
+            'ffmpeg_duration': 30,      # seconds to analyze each stream
+            'timeout': 30,              # timeout for operations
+            'stream_startup_buffer': 10, # seconds buffer for stream startup (max time before stream starts)
+            'retries': 1,               # retry attempts
+            'retry_delay': 10,          # seconds between retries
+            'max_loop_duration': 120,   # maximum loop period to detect (seconds); probe runs for 3× this value
             'user_agent': 'VLC/3.0.14'  # user agent for ffmpeg/ffprobe
         },
         'scoring': {
@@ -715,5 +716,3 @@ class StreamCheckerProgress:
                 return data if data else None
             except Exception:
                 return None
-
-
