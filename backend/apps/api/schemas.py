@@ -1,5 +1,4 @@
 """Request schema validation helpers for the Flask API layer."""
-
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +21,52 @@ def _parse_bool(value: Any, *, field_name: str) -> bool:
         if lowered in {"false", "0", "no", "off"}:
             return False
     raise ValidationError(f"{field_name} must be a boolean")
+
+
+def _parse_int_clamped(value: Any, *, field_name: str, min_val: int, max_val: int) -> int:
+    """Parse value as int and clamp to [min_val, max_val]. Raises ValidationError on non-numeric input."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError(
+            f"{field_name} must be an integer between {min_val} and {max_val}"
+        ) from None
+    return max(min_val, min(max_val, parsed))
+
+
+def _ensure_non_empty_list(value: Any, *, field_name: str) -> List[Any]:
+    if not isinstance(value, list) or len(value) == 0:
+        raise ValidationError(f"{field_name} must be a non-empty list")
+    return value
+
+
+def _normalize_profile_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    stream_checking = data.get("stream_checking")
+    if stream_checking is None:
+        return data
+
+    if not isinstance(stream_checking, dict):
+        raise ValidationError("stream_checking must be an object")
+
+    normalized = dict(data)
+    normalized_stream_checking = dict(stream_checking)
+
+    if "remove_dead_streams" in normalized_stream_checking:
+        normalized_stream_checking["remove_dead_streams"] = _parse_bool(
+            normalized_stream_checking["remove_dead_streams"],
+            field_name="stream_checking.remove_dead_streams",
+        )
+
+    if "max_loop_duration" in normalized_stream_checking:
+        normalized_stream_checking["max_loop_duration"] = _parse_int_clamped(
+            normalized_stream_checking["max_loop_duration"],
+            field_name="stream_checking.max_loop_duration",
+            min_val=10,
+            max_val=240,
+        )
+
+    normalized["stream_checking"] = normalized_stream_checking
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -155,26 +200,15 @@ class BulkRegexPatternsSchema:
     def from_payload(cls, payload: Any) -> "BulkRegexPatternsSchema":
         data = _ensure_dict(payload, message="No data provided")
 
-        if "channel_ids" not in data or "regex_patterns" not in data:
-            raise ValidationError(
-                "Missing required fields",
-                details={"required_fields": ["channel_ids", "regex_patterns"]},
-            )
+        channel_ids_raw = _ensure_non_empty_list(data.get("channel_ids"), field_name="channel_ids")
+        try:
+            channel_ids = [int(cid) for cid in channel_ids_raw]
+        except (TypeError, ValueError):
+            raise ValidationError("channel_ids must be a list of integers") from None
 
-        channel_ids = data["channel_ids"]
-        regex_patterns = data["regex_patterns"]
-
-        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
-            raise ValidationError("channel_ids must be a non-empty list")
-        if not isinstance(regex_patterns, list) or len(regex_patterns) == 0:
-            raise ValidationError("regex_patterns must be a non-empty list")
-
-        normalized_channel_ids: List[int] = []
-        for channel_id in channel_ids:
-            try:
-                normalized_channel_ids.append(int(channel_id))
-            except (TypeError, ValueError):
-                raise ValidationError("channel_ids must only contain integer values") from None
+        regex_patterns = _ensure_non_empty_list(
+            data.get("regex_patterns"), field_name="regex_patterns"
+        )
 
         m3u_accounts = data.get("m3u_accounts")
         if m3u_accounts is not None:
@@ -188,11 +222,181 @@ class BulkRegexPatternsSchema:
                     raise ValidationError("m3u_accounts must be a list of integer IDs") from None
             m3u_accounts = normalized_accounts
 
-        return cls(
-            channel_ids=normalized_channel_ids,
-            regex_patterns=regex_patterns,
-            m3u_accounts=m3u_accounts,
+        return cls(channel_ids=channel_ids, regex_patterns=regex_patterns, m3u_accounts=m3u_accounts)
+
+
+@dataclass(frozen=True)
+class AutomationProfileCreateSchema:
+    profile_data: Dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "AutomationProfileCreateSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        name = str(data.get("name", "")).strip()
+        if not name:
+            raise ValidationError("Profile name is required")
+        return cls(profile_data=_normalize_profile_payload(data))
+
+
+@dataclass(frozen=True)
+class AutomationProfileUpdateSchema:
+    profile_data: Dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "AutomationProfileUpdateSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        if not data:
+            raise ValidationError("No data provided")
+        return cls(profile_data=_normalize_profile_payload(data))
+
+
+@dataclass(frozen=True)
+class ProfileIdsBulkDeleteSchema:
+    profile_ids: List[Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "ProfileIdsBulkDeleteSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        profile_ids = _ensure_non_empty_list(data.get("profile_ids"), field_name="profile_ids")
+        return cls(profile_ids=profile_ids)
+
+
+@dataclass(frozen=True)
+class SingleEntityProfileAssignmentSchema:
+    entity_id: Any
+    profile_id: Optional[Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any, *, entity_field: str) -> "SingleEntityProfileAssignmentSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        entity_id = data.get(entity_field)
+        if entity_id is None:
+            raise ValidationError(f"{entity_field} is required")
+        return cls(entity_id=entity_id, profile_id=data.get("profile_id"))
+
+
+@dataclass(frozen=True)
+class MultiEntityProfileAssignmentSchema:
+    entity_ids: List[Any]
+    profile_id: Optional[Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any, *, entity_field: str) -> "MultiEntityProfileAssignmentSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
+        return cls(entity_ids=entity_ids, profile_id=data.get("profile_id"))
+
+
+@dataclass(frozen=True)
+class AutomationPeriodCreateSchema:
+    period_data: Dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "AutomationPeriodCreateSchema":
+        data = _ensure_dict(payload, message="No data provided")
+
+        name = str(data.get("name", "")).strip()
+        if not name:
+            raise ValidationError("Period name is required")
+
+        schedule = data.get("schedule")
+        if not isinstance(schedule, dict):
+            raise ValidationError("Schedule is required")
+
+        schedule_type = str(schedule.get("type", "")).strip()
+        schedule_value = schedule.get("value")
+        if not schedule_type or schedule_value in (None, ""):
+            raise ValidationError("schedule.type and schedule.value are required")
+
+        return cls(period_data=data)
+
+
+@dataclass(frozen=True)
+class AutomationPeriodUpdateSchema:
+    period_data: Dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "AutomationPeriodUpdateSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        if not data:
+            raise ValidationError("No data provided")
+
+        if "schedule" in data:
+            schedule = data.get("schedule")
+            if not isinstance(schedule, dict):
+                raise ValidationError("schedule must be an object")
+            if "type" in schedule and schedule.get("value") in (None, ""):
+                raise ValidationError("schedule.value is required when schedule.type is provided")
+
+        return cls(period_data=data)
+
+
+@dataclass(frozen=True)
+class PeriodAssignmentSchema:
+    entity_ids: List[Any]
+    profile_id: Any
+    replace: bool
+
+    @classmethod
+    def from_payload(cls, payload: Any, *, entity_field: str) -> "PeriodAssignmentSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
+
+        profile_id = data.get("profile_id")
+        if profile_id in (None, ""):
+            raise ValidationError("profile_id is required")
+
+        replace = _parse_bool(data.get("replace", False), field_name="replace")
+        return cls(entity_ids=entity_ids, profile_id=profile_id, replace=replace)
+
+
+@dataclass(frozen=True)
+class PeriodRemovalSchema:
+    entity_ids: List[Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any, *, entity_field: str) -> "PeriodRemovalSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
+        return cls(entity_ids=entity_ids)
+
+
+@dataclass(frozen=True)
+class BatchPeriodAssignmentsSchema:
+    entity_ids: List[Any]
+    period_assignments: List[Dict[str, Any]]
+    replace: bool
+
+    @classmethod
+    def from_payload(cls, payload: Any, *, entity_field: str) -> "BatchPeriodAssignmentsSchema":
+        data = _ensure_dict(payload, message="No data provided")
+
+        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
+        period_assignments_raw = _ensure_non_empty_list(
+            data.get("period_assignments"), field_name="period_assignments"
         )
+
+        period_assignments: List[Dict[str, Any]] = []
+        for assignment in period_assignments_raw:
+            if not isinstance(assignment, dict):
+                raise ValidationError("Each period assignment must be an object")
+            if assignment.get("period_id") in (None, "") or assignment.get("profile_id") in (None, ""):
+                raise ValidationError("Each period assignment must have period_id and profile_id")
+            period_assignments.append(assignment)
+
+        replace = _parse_bool(data.get("replace", False), field_name="replace")
+        return cls(entity_ids=entity_ids, period_assignments=period_assignments, replace=replace)
+
+
+@dataclass(frozen=True)
+class BatchPeriodUsageSchema:
+    channel_ids: List[Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "BatchPeriodUsageSchema":
+        data = _ensure_dict(payload, message="No data provided")
+        channel_ids = _ensure_non_empty_list(data.get("channel_ids"), field_name="channel_ids")
+        return cls(channel_ids=channel_ids)
 
 
 @dataclass(frozen=True)
@@ -432,204 +636,3 @@ class AutoCreateRulesImportSchema:
         if not isinstance(payload, list):
             raise ValidationError("Rules data must be an array")
         return cls(rules_data=payload)
-
-
-def _ensure_non_empty_list(value: Any, *, field_name: str) -> List[Any]:
-    if not isinstance(value, list) or len(value) == 0:
-        raise ValidationError(f"{field_name} must be a non-empty list")
-    return value
-
-
-def _normalize_profile_payload(data: Dict[str, Any]) -> Dict[str, Any]:
-    stream_checking = data.get("stream_checking")
-    if stream_checking is None:
-        return data
-
-    if not isinstance(stream_checking, dict):
-        raise ValidationError("stream_checking must be an object")
-
-    normalized = dict(data)
-    normalized_stream_checking = dict(stream_checking)
-
-    if "remove_dead_streams" in normalized_stream_checking:
-        normalized_stream_checking["remove_dead_streams"] = _parse_bool(
-            normalized_stream_checking["remove_dead_streams"],
-            field_name="stream_checking.remove_dead_streams",
-        )
-
-    normalized["stream_checking"] = normalized_stream_checking
-    return normalized
-
-
-@dataclass(frozen=True)
-class AutomationProfileCreateSchema:
-    profile_data: Dict[str, Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any) -> "AutomationProfileCreateSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        name = str(data.get("name", "")).strip()
-        if not name:
-            raise ValidationError("Profile name is required")
-        return cls(profile_data=_normalize_profile_payload(data))
-
-
-@dataclass(frozen=True)
-class AutomationProfileUpdateSchema:
-    profile_data: Dict[str, Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any) -> "AutomationProfileUpdateSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        if not data:
-            raise ValidationError("No data provided")
-        return cls(profile_data=_normalize_profile_payload(data))
-
-
-@dataclass(frozen=True)
-class ProfileIdsBulkDeleteSchema:
-    profile_ids: List[Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any) -> "ProfileIdsBulkDeleteSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        profile_ids = _ensure_non_empty_list(data.get("profile_ids"), field_name="profile_ids")
-        return cls(profile_ids=profile_ids)
-
-
-@dataclass(frozen=True)
-class SingleEntityProfileAssignmentSchema:
-    entity_id: Any
-    profile_id: Optional[Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any, *, entity_field: str) -> "SingleEntityProfileAssignmentSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        entity_id = data.get(entity_field)
-        if entity_id is None:
-            raise ValidationError(f"{entity_field} is required")
-        return cls(entity_id=entity_id, profile_id=data.get("profile_id"))
-
-
-@dataclass(frozen=True)
-class MultiEntityProfileAssignmentSchema:
-    entity_ids: List[Any]
-    profile_id: Optional[Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any, *, entity_field: str) -> "MultiEntityProfileAssignmentSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
-        return cls(entity_ids=entity_ids, profile_id=data.get("profile_id"))
-
-
-@dataclass(frozen=True)
-class AutomationPeriodCreateSchema:
-    period_data: Dict[str, Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any) -> "AutomationPeriodCreateSchema":
-        data = _ensure_dict(payload, message="No data provided")
-
-        name = str(data.get("name", "")).strip()
-        if not name:
-            raise ValidationError("Period name is required")
-
-        schedule = data.get("schedule")
-        if not isinstance(schedule, dict):
-            raise ValidationError("Schedule is required")
-
-        schedule_type = str(schedule.get("type", "")).strip()
-        schedule_value = schedule.get("value")
-        if not schedule_type or schedule_value in (None, ""):
-            raise ValidationError("schedule.type and schedule.value are required")
-
-        return cls(period_data=data)
-
-
-@dataclass(frozen=True)
-class AutomationPeriodUpdateSchema:
-    period_data: Dict[str, Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any) -> "AutomationPeriodUpdateSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        if not data:
-            raise ValidationError("No data provided")
-
-        if "schedule" in data:
-            schedule = data.get("schedule")
-            if not isinstance(schedule, dict):
-                raise ValidationError("schedule must be an object")
-            if "type" in schedule and schedule.get("value") in (None, ""):
-                raise ValidationError("schedule.value is required when schedule.type is provided")
-
-        return cls(period_data=data)
-
-
-@dataclass(frozen=True)
-class PeriodAssignmentSchema:
-    entity_ids: List[Any]
-    profile_id: Any
-    replace: bool
-
-    @classmethod
-    def from_payload(cls, payload: Any, *, entity_field: str) -> "PeriodAssignmentSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
-
-        profile_id = data.get("profile_id")
-        if profile_id in (None, ""):
-            raise ValidationError("profile_id is required")
-
-        replace = _parse_bool(data.get("replace", False), field_name="replace")
-        return cls(entity_ids=entity_ids, profile_id=profile_id, replace=replace)
-
-
-@dataclass(frozen=True)
-class PeriodRemovalSchema:
-    entity_ids: List[Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any, *, entity_field: str) -> "PeriodRemovalSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
-        return cls(entity_ids=entity_ids)
-
-
-@dataclass(frozen=True)
-class BatchPeriodAssignmentsSchema:
-    entity_ids: List[Any]
-    period_assignments: List[Dict[str, Any]]
-    replace: bool
-
-    @classmethod
-    def from_payload(cls, payload: Any, *, entity_field: str) -> "BatchPeriodAssignmentsSchema":
-        data = _ensure_dict(payload, message="No data provided")
-
-        entity_ids = _ensure_non_empty_list(data.get(entity_field), field_name=entity_field)
-        period_assignments_raw = _ensure_non_empty_list(
-            data.get("period_assignments"), field_name="period_assignments"
-        )
-
-        period_assignments: List[Dict[str, Any]] = []
-        for assignment in period_assignments_raw:
-            if not isinstance(assignment, dict):
-                raise ValidationError("Each period assignment must be an object")
-            if assignment.get("period_id") in (None, "") or assignment.get("profile_id") in (None, ""):
-                raise ValidationError("Each period assignment must have period_id and profile_id")
-            period_assignments.append(assignment)
-
-        replace = _parse_bool(data.get("replace", False), field_name="replace")
-        return cls(entity_ids=entity_ids, period_assignments=period_assignments, replace=replace)
-
-
-@dataclass(frozen=True)
-class BatchPeriodUsageSchema:
-    channel_ids: List[Any]
-
-    @classmethod
-    def from_payload(cls, payload: Any) -> "BatchPeriodUsageSchema":
-        data = _ensure_dict(payload, message="No data provided")
-        channel_ids = _ensure_non_empty_list(data.get("channel_ids"), field_name="channel_ids")
-        return cls(channel_ids=channel_ids)
