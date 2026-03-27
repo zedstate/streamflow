@@ -2830,7 +2830,7 @@ export default function ChannelConfiguration() {
                               </div>
 
                               {/* Action buttons */}
-                              <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
+                              <div className="flex gap-2 flex-shrink-0 flex-wrap">
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button

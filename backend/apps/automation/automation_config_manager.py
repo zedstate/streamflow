@@ -243,6 +243,28 @@ class AutomationConfigManager:
         finally:
             session.close()
 
+    def _remove_profile_from_period_map(self, setting_key: str, profile_id_str: str) -> None:
+        """Remove all period→profile entries that reference *profile_id_str* from a nested assignment map.
+
+        The map structure is ``{entity_id: {period_id: profile_id}}``.  Entries whose inner dict becomes
+        empty after removal are also pruned from the outer dict.
+        """
+        assignments = self._get_config_dict(setting_key, {})
+        if not isinstance(assignments, dict):
+            return
+        changed = False
+        for entity_id, period_map in list(assignments.items()):
+            if not isinstance(period_map, dict):
+                continue
+            for period_id in list(period_map.keys()):
+                if period_map[period_id] == profile_id_str:
+                    del period_map[period_id]
+                    changed = True
+            if not period_map:
+                del assignments[entity_id]
+        if changed:
+            self._set_config_dict(setting_key, assignments)
+
     def delete_profile(self, profile_id: str) -> bool:
         from apps.database.models import AutomationProfile
         from apps.database.connection import get_session
@@ -302,37 +324,9 @@ class AutomationConfigManager:
                 if changed:
                     self._set_config_dict("group_epg_scheduled_assignments", group_epg)
 
-            # Remove deleted profile from channel period assignment maps
-            channel_period_assignments = self._get_config_dict("channel_period_assignments", {})
-            if isinstance(channel_period_assignments, dict):
-                changed = False
-                for cid, period_map in list(channel_period_assignments.items()):
-                    if not isinstance(period_map, dict):
-                        continue
-                    for period_id in list(period_map.keys()):
-                        if period_map[period_id] == pid_str:
-                            del period_map[period_id]
-                            changed = True
-                    if not period_map:
-                        del channel_period_assignments[cid]
-                if changed:
-                    self._set_config_dict("channel_period_assignments", channel_period_assignments)
-
-            # Remove deleted profile from group period assignment maps
-            group_period_assignments = self._get_config_dict("group_period_assignments", {})
-            if isinstance(group_period_assignments, dict):
-                changed = False
-                for gid, period_map in list(group_period_assignments.items()):
-                    if not isinstance(period_map, dict):
-                        continue
-                    for period_id in list(period_map.keys()):
-                        if period_map[period_id] == pid_str:
-                            del period_map[period_id]
-                            changed = True
-                    if not period_map:
-                        del group_period_assignments[gid]
-                if changed:
-                    self._set_config_dict("group_period_assignments", group_period_assignments)
+            # Remove deleted profile from period assignment maps (channel and group)
+            self._remove_profile_from_period_map("channel_period_assignments", pid_str)
+            self._remove_profile_from_period_map("group_period_assignments", pid_str)
 
             return True
         except Exception as e:
