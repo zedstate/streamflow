@@ -550,13 +550,27 @@ class StreamCheckerService:
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
             "quality_score": stream_data.get("score"),
-            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else None,
+            # PRESERVE_FALSE: emit False (not None) so the None-filter below keeps these
+            # fields in the payload even when the probe ran but found no loop.
+            # Without this, Dispatcharr's PATCH merge leaves a stale loop_probe_ran: true
+            # from a previous run in place for streams not probed in the current run.
+            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else False,
+            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else False,
             "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
             "loop_score_penalty": stream_data.get("loop_score_penalty"),
         }
         
-        # Clean up the payload, removing any None values or N/A values
-        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+        # Clean up the payload, removing None and N/A values.
+        # PRESERVE_FALSE: keep False values for boolean loop fields so they
+        # explicitly clear stale True values in Dispatcharr on PATCH merge.
+        PRESERVE_FALSE = {"loop_probe_ran", "loop_detected"}
+        stream_stats_payload = {
+            k: v for k, v in stream_stats_payload.items()
+            if v not in [None, "N/A"] or (v is None and k not in PRESERVE_FALSE)
+        }
+        for k in PRESERVE_FALSE:
+            if k in stream_stats_payload or stream_data.get(k) is False:
+                stream_stats_payload[k] = stream_data.get(k) if stream_data.get(k) is not None else False
         
         if not stream_stats_payload:
             logger.debug(f"No data to update for stream {stream_id}. Skipping.")
@@ -635,14 +649,27 @@ class StreamCheckerService:
             "audio_bitrate": stream_data.get("audio_bitrate"),
             "ffmpeg_output_bitrate": int(stream_data.get("bitrate_kbps")) if stream_data.get("bitrate_kbps") not in ["N/A", None] else None,
             "quality_score": stream_data.get("score"),
-            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else None,
+            # PRESERVE_FALSE: emit False (not None) so the None-filter below keeps these
+            # fields in the payload even when the probe ran but found no loop.
+            # Without this, Dispatcharr's PATCH merge leaves a stale loop_probe_ran: true
+            # from a previous run in place for streams not probed in the current run.
+            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else False,
+            "loop_detected": stream_data.get("loop_detected") if stream_data.get("loop_probe_ran") else False,
             "loop_duration_secs": stream_data.get("loop_duration_secs") if stream_data.get("loop_detected") else None,
             "loop_score_penalty": stream_data.get("loop_score_penalty"),
-            "loop_probe_ran": True if stream_data.get("loop_probe_ran") else None,
         }
         
-        # Clean up the payload, removing any None values or N/A values
-        stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
+        # Clean up the payload, removing None and N/A values.
+        # PRESERVE_FALSE: keep False values for boolean loop fields so they
+        # explicitly clear stale True values in Dispatcharr on PATCH merge.
+        PRESERVE_FALSE = {"loop_probe_ran", "loop_detected"}
+        stream_stats_payload = {
+            k: v for k, v in stream_stats_payload.items()
+            if v not in [None, "N/A"] or (v is None and k not in PRESERVE_FALSE)
+        }
+        for k in PRESERVE_FALSE:
+            if k in stream_stats_payload or stream_data.get(k) is False:
+                stream_stats_payload[k] = stream_data.get(k) if stream_data.get(k) is not None else False
         
         if not stream_stats_payload:
             logger.debug(f"No data to update for stream {stream_id}. Skipping.")
@@ -2147,61 +2174,61 @@ class StreamCheckerService:
                 logger.debug(f"Skipped verification for channel {channel_name} (disabled in config)")
             
             logger.info(f"✓ Channel {channel_name} checked and streams reordered")
-            
+
+            # Build stream_stats unconditionally so the return dict can always
+            # carry 'checked_streams' (mirrors _check_channel_concurrent behaviour).
+            # The automation changelog builder reads c_result.get('checked_streams', [])
+            # for every channel regardless of whether sequential or concurrent mode is
+            # active — without this, sequential runs produce an empty Quality Check table.
+            stream_stats = []
+            try:
+                averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
+                for analyzed in analyzed_streams:
+                    stream_id = analyzed.get('stream_id')
+                    is_dead = stream_id in dead_stream_ids
+                    is_revived = stream_id in revived_stream_ids
+
+                    extracted_stats = extract_stream_stats(analyzed)
+                    formatted_stats = format_stream_stats_for_display(extracted_stats)
+                    m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+
+                    stream_stat = {
+                        'stream_id': stream_id,
+                        'stream_name': analyzed.get('stream_name'),
+                        'resolution': formatted_stats['resolution'],
+                        'fps': formatted_stats['fps'],
+                        'video_codec': formatted_stats['video_codec'],
+                        'audio_codec': formatted_stats['audio_codec'],
+                        'bitrate': formatted_stats['bitrate'],
+                        'm3u_account': m3u_account_name,
+                        'hdr_format': extracted_stats.get('hdr_format')
+                    }
+
+                    if is_dead:
+                        stream_stat['status'] = 'dead'
+                    elif is_revived:
+                        stream_stat['status'] = 'revived'
+                        stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                    else:
+                        stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        if 'status' in analyzed:
+                            stream_stat['analysis_status'] = analyzed.get('status')
+
+                    # Include loop detection results if the probe ran
+                    if analyzed.get('loop_probe_ran'):
+                        stream_stat['loop_probe_ran']     = True
+                        stream_stat['loop_detected']      = analyzed.get('loop_detected')
+                        stream_stat['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+
+                    stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
+                    stream_stats.append(stream_stat)
+            except Exception as e:
+                logger.warning(f"Failed to build stream_stats for sequential return: {e}")
+                averages = {'avg_resolution': 'N/A', 'avg_bitrate': 'N/A', 'avg_fps': 'N/A'}
+
             # Add changelog entry with stream stats
             if self.changelog:
                 try:
-                    # Calculate channel-level averages from analyzed streams
-                    averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
-                    
-                    # Prepare stream stats summary for changelog
-                    stream_stats = []
-                    for analyzed in analyzed_streams[:10]:  # Limit to top 10
-                        stream_id = analyzed.get('stream_id')
-                        is_dead = stream_id in dead_stream_ids
-                        is_revived = stream_id in revived_stream_ids
-                        
-                        # Extract and format stats using centralized utilities
-                        extracted_stats = extract_stream_stats(analyzed)
-                        formatted_stats = format_stream_stats_for_display(extracted_stats)
-                        
-                        # Get M3U account name for this stream using helper method
-                        m3u_account_name = self._get_m3u_account_name(stream_id, udi)
-                        
-                        stream_stat = {
-                            'stream_id': stream_id,
-                            'stream_name': analyzed.get('stream_name'),
-                            'resolution': formatted_stats['resolution'],
-                            'fps': formatted_stats['fps'],
-                            'video_codec': formatted_stats['video_codec'],
-                            'audio_codec': formatted_stats['audio_codec'],
-                            'bitrate': formatted_stats['bitrate'],
-                            'm3u_account': m3u_account_name,
-                            'hdr_format': extracted_stats.get('hdr_format')
-                        }
-                        
-                        # Mark dead streams as "dead" instead of showing score:0
-                        if is_dead:
-                            stream_stat['status'] = 'dead'
-                        elif is_revived:
-                            stream_stat['status'] = 'revived'
-                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
-                        else:
-                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
-                            # Include original status from analysis if present
-                            if 'status' in analyzed:
-                                stream_stat['analysis_status'] = analyzed.get('status')
-
-                        # Include loop detection results if the probe ran
-                        if analyzed.get('loop_probe_ran'):
-                            stream_stat['loop_probe_ran']      = True
-                            stream_stat['loop_detected']       = analyzed.get('loop_detected')
-                            stream_stat['loop_duration_secs']  = analyzed.get('loop_duration_secs')
-
-                        # Clean up N/A values for cleaner output
-                        stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
-                        stream_stats.append(stream_stat)
-                    
                     # Get channel logo URL
                     logo_url = None
                     logo_id = channel_data.get('logo_id')
@@ -2260,7 +2287,8 @@ class StreamCheckerService:
                     'name': next((st.get('name') for st in streams if st['id'] == s), f'Stream {s}'),
                     'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
                 } for s in revived_stream_ids],
-                'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked]
+                'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
+                'checked_streams': stream_stats
             }
 
 
@@ -2296,7 +2324,8 @@ class StreamCheckerService:
             # Return empty stats on error
             return {
                 'dead_streams_count': 0,
-                'revived_streams_count': 0
+                'revived_streams_count': 0,
+                'checked_streams': []
             }
         
         finally:
