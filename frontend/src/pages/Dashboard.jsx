@@ -21,6 +21,7 @@ import UpcomingAutomationEvents from '@/components/Dashboard/UpcomingAutomationE
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
+  const [automationConfig, setAutomationConfig] = useState(null)
   const [streamCheckerStatus, setStreamCheckerStatus] = useState(null)
   const [playlists, setPlaylists] = useState([])
   const [loading, setLoading] = useState(true)
@@ -42,12 +43,14 @@ export default function Dashboard() {
 
   const loadStatus = async () => {
     try {
-      const [automationResponse, streamCheckerResponse] = await Promise.all([
+      const [automationResponse, streamCheckerResponse, automationConfigResponse] = await Promise.all([
         automationAPI.getStatus(),
-        streamCheckerAPI.getStatus()
+        streamCheckerAPI.getStatus(),
+        automationAPI.getConfig(),
       ])
       setStatus(automationResponse.data)
       setStreamCheckerStatus(streamCheckerResponse.data)
+      setAutomationConfig(automationConfigResponse.data || {})
     } catch (err) {
       console.error('Failed to load status:', err)
       toast({
@@ -125,10 +128,13 @@ export default function Dashboard() {
   const handleTogglePlaylist = async (playlistId, currentlyEnabled) => {
     try {
       setTogglingPlaylist(playlistId)
+      const normalizedPlaylistId = Number(playlistId)
 
       // Get current enabled accounts from status
       // Note: empty array means all accounts are enabled
-      const currentEnabledAccounts = status?.config?.enabled_m3u_accounts || []
+      const currentEnabledAccounts = (automationConfig?.enabled_m3u_accounts || [])
+        .map(id => Number(id))
+        .filter(Number.isFinite)
       let newEnabledAccounts
 
       if (currentEnabledAccounts.length === 0) {
@@ -136,8 +142,9 @@ export default function Dashboard() {
         if (currentlyEnabled) {
           // Disable this playlist: create list of all other playlists
           newEnabledAccounts = playlists
-            .filter(p => p.id !== playlistId)
-            .map(p => p.id)
+            .map(p => Number(p.id))
+            .filter(Number.isFinite)
+            .filter(id => id !== normalizedPlaylistId)
         } else {
           // This shouldn't happen when all are enabled
           newEnabledAccounts = []
@@ -146,10 +153,10 @@ export default function Dashboard() {
         // Some playlists are explicitly enabled
         if (currentlyEnabled) {
           // Disable this playlist: remove it from the enabled list
-          newEnabledAccounts = currentEnabledAccounts.filter(id => id !== playlistId)
+          newEnabledAccounts = currentEnabledAccounts.filter(id => id !== normalizedPlaylistId)
         } else {
           // Enable this playlist: add it to the enabled list
-          newEnabledAccounts = [...currentEnabledAccounts, playlistId]
+          newEnabledAccounts = [...currentEnabledAccounts, normalizedPlaylistId]
           // If all are now enabled, use empty array to indicate "all enabled"
           if (newEnabledAccounts.length === playlists.length) {
             newEnabledAccounts = []
@@ -165,6 +172,7 @@ export default function Dashboard() {
       })
 
       await loadStatus()
+      await loadPlaylists()
     } catch (err) {
       toast({
         title: "Error",
@@ -464,8 +472,11 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-3">
               {playlists.map((playlist) => {
-                const enabledAccounts = status?.config?.enabled_m3u_accounts || []
-                const isEnabled = enabledAccounts.length === 0 || enabledAccounts.includes(playlist.id)
+                const enabledAccounts = (automationConfig?.enabled_m3u_accounts || [])
+                  .map(id => Number(id))
+                  .filter(Number.isFinite)
+                const playlistId = Number(playlist.id)
+                const isEnabled = enabledAccounts.length === 0 || enabledAccounts.includes(playlistId)
 
                 return (
                   <div key={playlist.id} className="flex items-center justify-between p-3 border rounded-lg">

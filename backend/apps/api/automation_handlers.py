@@ -43,10 +43,17 @@ def handle_global_automation_settings_response(
 ):
     """Get or update global automation settings and lifecycle state."""
     config_manager = get_automation_config_manager()
+    global_settings_keys = {
+        "regular_automation_enabled",
+        "validate_existing_streams",
+        "playlist_update_interval_minutes",
+    }
 
     if method == "GET":
         try:
             settings = config_manager.get_global_settings()
+            manager = get_automation_manager()
+            settings["enabled_m3u_accounts"] = manager.config.get("enabled_m3u_accounts", [])
             return jsonify(settings), 200
         except Exception as exc:
             logger.error(f"Error getting global automation settings: {exc}")
@@ -59,13 +66,45 @@ def handle_global_automation_settings_response(
 
             old_settings = config_manager.get_global_settings()
             old_regular_enabled = old_settings.get("regular_automation_enabled", False)
+            manager = get_automation_manager()
 
-            if config_manager.update_global_settings(settings=updates):
+            global_updates = {key: updates[key] for key in global_settings_keys if key in updates}
+
+            manager_updates = {}
+            if "enabled_m3u_accounts" in updates:
+                raw_accounts = updates.get("enabled_m3u_accounts")
+                if raw_accounts is None:
+                    raw_accounts = []
+                if not isinstance(raw_accounts, list):
+                    return jsonify({"error": "enabled_m3u_accounts must be a list"}), 400
+
+                normalized_accounts = []
+                for account_id in raw_accounts:
+                    try:
+                        normalized_accounts.append(int(account_id))
+                    except (TypeError, ValueError):
+                        return jsonify(
+                            {"error": "enabled_m3u_accounts must contain numeric account IDs"}
+                        ), 400
+
+                manager_updates["enabled_m3u_accounts"] = normalized_accounts
+
+            if not global_updates and not manager_updates:
+                return jsonify({"error": "No valid settings provided"}), 400
+
+            global_update_success = True
+            if global_updates:
+                global_update_success = config_manager.update_global_settings(settings=global_updates)
+
+            if manager_updates:
+                manager.update_config(manager_updates)
+
+            if global_update_success:
                 new_settings = config_manager.get_global_settings()
+                new_settings["enabled_m3u_accounts"] = manager.config.get("enabled_m3u_accounts", [])
                 new_regular_enabled = new_settings.get("regular_automation_enabled", False)
 
                 if old_regular_enabled != new_regular_enabled and check_wizard_complete():
-                    manager = get_automation_manager()
                     if new_regular_enabled:
                         if not manager.automation_running:
                             manager.start_automation()
