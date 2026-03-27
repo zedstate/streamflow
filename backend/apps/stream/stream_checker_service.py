@@ -937,7 +937,6 @@ class StreamCheckerService:
         grace_period = False
         loop_check_enabled = False
         loop_penalty = 0.0
-        probe_duration = 360  # default: 120s max_loop_duration * 3
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -979,11 +978,6 @@ class StreamCheckerService:
                 )
                 # Clamp to valid range: -0.25 to 0.0
                 loop_penalty = max(-0.25, min(0.0, loop_penalty))
-                # Probe duration = max_loop_duration (user-entered seconds) * 3.
-                # Multiplier gives two full loop cycles plus one period of margin.
-                # Default 120s → 360s probe, matching the historical constant.
-                max_loop_duration = int(profile_stream_checking.get('max_loop_duration', 120))
-                probe_duration = max_loop_duration * 3
                 
                 # Also check if checking is enabled at all for this profile
                 if not profile_stream_checking.get('enabled', False):
@@ -1401,7 +1395,7 @@ class StreamCheckerService:
                     analyzed_streams,
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
-                    probe_duration=probe_duration,
+                    probe_duration=analysis_params_lp.get('max_loop_duration', 120) * 3,
                 )
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -1686,7 +1680,6 @@ class StreamCheckerService:
         grace_period = False
         loop_check_enabled = False
         loop_penalty = 0.0
-        probe_duration = 360  # default: 120s max_loop_duration * 3
         priority_m3u_ids = []
         priority_mode = 'absolute'
         scoring_weights = None
@@ -1724,11 +1717,6 @@ class StreamCheckerService:
                 )
                 # Clamp to valid range: -0.25 to 0.0
                 loop_penalty = max(-0.25, min(0.0, loop_penalty))
-                # Probe duration = max_loop_duration (user-entered seconds) * 3.
-                # Multiplier gives two full loop cycles plus one period of margin.
-                # Default 120s → 360s probe, matching the historical constant.
-                max_loop_duration = int(profile_stream_checking.get('max_loop_duration', 120))
-                probe_duration = max_loop_duration * 3
                 
                 # Also check if checking is enabled at all for this profile
                 if not profile_stream_checking.get('enabled', False):
@@ -2087,7 +2075,7 @@ class StreamCheckerService:
                     analyzed_streams,
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
-                    probe_duration=probe_duration,
+                    probe_duration=analysis_params_lp.get('max_loop_duration', 120) * 3,
                 )
                 # Write stats for all probed streams so loop fields
                 # (loop_probe_ran, loop_detected, loop_duration_secs) are
@@ -2382,7 +2370,7 @@ class StreamCheckerService:
             loop_penalty:     Negative float (e.g. -0.25) subtracted from score
                               of looping streams. 0.0 = no penalty.
             probe_duration:   Seconds to run each FFmpeg probe. Derived from the
-                              profile's max_loop_duration * 3. Clamped by
+                              global max_loop_duration * 3. Clamped by
                               _probe_stream_for_loops to [60, 720]. Default 360.
         """
         import threading
