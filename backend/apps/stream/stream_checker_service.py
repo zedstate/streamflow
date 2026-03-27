@@ -937,6 +937,14 @@ class StreamCheckerService:
                 priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
                 grace_period = profile_stream_checking.get('grace_period', False)
                 loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
+                profile_remove_dead_streams = profile_stream_checking.get('remove_dead_streams')
+                if isinstance(profile_remove_dead_streams, bool):
+                    dead_stream_removal_enabled = profile_remove_dead_streams
+                elif profile_remove_dead_streams is not None:
+                    logger.warning(
+                        "Ignoring non-boolean stream_checking.remove_dead_streams for channel %s",
+                        channel_id,
+                    )
                 scoring_weights = profile.get('scoring_weights', None)
                 loop_penalty = float(
                     (scoring_weights or {}).get('loop_penalty', 0.0)
@@ -1667,6 +1675,14 @@ class StreamCheckerService:
                 priority_mode = profile_stream_checking.get('m3u_priority_mode', 'absolute')
                 grace_period = profile_stream_checking.get('grace_period', False)
                 loop_check_enabled = profile_stream_checking.get('loop_check_enabled', False)
+                profile_remove_dead_streams = profile_stream_checking.get('remove_dead_streams')
+                if isinstance(profile_remove_dead_streams, bool):
+                    dead_stream_removal_enabled = profile_remove_dead_streams
+                elif profile_remove_dead_streams is not None:
+                    logger.warning(
+                        "Ignoring non-boolean stream_checking.remove_dead_streams for channel %s",
+                        channel_id,
+                    )
                 scoring_weights = profile.get('scoring_weights', None)
                 loop_penalty = float(
                     (scoring_weights or {}).get('loop_penalty', 0.0)

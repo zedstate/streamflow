@@ -1,6 +1,8 @@
 import pytest
 
 from apps.api.schemas import (
+    AutomationProfileCreateSchema,
+    AutomationProfileUpdateSchema,
     AutoCreateRuleCreateSchema,
     BulkRegexPatternsSchema,
     ChannelMatchSettingsSchema,
@@ -115,3 +117,30 @@ def test_auto_create_rule_schema_requires_channel_binding():
         AutoCreateRuleCreateSchema.from_payload({"name": "Rule", "regex_pattern": ".*"})
 
     assert "channel_id or channel_ids" in str(exc.value)
+
+
+def test_automation_profile_schema_normalizes_remove_dead_streams_flag():
+    parsed = AutomationProfileCreateSchema.from_payload(
+        {
+            "name": "Sports",
+            "stream_checking": {
+                "enabled": True,
+                "remove_dead_streams": "false",
+            },
+        }
+    )
+
+    assert parsed.profile_data["stream_checking"]["remove_dead_streams"] is False
+
+
+def test_automation_profile_schema_rejects_invalid_remove_dead_streams_flag():
+    with pytest.raises(ValidationError) as exc:
+        AutomationProfileUpdateSchema.from_payload(
+            {
+                "stream_checking": {
+                    "remove_dead_streams": "maybe",
+                },
+            }
+        )
+
+    assert "stream_checking.remove_dead_streams must be a boolean" in str(exc.value)

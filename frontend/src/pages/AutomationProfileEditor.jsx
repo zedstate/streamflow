@@ -33,6 +33,7 @@ const DEFAULT_PROFILE = {
     stream_checking: {
         enabled: true,
         allow_revive: true,
+        remove_dead_streams: true,
         check_all_streams: false,
         loop_check_enabled: false,
         stream_limit: 0,
@@ -456,6 +457,18 @@ export default function AutomationProfileEditor() {
                                                 <div className="space-y-0.5">
                                                     <Label htmlFor="check_all_streams" className="cursor-pointer font-medium">Check All Streams in Channel</Label>
                                                     <p className="text-[10px] text-muted-foreground">Check all streams assigned to the channel, not just matched ones.</p>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center space-x-3 bg-muted/50 p-3 rounded-md">
+                                                <Switch
+                                                    id="remove_dead_streams"
+                                                    checked={profile.stream_checking.remove_dead_streams ?? true}
+                                                    onCheckedChange={(checked) => updateProfile('stream_checking.remove_dead_streams', checked)}
+                                                />
+                                                <div className="space-y-0.5">
+                                                    <Label htmlFor="remove_dead_streams" className="cursor-pointer font-medium">Remove Dead Streams From Channel</Label>
+                                                    <p className="text-[10px] text-muted-foreground">When disabled, dead streams are kept in channel ordering during this profile&apos;s checks.</p>
                                                 </div>
                                             </div>
 

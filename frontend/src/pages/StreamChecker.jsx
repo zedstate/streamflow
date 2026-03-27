@@ -667,7 +667,7 @@ export default function StreamChecker() {
                 {/* Dead Streams Tab */}
                 <TabsContent value="dead-streams" className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    View and manage streams that have been marked as dead. Dead streams are automatically removed from channels during stream checking cycles.
+                    View and manage streams that have been marked as dead. Removal from channels during stream checks depends on each automation profile&apos;s Stream Checking settings.
                   </p>
                   <div className="space-y-4">
 

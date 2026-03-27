@@ -440,6 +440,27 @@ def _ensure_non_empty_list(value: Any, *, field_name: str) -> List[Any]:
     return value
 
 
+def _normalize_profile_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    stream_checking = data.get("stream_checking")
+    if stream_checking is None:
+        return data
+
+    if not isinstance(stream_checking, dict):
+        raise ValidationError("stream_checking must be an object")
+
+    normalized = dict(data)
+    normalized_stream_checking = dict(stream_checking)
+
+    if "remove_dead_streams" in normalized_stream_checking:
+        normalized_stream_checking["remove_dead_streams"] = _parse_bool(
+            normalized_stream_checking["remove_dead_streams"],
+            field_name="stream_checking.remove_dead_streams",
+        )
+
+    normalized["stream_checking"] = normalized_stream_checking
+    return normalized
+
+
 @dataclass(frozen=True)
 class AutomationProfileCreateSchema:
     profile_data: Dict[str, Any]
@@ -450,7 +471,7 @@ class AutomationProfileCreateSchema:
         name = str(data.get("name", "")).strip()
         if not name:
             raise ValidationError("Profile name is required")
-        return cls(profile_data=data)
+        return cls(profile_data=_normalize_profile_payload(data))
 
 
 @dataclass(frozen=True)
@@ -462,7 +483,7 @@ class AutomationProfileUpdateSchema:
         data = _ensure_dict(payload, message="No data provided")
         if not data:
             raise ValidationError("No data provided")
-        return cls(profile_data=data)
+        return cls(profile_data=_normalize_profile_payload(data))
 
 
 @dataclass(frozen=True)
