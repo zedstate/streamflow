@@ -21,6 +21,10 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { RegexTableRow } from '@/components/channel-configuration/RegexTableRow.jsx'
 import { SortableChannelItem } from '@/components/channel-configuration/SortableChannelItem.jsx'
 import {
+  BatchAssignPeriodsDialog,
+  BatchPeriodEditDialog,
+} from '@/components/channel-configuration/PeriodDialogs.jsx'
+import {
   DndContext,
 
   closestCenter,
