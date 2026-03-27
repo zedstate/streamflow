@@ -1097,10 +1097,37 @@ export default function ChannelConfiguration() {
       const profile = profiles.find(p => p.id === channel?.automation_profile_id)
       const channelPatternConfig = patterns[contextChannelId] || patterns[String(contextChannelId)] || {}
       const channelGroupId = channel?.group_id ?? channel?.channel_group_id
-      const groupMatchingConfig = channelGroupId ? ((groupsConfig[channelGroupId] || {}).matching || {}) : {}
-      const effectivePatternConfig = Object.keys(channelPatternConfig).length > 0
-        ? channelPatternConfig
-        : groupMatchingConfig
+      let groupMatchingConfig = channelGroupId ? ((groupsConfig[channelGroupId] || {}).matching || {}) : {}
+
+      // Global preview can be opened from the Regex tab before group config is loaded.
+      // Fetch it on demand so inherited TVG-ID/group regex settings are applied.
+      if (mode === 'global' && channelGroupId && Object.keys(groupMatchingConfig).length === 0) {
+        try {
+          const groupCfgResponse = await regexAPI.getGroupConfig(channelGroupId)
+          groupMatchingConfig = groupCfgResponse?.data || {}
+          setGroupsConfig(prev => ({
+            ...prev,
+            [channelGroupId]: {
+              ...(prev[channelGroupId] || {}),
+              matching: groupMatchingConfig,
+            },
+          }))
+        } catch (err) {
+          console.warn(`Failed to load group matching config for group ${channelGroupId}:`, err)
+        }
+      }
+
+      // Treat placeholder channel configs (empty patterns + TVG disabled + enabled=true) as no override,
+      // so group-level matching can still be inherited.
+      const hasChannelRegexPatterns =
+        (Array.isArray(channelPatternConfig.regex_patterns) && channelPatternConfig.regex_patterns.length > 0) ||
+        (Array.isArray(channelPatternConfig.regex) && channelPatternConfig.regex.length > 0)
+      const hasExplicitChannelOverride =
+        hasChannelRegexPatterns ||
+        channelPatternConfig.match_by_tvg_id === true ||
+        channelPatternConfig.enabled === false
+
+      const effectivePatternConfig = hasExplicitChannelOverride ? channelPatternConfig : groupMatchingConfig
 
       // Prepare request data based on mode
       let requestData = {
@@ -1134,7 +1161,6 @@ export default function ChannelConfiguration() {
           }))
         }
 
-        requestData.regex_patterns = regexPatterns
         requestData.regex_patterns = regexPatterns
       }
 
