@@ -1892,12 +1892,17 @@ class AutomatedStreamManager:
                     continue
                 
                 # Filter by forced_period_id if provided
+                selected_period_profile = None
                 if forced_period_id:
-                    has_period = any(p.get('id') == forced_period_id for p in config.get('periods', []))
-                    if not has_period:
+                    selected_period = next(
+                        (p for p in config.get('periods', []) if p.get('id') == forced_period_id),
+                        None,
+                    )
+                    if not selected_period:
                         continue
+                    selected_period_profile = selected_period.get('profile')
                     
-                profile = config.get('profile')
+                profile = selected_period_profile or config.get('profile')
                 
                 # Check if stream matching is enabled
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
@@ -2326,12 +2331,17 @@ class AutomatedStreamManager:
                     continue
                 
                 # Filter by forced_period_id if provided
+                selected_period_profile = None
                 if forced_period_id:
-                    has_period = any(p.get('id') == forced_period_id for p in config.get('periods', []))
-                    if not has_period:
+                    selected_period = next(
+                        (p for p in config.get('periods', []) if p.get('id') == forced_period_id),
+                        None,
+                    )
+                    if not selected_period:
                         continue
+                    selected_period_profile = selected_period.get('profile')
                         
-                profile = config.get('profile')
+                profile = selected_period_profile or config.get('profile')
                 
                 # Check if stream matching is enabled in the profile
                 matching_enabled = profile and profile.get('stream_matching', {}).get('enabled', False)
@@ -2582,19 +2592,22 @@ class AutomatedStreamManager:
                             continue
                             
                         p_name = period_info.get('name')
-                        profile = config.get('profile')
+                        profile = period_info.get('profile')
+                        profile_id = period_info.get('profile_id')
+                        if profile_id is not None:
+                            profile_id = str(profile_id)
                         
                         if p_id and p_name:
                             key = (p_id, p_name)
                             if key not in active_periods:
                                 active_periods[key] = {
-                                    'profile_id': profile.get('id') if profile else None,
+                                    'profile_id': profile_id,
                                     'profile_name': profile.get('name') if profile else "Default",
                                     'channels': []
                                 }
                             active_periods[key]['channels'].append(channel)
-                            if profile and profile.get('id'):
-                                active_profile_ids.add(profile['id'])
+                            if profile_id:
+                                active_profile_ids.add(profile_id)
             
             if not active_periods:
                 logger.debug("No channels with active automation periods found. Skipping cycle.")
@@ -2608,6 +2621,7 @@ class AutomatedStreamManager:
             playlists_to_update = set()
             update_all_playlists = False
             channels_to_quality_check = []
+            channel_check_all_streams = {}
             
             for p_id in active_profile_ids:
                 profile = automation_config.get_profile(p_id)
@@ -2617,7 +2631,16 @@ class AutomatedStreamManager:
                     # Collect all channels for this profile that are in the active periods
                     for entry in active_periods.values():
                         if entry.get('profile_id') == p_id:
-                            channels_to_quality_check.extend([ch.get('id') for ch in entry['channels']])
+                            check_all_streams = profile.get('stream_checking', {}).get('check_all_streams', False)
+                            for ch in entry['channels']:
+                                ch_id = ch.get('id')
+                                if ch_id is None:
+                                    continue
+                                channels_to_quality_check.append(ch_id)
+                                if check_all_streams:
+                                    channel_check_all_streams[ch_id] = True
+                                elif ch_id not in channel_check_all_streams:
+                                    channel_check_all_streams[ch_id] = False
 
                 m3u_config = profile.get('m3u_update', {})
                 if m3u_config.get('enabled', False):
@@ -2652,6 +2675,9 @@ class AutomatedStreamManager:
             
             validation_details = []
             assignment_details = []
+
+            # Deduplicate while preserving order (channels may appear in multiple active period groups).
+            channels_to_quality_check = list(dict.fromkeys(channels_to_quality_check))
             
             if refresh_success:
                 # Small delay to allow playlist processing
@@ -2688,22 +2714,13 @@ class AutomatedStreamManager:
                         _target_stream_ids = {}
                         
                         for ch_id in channels_to_quality_check:
-                            channel_data = udi.get_channel_by_id(ch_id)
-                            group_id = None
-                            if channel_data:
-                                group_id = channel_data.get('group_id') if channel_data.get('group_id') is not None else channel_data.get('channel_group_id')
-                            config = automation_config.get_effective_configuration(ch_id, group_id)
-                            
-                            if config:
-                                profile = config.get('profile', {})
-                                check_all_streams = profile.get('stream_checking', {}).get('check_all_streams', False)
-                                
-                                if not check_all_streams:
-                                    # Strict validation mapping: Evaluate newly assigned streams only.
-                                    if str(ch_id) in assigned_stream_ids:
-                                        _target_stream_ids[ch_id] = assigned_stream_ids[str(ch_id)]
-                                    else:
-                                        _target_stream_ids[ch_id] = []
+                            check_all_streams = channel_check_all_streams.get(ch_id, False)
+                            if not check_all_streams:
+                                # Strict validation mapping: Evaluate newly assigned streams only.
+                                if str(ch_id) in assigned_stream_ids:
+                                    _target_stream_ids[ch_id] = assigned_stream_ids[str(ch_id)]
+                                else:
+                                    _target_stream_ids[ch_id] = []
                         
                         if _target_stream_ids:
                             target_stream_ids = _target_stream_ids
