@@ -326,8 +326,9 @@ export default function StreamChecker() {
         </Card>
       </div>
 
-      {/* Batch Progress */}
-      {isChecking && totalBatch > 0 && (
+      {/* Batch Progress — hidden during single channel checks to avoid showing
+           stale counters from the previous automation run */}
+      {isChecking && totalBatch > 0 && !progress?.is_single_channel_check && (
         <Card>
           <CardHeader className="pb-2">
             <div className="flex justify-between items-center">
