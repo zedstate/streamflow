@@ -1264,7 +1264,7 @@ class StreamCheckerService:
             
             if streams_to_check:
                 logger.info(f"Starting smart parallel analysis of {total_streams} streams with {global_limit} global workers")
-                
+
                 self.progress.update(
                     channel_id=channel_id,
                     channel_name=channel_name,
@@ -1274,22 +1274,52 @@ class StreamCheckerService:
                     step='Analyzing streams with account limits',
                     step_detail=f'Using smart scheduler with per-account limits'
                 )
-                
-                # Check streams in parallel with account-aware limits
-                results = smart_scheduler.check_streams_with_limits(
-                    streams=streams_to_check,
-                    check_function=analyze_stream,
-                    progress_callback=progress_callback,
-                    start_callback=start_callback,
-                    stagger_delay=stagger_delay,
-                    abort_event=self.abort_current_check,
-                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
-                    timeout=analysis_params.get('timeout', 30),
-                    retries=analysis_params.get('retries', 1),
-                    retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
-                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
-                )
+
+                # Heartbeat thread: pushes current stream_statuses to the frontend
+                # every 2 seconds while check_streams_with_limits is running.
+                # Ensures the live grid stays responsive during stagger delays and
+                # between completion events regardless of stream count.
+                _heartbeat_stop = threading.Event()
+
+                def _heartbeat():
+                    while not _heartbeat_stop.wait(2):
+                        try:
+                            self.progress.update(
+                                channel_id=channel_id,
+                                channel_name=channel_name,
+                                current=sum(1 for s in stream_statuses.values() if s.get('status') == 'completed'),
+                                total=total_streams,
+                                status='analyzing',
+                                step='Analyzing streams with account limits',
+                                step_detail='Checking streams...',
+                                streams_detail=list(stream_statuses.values()),
+                                stream_duration=analysis_params.get('ffmpeg_duration', 30)
+                            )
+                        except Exception:
+                            pass  # never let the heartbeat crash the check
+
+                _hb_thread = threading.Thread(target=_heartbeat, daemon=True, name='stream-checker-heartbeat')
+                _hb_thread.start()
+
+                try:
+                    # Check streams in parallel with account-aware limits
+                    results = smart_scheduler.check_streams_with_limits(
+                        streams=streams_to_check,
+                        check_function=analyze_stream,
+                        progress_callback=progress_callback,
+                        start_callback=start_callback,
+                        stagger_delay=stagger_delay,
+                        abort_event=self.abort_current_check,
+                        ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
+                        timeout=analysis_params.get('timeout', 30),
+                        retries=analysis_params.get('retries', 1),
+                        retry_delay=analysis_params.get('retry_delay', 10),
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
+                    )
+                finally:
+                    _heartbeat_stop.set()
+                    _hb_thread.join(timeout=3)
                 
                 # Process results - ALL checks are complete at this point
                 # Collect stats for batch update to minimize API calls
