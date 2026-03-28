@@ -1287,7 +1287,7 @@ class StreamCheckerService:
                             self.progress.update(
                                 channel_id=channel_id,
                                 channel_name=channel_name,
-                                current=sum(1 for s in stream_statuses.values() if s.get('status') == 'completed'),
+                                current=sum(1 for s in stream_statuses.values() if s.get('status') in ('completed', 'dead', 'error', 'loop_detected')),
                                 total=total_streams,
                                 status='analyzing',
                                 step='Analyzing streams with account limits',
@@ -3378,14 +3378,16 @@ class StreamCheckerService:
                     'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0)
                 }
                 
-                # Calculate score
-                score = self._calculate_stream_score(score_data)
-                
-                # Prefer in-memory analyzed data for m3u_account and loop results —
-                # these are authoritative and not subject to UDI refresh timing.
-                # Fall back to Dispatcharr data for streams not in the lookup
-                # (e.g. streams added outside this check run).
+                # Calculate score — prefer the in-memory score from the check run
+                # which already reflects loop penalties, priority weights, and profile
+                # settings at the time of the check. Recalculate only as a fallback
+                # for streams not present in the lookup (e.g. pre-existing streams
+                # not re-analyzed in this run).
                 analyzed = analyzed_lookup.get(stream.get('id'))
+                if analyzed and analyzed.get('score') is not None:
+                    score = analyzed.get('score')
+                else:
+                    score = self._calculate_stream_score(score_data)
 
                 # M3U account: use the name already resolved during the check
                 if analyzed and analyzed.get('m3u_account'):
