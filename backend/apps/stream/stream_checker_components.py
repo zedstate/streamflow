@@ -672,7 +672,8 @@ class StreamCheckerProgress:
     
     def update(self, channel_id: int, channel_name: str, current: int, total: int,
                current_stream: str = '', status: str = 'checking', step: str = '', step_detail: str = '',
-               streams_detail: Optional[Dict] = None, stream_duration: Optional[int] = None):
+               streams_detail: Optional[Dict] = None, stream_duration: Optional[int] = None,
+               is_single_channel_check: bool = False):
         """Update progress information."""
         from apps.database.manager import get_db_manager
         with self.lock:
@@ -687,6 +688,7 @@ class StreamCheckerProgress:
                 'step': step,
                 'step_detail': step_detail,
                 'stream_duration': stream_duration,
+                'is_single_channel_check': is_single_channel_check,
                 'timestamp': datetime.now().isoformat()
             }
             if streams_detail is not None:

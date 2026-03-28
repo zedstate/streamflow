@@ -3156,7 +3156,20 @@ class StreamCheckerService:
                 checking_enabled = profile.get('stream_checking', {}).get('enabled', False)
             
             logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
-            
+
+            # Signal to the frontend that this is a single channel check so the
+            # stale batch progress card from the previous automation run is suppressed.
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=1,
+                status='starting',
+                step='Starting single channel check',
+                step_detail=f'Preparing check for {channel_name}',
+                is_single_channel_check=True,
+            )
+
             # Check if channel has active viewers or if its playlist has reached max concurrent streams
             current_streams = fetch_channel_streams(channel_id)
             if current_streams:
@@ -3468,7 +3481,10 @@ class StreamCheckerService:
             
             # Note: _trigger_channel_re_enabling and _trigger_empty_channel_disabling
             # have been deprecated as they relied on obsolete Dispatcharr features
-            
+
+            # Clear progress so the frontend stops showing the single channel check UI
+            self.progress.clear()
+
             return {
                 'success': True,
                 'channel_id': channel_id,
@@ -3478,6 +3494,7 @@ class StreamCheckerService:
             
         except Exception as e:
             logger.error(f"Error checking single channel {channel_id}: {e}", exc_info=True)
+            self.progress.clear()
             return {'success': False, 'error': str(e)}
     
     def clear_queue(self):
