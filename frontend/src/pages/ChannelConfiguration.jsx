@@ -1114,6 +1114,7 @@ export default function ChannelConfiguration() {
           setGroupsConfig(prev => ({
             ...prev,
             [channelGroupId]: {
+              periods: [],
               ...(prev[channelGroupId] || {}),
               matching: groupMatchingConfig,
             },
