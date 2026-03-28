@@ -1206,6 +1206,7 @@ class StreamCheckerService:
                 stream_id = stream.get('id')
                 if stream_id in stream_statuses:
                     stream_statuses[stream_id]['status'] = 'checking'
+                    stream_statuses[stream_id]['started_at'] = datetime.now().isoformat()
                     self.progress.update(
                         channel_id=channel_id,
                         channel_name=channel_name,
@@ -1215,7 +1216,8 @@ class StreamCheckerService:
                         status='analyzing',
                         step='Analyzing streams with account limits',
                         step_detail=f'Started checking {stream.get("name", "Unknown")}',
-                        streams_detail=list(stream_statuses.values())
+                        streams_detail=list(stream_statuses.values()),
+                        stream_duration=analysis_params.get('ffmpeg_duration', 30)
                     )
             
             def progress_callback(completed, total, result):
@@ -1256,12 +1258,13 @@ class StreamCheckerService:
                     status='analyzing',
                     step='Analyzing streams with account limits',
                     step_detail=f'Completed {completed}/{total}',
-                    streams_detail=list(stream_statuses.values())
+                    streams_detail=list(stream_statuses.values()),
+                    stream_duration=analysis_params.get('ffmpeg_duration', 30)
                 )
             
             if streams_to_check:
                 logger.info(f"Starting smart parallel analysis of {total_streams} streams with {global_limit} global workers")
-                
+
                 self.progress.update(
                     channel_id=channel_id,
                     channel_name=channel_name,
@@ -1271,22 +1274,52 @@ class StreamCheckerService:
                     step='Analyzing streams with account limits',
                     step_detail=f'Using smart scheduler with per-account limits'
                 )
-                
-                # Check streams in parallel with account-aware limits
-                results = smart_scheduler.check_streams_with_limits(
-                    streams=streams_to_check,
-                    check_function=analyze_stream,
-                    progress_callback=progress_callback,
-                    start_callback=start_callback,
-                    stagger_delay=stagger_delay,
-                    abort_event=self.abort_current_check,
-                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
-                    timeout=analysis_params.get('timeout', 30),
-                    retries=analysis_params.get('retries', 1),
-                    retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
-                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
-                )
+
+                # Heartbeat thread: pushes current stream_statuses to the frontend
+                # every 2 seconds while check_streams_with_limits is running.
+                # Ensures the live grid stays responsive during stagger delays and
+                # between completion events regardless of stream count.
+                _heartbeat_stop = threading.Event()
+
+                def _heartbeat():
+                    while not _heartbeat_stop.wait(2):
+                        try:
+                            self.progress.update(
+                                channel_id=channel_id,
+                                channel_name=channel_name,
+                                current=sum(1 for s in stream_statuses.values() if s.get('status') in ('completed', 'dead', 'error', 'loop_detected')),
+                                total=total_streams,
+                                status='analyzing',
+                                step='Analyzing streams with account limits',
+                                step_detail='Checking streams...',
+                                streams_detail=list(stream_statuses.values()),
+                                stream_duration=analysis_params.get('ffmpeg_duration', 30)
+                            )
+                        except Exception:
+                            pass  # never let the heartbeat crash the check
+
+                _hb_thread = threading.Thread(target=_heartbeat, daemon=True, name='stream-checker-heartbeat')
+                _hb_thread.start()
+
+                try:
+                    # Check streams in parallel with account-aware limits
+                    results = smart_scheduler.check_streams_with_limits(
+                        streams=streams_to_check,
+                        check_function=analyze_stream,
+                        progress_callback=progress_callback,
+                        start_callback=start_callback,
+                        stagger_delay=stagger_delay,
+                        abort_event=self.abort_current_check,
+                        ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
+                        timeout=analysis_params.get('timeout', 30),
+                        retries=analysis_params.get('retries', 1),
+                        retry_delay=analysis_params.get('retry_delay', 10),
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
+                    )
+                finally:
+                    _heartbeat_stop.set()
+                    _hb_thread.join(timeout=3)
                 
                 # Process results - ALL checks are complete at this point
                 # Collect stats for batch update to minimize API calls
@@ -1396,6 +1429,9 @@ class StreamCheckerService:
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
                     probe_duration=analysis_params_lp.get('max_loop_duration', 120) * 3,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    streams_detail=list(stream_statuses.values()),
                 )
             else:
                 logger.debug("[loop-probe] Loop checking disabled by profile — skipping")
@@ -1512,6 +1548,10 @@ class StreamCheckerService:
                     
                     # Get M3U account name for this stream using helper method
                     m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+
+                    # Stamp onto the analyzed dict so analyzed_lookup (used by
+                    # check_single_channel) can read it without a separate UDI call.
+                    analyzed['m3u_account'] = m3u_account_name
                     
                     stream_stat = {
                         'stream_id': stream_id,
@@ -1608,7 +1648,11 @@ class StreamCheckerService:
                     'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
                 } for s in revived_stream_ids],
                 'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
-                'checked_streams': stream_stats
+                'checked_streams': stream_stats,
+                # In-memory analyzed_streams: authoritative source for loop results
+                # and m3u_account names. Used by check_single_channel to build its
+                # changelog entry without depending on a potentially stale UDI refresh.
+                'analyzed_streams': analyzed_streams,
             }
 
             
@@ -1899,9 +1943,24 @@ class StreamCheckerService:
                 
                 if stream['id'] in stream_statuses:
                     stream_statuses[stream['id']]['status'] = 'checking'
+                    stream_statuses[stream['id']]['started_at'] = datetime.now().isoformat()
                 
                 # Analyze stream
                 analysis_params = self.config.get('stream_analysis', {})
+
+                # Push checking status + started_at to frontend before analyze_stream blocks
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=idx,
+                    total=total_streams,
+                    current_stream=stream.get('name', 'Unknown'),
+                    status='analyzing',
+                    step='Analyzing stream quality',
+                    step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})',
+                    streams_detail=list(stream_statuses.values()),
+                    stream_duration=analysis_params.get('ffmpeg_duration', 20)
+                )
                 
                 # Apply URL transformation if using M3U profile with search/replace patterns
                 stream_url = stream.get('url', '')
@@ -2076,6 +2135,9 @@ class StreamCheckerService:
                     user_agent=analysis_params_lp.get('user_agent', 'VLC/3.0.14'),
                     loop_penalty=loop_penalty,
                     probe_duration=analysis_params_lp.get('max_loop_duration', 120) * 3,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    streams_detail=list(stream_statuses.values()),
                 )
                 # Write stats for all probed streams so loop fields
                 # (loop_probe_ran, loop_detected, loop_duration_secs) are
@@ -2194,6 +2256,10 @@ class StreamCheckerService:
                     formatted_stats = format_stream_stats_for_display(extracted_stats)
                     m3u_account_name = self._get_m3u_account_name(stream_id, udi)
 
+                    # Stamp onto analyzed dict so analyzed_lookup in check_single_channel
+                    # carries the resolved name without a separate UDI call.
+                    analyzed['m3u_account'] = m3u_account_name
+
                     stream_stat = {
                         'stream_id': stream_id,
                         'stream_name': analyzed.get('stream_name'),
@@ -2290,11 +2356,9 @@ class StreamCheckerService:
                     'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
                 } for s in revived_stream_ids],
                 'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
-                'checked_streams': stream_stats
+                'checked_streams': stream_stats,
+                'analyzed_streams': analyzed_streams,
             }
-
-
-            
         except Exception as e:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
@@ -2333,7 +2397,9 @@ class StreamCheckerService:
         finally:
             self.checking = False
     
-    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0, probe_duration: int = 360) -> None:
+    def _run_loop_probes(self, analyzed_streams: list, user_agent: str = 'VLC/3.0.14', loop_penalty: float = 0.0,
+                         probe_duration: int = 360, channel_id: int = 0, channel_name: str = '',
+                         streams_detail: Optional[list] = None) -> None:
         """
         Run loop detection probes on eligible streams in parallel with
         per-account concurrent limits, then write results back into each
@@ -2372,6 +2438,12 @@ class StreamCheckerService:
             probe_duration:   Seconds to run each FFmpeg probe. Derived from the
                               global max_loop_duration * 3. Clamped by
                               _probe_stream_for_loops to [60, 720]. Default 360.
+            channel_id:       Channel being checked — used for progress reporting.
+            channel_name:     Channel name — used for progress reporting.
+            streams_detail:   Snapshot of stream_statuses values from the calling
+                              check method. Used to build probe_detail for live
+                              frontend grid updates. None on paths where
+                              stream_statuses is not available.
         """
         import threading
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -2415,6 +2487,39 @@ class StreamCheckerService:
         udi = get_udi_manager()
         results_lock = threading.Lock()
         completed = [0]
+
+        # Build probe_detail from the streams_detail snapshot passed in by the
+        # calling check method. Keyed by integer stream id (same as stream_statuses).
+        # Only built when streams_detail is available — the grid stays frozen
+        # otherwise but the probes still run correctly.
+        probe_detail: dict = {}
+        if streams_detail:
+            for entry in streams_detail:
+                sid = entry.get('id') or entry.get('stream_id')
+                if sid is not None:
+                    probe_detail[sid] = dict(entry)  # shallow copy
+
+        # Mark eligible streams as 'probing' and stamp started_at
+        eligible_ids = {s.get('stream_id') for s in eligible}
+        probe_start = datetime.now().isoformat()
+        for sid, entry in probe_detail.items():
+            if sid in eligible_ids:
+                entry['status'] = 'probing'
+                entry['started_at'] = probe_start
+
+        # Emit phase-entry progress update so frontend transitions to loop phase
+        if channel_id and probe_detail:
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=total,
+                status='analyzing',
+                step='Loop testing',
+                step_detail=f'Probing {total} stream(s) for looping content',
+                streams_detail=list(probe_detail.values()),
+                stream_duration=probe_duration,
+            )
 
         def _probe_one(stream: dict) -> None:
             """Run one loop probe with account slot acquire/release."""
@@ -2481,6 +2586,24 @@ class StreamCheckerService:
                 account_limiter.release(account_id)
                 with results_lock:
                     completed[0] += 1
+                    # Update probe_detail entry with result for live grid
+                    if probe_detail and stream_id in probe_detail:
+                        loop_result = stream.get('loop_detected')
+                        probe_detail[stream_id]['status'] = (
+                            'loop_detected' if loop_result is True else 'completed'
+                        )
+                    if channel_id and probe_detail:
+                        self.progress.update(
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            current=completed[0],
+                            total=total,
+                            status='analyzing',
+                            step='Loop testing',
+                            step_detail=f'Completed {completed[0]}/{total}: {stream_name}',
+                            streams_detail=list(probe_detail.values()),
+                            stream_duration=probe_duration,
+                        )
                     logger.info(
                         f"[loop-probe] Completed {completed[0]}/{total}: {stream_name}"
                     )
@@ -3033,7 +3156,20 @@ class StreamCheckerService:
                 checking_enabled = profile.get('stream_checking', {}).get('enabled', False)
             
             logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
-            
+
+            # Signal to the frontend that this is a single channel check so the
+            # stale batch progress card from the previous automation run is suppressed.
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=1,
+                status='starting',
+                step='Starting single channel check',
+                step_detail=f'Preparing check for {channel_name}',
+                is_single_channel_check=True,
+            )
+
             # Check if channel has active viewers or if its playlist has reached max concurrent streams
             current_streams = fetch_channel_streams(channel_id)
             if current_streams:
@@ -3184,8 +3320,18 @@ class StreamCheckerService:
                 
                 # Get the count of dead streams that were removed during the check
                 dead_count = check_result.get('dead_streams_count', 0)
+
+                # Build an in-memory lookup keyed by stream_id from the authoritative
+                # analyzed_streams list. This carries correct loop results and m3u_account
+                # names without depending on UDI refresh timing or Dispatcharr staleness.
+                analyzed_lookup = {
+                    a.get('stream_id'): a
+                    for a in check_result.get('analyzed_streams', [])
+                    if a.get('stream_id') is not None
+                }
             else:
                 logger.info(f"Step 6/6: Skipping stream checking (checking is disabled for this channel)")
+                analyzed_lookup = {}
             
             # Gather statistics after check using centralized utility.
             # Refresh UDI cache first so stream_stats reflect the post-probe
@@ -3245,14 +3391,25 @@ class StreamCheckerService:
                     'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0)
                 }
                 
-                # Calculate score
-                score = self._calculate_stream_score(score_data)
-                
-                # Get M3U account name for this stream using helper method
-                m3u_account_name = None
-                m3u_account_id = stream.get('m3u_account')
-                if m3u_account_id:
-                    m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
+                # Calculate score — prefer the in-memory score from the check run
+                # which already reflects loop penalties, priority weights, and profile
+                # settings at the time of the check. Recalculate only as a fallback
+                # for streams not present in the lookup (e.g. pre-existing streams
+                # not re-analyzed in this run).
+                analyzed = analyzed_lookup.get(stream.get('id'))
+                if analyzed and analyzed.get('score') is not None:
+                    score = analyzed.get('score')
+                else:
+                    score = self._calculate_stream_score(score_data)
+
+                # M3U account: use the name already resolved during the check
+                if analyzed and analyzed.get('m3u_account'):
+                    m3u_account_name = analyzed.get('m3u_account')
+                else:
+                    m3u_account_name = None
+                    m3u_account_id = stream.get('m3u_account')
+                    if m3u_account_id:
+                        m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
                 
                 # Build stream detail dict — include loop results if persisted
                 stream_detail = {
@@ -3267,11 +3424,14 @@ class StreamCheckerService:
                     'hdr_format': extracted_stats.get('hdr_format')
                 }
 
-                # Loop detection results are persisted to stream_stats by
-                # _prepare_stream_stats_for_batch / _update_stream_stats.
-                # Read them back here so the single-channel changelog entry
-                # shows the Loop column the same as the batch path.
-                if stream_stats.get('loop_probe_ran'):
+                # Loop detection: prefer in-memory analyzed dict (authoritative, always
+                # current) over Dispatcharr stream_stats (may lag UDI refresh timing).
+                if analyzed and analyzed.get('loop_probe_ran'):
+                    stream_detail['loop_probe_ran']     = True
+                    stream_detail['loop_detected']      = analyzed.get('loop_detected')
+                    stream_detail['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+                elif stream_stats.get('loop_probe_ran'):
+                    # Fallback: stream not in analyzed_lookup but has persisted loop data
                     stream_detail['loop_probe_ran']     = True
                     stream_detail['loop_detected']      = stream_stats.get('loop_detected')
                     stream_detail['loop_duration_secs'] = stream_stats.get('loop_duration_secs')
@@ -3321,7 +3481,10 @@ class StreamCheckerService:
             
             # Note: _trigger_channel_re_enabling and _trigger_empty_channel_disabling
             # have been deprecated as they relied on obsolete Dispatcharr features
-            
+
+            # Clear progress so the frontend stops showing the single channel check UI
+            self.progress.clear()
+
             return {
                 'success': True,
                 'channel_id': channel_id,
@@ -3331,6 +3494,7 @@ class StreamCheckerService:
             
         except Exception as e:
             logger.error(f"Error checking single channel {channel_id}: {e}", exc_info=True)
+            self.progress.clear()
             return {'success': False, 'error': str(e)}
     
     def clear_queue(self):

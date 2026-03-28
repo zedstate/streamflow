@@ -36,6 +36,7 @@ export default function StreamChecker() {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState('')
+  const [tick, setTick] = useState(0) // drives countdown re-renders — value never rendered
   const [configEditing, setConfigEditing] = useState(false)
   const [editedConfig, setEditedConfig] = useState(null)
   const [deadStreams, setDeadStreams] = useState([])
@@ -59,6 +60,14 @@ export default function StreamChecker() {
     }, pollInterval)
     return () => clearInterval(interval)
   }, [status?.checking, status?.queue?.queue_size])
+
+  // Tick every second to drive per-stream countdown cells
+  // The tick value itself is never rendered — it triggers re-renders so
+  // each countdown cell recalculates from Date.now() fresh each second.
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const loadData = async () => {
     try {
@@ -317,8 +326,9 @@ export default function StreamChecker() {
         </Card>
       </div>
 
-      {/* Batch Progress */}
-      {isChecking && totalBatch > 0 && (
+      {/* Batch Progress — hidden during single channel checks to avoid showing
+           stale counters from the previous automation run */}
+      {isChecking && totalBatch > 0 && !progress?.is_single_channel_check && (
         <Card>
           <CardHeader className="pb-2">
             <div className="flex justify-between items-center">
@@ -378,65 +388,119 @@ export default function StreamChecker() {
             </div>
 
             {/* Streams Detail Progress List */}
-            {progress.streams_detail && progress.streams_detail.length > 0 && (
-              <div className="mt-4">
-                <Label className="text-sm font-semibold mb-2 block">Stream Progress Tracking</Label>
-                <div className="rounded-md border max-h-64 overflow-y-auto w-full">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-muted sticky top-0 z-10 text-xs text-muted-foreground uppercase h-8">
-                      <tr>
-                        <th className="px-3 py-1 font-medium">Stream</th>
-                        <th className="px-3 py-1 font-medium">Account</th>
-                        <th className="px-3 py-1 font-medium text-center">Status</th>
-                        <th className="px-3 py-1 font-medium text-right">Specs</th>
-                        <th className="px-3 py-1 font-medium text-right">Score</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {progress.streams_detail.map((stream) => (
-                        <tr key={stream.id} className="hover:bg-muted/50 transition-colors bg-card">
-                          <td className="px-3 py-1.5 align-middle">
-                            <div className="font-medium max-w-[200px] truncate" title={stream.name}>
-                              {stream.name}
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5 align-middle">
-                            <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={stream.m3u_account}>
-                              {stream.m3u_account}
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5 align-middle text-center">
-                            {stream.status === 'pending' && <Badge variant="outline" className="text-[10px] text-muted-foreground">Pending</Badge>}
-                            {stream.status === 'checking' && <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">Checking</Badge>}
-                            {stream.status === 'completed' && <Badge variant="success" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Completed</Badge>}
-                            {stream.status === 'error' && <Badge variant="destructive" className="text-[10px]">Error</Badge>}
-                            {stream.status === 'dead' && <Badge variant="destructive" className="text-[10px]">Dead</Badge>}
-                          </td>
-                          <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
-                            {stream.status === 'completed' ? (
-                              <div className="flex flex-col items-end gap-0.5">
-                                <span>{stream.video_codec || 'N/A'} • <span className="text-foreground">{stream.fps || 0} fps </span></span>
-                                {(stream.resolution || stream.bitrate) && (
-                                  <span className="text-[10px] text-muted-foreground/80">
-                                    {stream.resolution || 'Unknown'} {stream.bitrate ? `• ${Math.round(stream.bitrate)} kbps` : ''}
-                                    {stream.hdr_format && stream.hdr_format !== 'SDR' && (
-                                      <Badge variant="outline" className="ml-1 px-1 py-0 text-[8px] h-3 border-amber-500/30 text-amber-600 dark:text-amber-400">HDR</Badge>
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                            ) : '-'}
-                          </td>
-                          <td className="px-3 py-1.5 align-middle text-right text-xs font-mono">
-                            {stream.status === 'completed' && stream.score !== undefined ? stream.score.toFixed(2) : '-'}
-                          </td>
+            {progress.streams_detail && progress.streams_detail.length > 0 && (() => {
+              // Phase-aware sort: loop testing phase floats probing streams to top;
+              // normal analysis phase floats completed streams to top by score.
+              const isLoopPhase = progress.step === 'Loop testing'
+              const STATUS_ORDER = isLoopPhase
+                ? { probing: 0, loop_detected: 1, completed: 2, checking: 3, pending: 4, error: 5, dead: 5 }
+                : { completed: 0, checking: 1, pending: 2, error: 3, dead: 3 }
+
+              // Dynamic height: sized to min(max_workers, stream count), floor 6 rows
+              const maxWorkers = status?.parallel?.max_workers || 6
+              const ROW_HEIGHT = 44   // px — double-line completed rows are taller
+              const HEADER_HEIGHT = 32
+              const visibleRows = Math.max(6, Math.min(maxWorkers, progress.streams_detail.length))
+              const tableMaxHeight = visibleRows * ROW_HEIGHT + HEADER_HEIGHT
+
+              const sortedStreams = [...progress.streams_detail].sort((a, b) => {
+                const oa = STATUS_ORDER[a.status] ?? 99
+                const ob = STATUS_ORDER[b.status] ?? 99
+                if (oa !== ob) return oa - ob
+                const sa = a.score != null ? a.score : -Infinity
+                const sb = b.score != null ? b.score : -Infinity
+                return sb - sa
+              })
+
+              return (
+                <div className="mt-4">
+                  <Label className="text-sm font-semibold mb-2 block">Stream Progress Tracking</Label>
+                  <div className="rounded-md border overflow-y-auto w-full" style={{ maxHeight: `${tableMaxHeight}px` }}>
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-muted sticky top-0 z-10 text-xs text-muted-foreground uppercase h-8">
+                        <tr>
+                          <th className="px-3 py-1 font-medium">Stream</th>
+                          <th className="px-3 py-1 font-medium">Account</th>
+                          <th className="px-3 py-1 font-medium text-center">Status</th>
+                          <th className="px-3 py-1 font-medium text-right">Countdown</th>
+                          <th className="px-3 py-1 font-medium text-right">Specs</th>
+                          <th className="px-3 py-1 font-medium text-right">Score</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y">
+                        {sortedStreams.map((stream) => {
+                          // Per-stream countdown: counts down from stream_duration
+                          // using only client-side time — no backend tracking needed.
+                          const isActive = stream.status === 'checking' || stream.status === 'probing'
+                          let countdownCell = <span className="text-muted-foreground">-</span>
+                          if (isActive && stream.started_at && progress.stream_duration) {
+                            const elapsed = Math.floor((Date.now() - new Date(stream.started_at).getTime()) / 1000)
+                            const remaining = Math.max(0, progress.stream_duration - elapsed)
+                            if (remaining === 0) {
+                              countdownCell = <span className="text-muted-foreground/50">--</span>
+                            } else {
+                              const m = Math.floor(remaining / 60)
+                              const s = remaining % 60
+                              const timeStr = m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
+                              countdownCell = (
+                                <span className={remaining <= 10 ? 'text-amber-500 font-mono text-xs' : 'text-muted-foreground font-mono text-xs'}>
+                                  {timeStr}
+                                </span>
+                              )
+                            }
+                          }
+
+                          return (
+                            <tr key={stream.id} className="hover:bg-muted/50 transition-colors bg-card">
+                              <td className="px-3 py-1.5 align-middle">
+                                <div className="font-medium max-w-[200px] truncate" title={stream.name}>
+                                  {stream.name}
+                                </div>
+                              </td>
+                              <td className="px-3 py-1.5 align-middle">
+                                <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={stream.m3u_account}>
+                                  {stream.m3u_account}
+                                </div>
+                              </td>
+                              <td className="px-3 py-1.5 align-middle text-center">
+                                {stream.status === 'pending' && <Badge variant="outline" className="text-[10px] text-muted-foreground">Pending</Badge>}
+                                {stream.status === 'checking' && <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">Checking</Badge>}
+                                {stream.status === 'completed' && <Badge variant="outline" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Completed</Badge>}
+                                {stream.status === 'error' && <Badge variant="destructive" className="text-[10px]">Error</Badge>}
+                                {stream.status === 'dead' && <Badge variant="destructive" className="text-[10px]">Dead</Badge>}
+                                {stream.status === 'probing' && <Badge variant="outline" className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 animate-pulse">Probing</Badge>}
+                                {stream.status === 'loop_detected' && <Badge variant="outline" className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">⚠ {stream.loop_duration_secs ? `${stream.loop_duration_secs.toFixed(1)}s` : ''} Loop Found</Badge>}
+                              </td>
+                              <td className="px-3 py-1.5 align-middle text-right">
+                                {countdownCell}
+                              </td>
+                              <td className="px-3 py-1.5 align-middle text-right text-xs text-muted-foreground whitespace-nowrap">
+                                {stream.status === 'completed' || stream.status === 'loop_detected' ? (
+                                  <div className="flex flex-col items-end gap-0.5">
+                                    <span>{stream.video_codec || 'N/A'} • <span className="text-foreground">{stream.fps || 0} fps </span></span>
+                                    {(stream.resolution || stream.bitrate) && (
+                                      <span className="text-[10px] text-muted-foreground/80">
+                                        {stream.resolution || 'Unknown'} {stream.bitrate ? `• ${Math.round(stream.bitrate)} kbps` : ''}
+                                        {stream.hdr_format && stream.hdr_format !== 'SDR' && (
+                                          <Badge variant="outline" className="ml-1 px-1 py-0 text-[8px] h-3 border-amber-500/30 text-amber-600 dark:text-amber-400">HDR</Badge>
+                                        )}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : '-'}
+                              </td>
+                              <td className="px-3 py-1.5 align-middle text-right text-xs font-mono">
+                                {(stream.status === 'completed' || stream.status === 'loop_detected') && stream.score !== undefined ? stream.score.toFixed(2) : '-'}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
           </CardContent>
         </Card>
       )}
