@@ -1548,6 +1548,10 @@ class StreamCheckerService:
                     
                     # Get M3U account name for this stream using helper method
                     m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+
+                    # Stamp onto the analyzed dict so analyzed_lookup (used by
+                    # check_single_channel) can read it without a separate UDI call.
+                    analyzed['m3u_account'] = m3u_account_name
                     
                     stream_stat = {
                         'stream_id': stream_id,
@@ -1644,7 +1648,11 @@ class StreamCheckerService:
                     'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
                 } for s in revived_stream_ids],
                 'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
-                'checked_streams': stream_stats
+                'checked_streams': stream_stats,
+                # In-memory analyzed_streams: authoritative source for loop results
+                # and m3u_account names. Used by check_single_channel to build its
+                # changelog entry without depending on a potentially stale UDI refresh.
+                'analyzed_streams': analyzed_streams,
             }
 
             
@@ -2248,6 +2256,10 @@ class StreamCheckerService:
                     formatted_stats = format_stream_stats_for_display(extracted_stats)
                     m3u_account_name = self._get_m3u_account_name(stream_id, udi)
 
+                    # Stamp onto analyzed dict so analyzed_lookup in check_single_channel
+                    # carries the resolved name without a separate UDI call.
+                    analyzed['m3u_account'] = m3u_account_name
+
                     stream_stat = {
                         'stream_id': stream_id,
                         'stream_name': analyzed.get('stream_name'),
@@ -2344,11 +2356,9 @@ class StreamCheckerService:
                     'm3u_account': next((st.get('m3u_account') for st in streams if st['id'] == s), None)
                 } for s in revived_stream_ids],
                 'skipped_streams': [{'id': s['id'], 'name': s.get('name', f"Stream {s['id']}")} for s in streams_already_checked],
-                'checked_streams': stream_stats
+                'checked_streams': stream_stats,
+                'analyzed_streams': analyzed_streams,
             }
-
-
-            
         except Exception as e:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
@@ -3297,8 +3307,18 @@ class StreamCheckerService:
                 
                 # Get the count of dead streams that were removed during the check
                 dead_count = check_result.get('dead_streams_count', 0)
+
+                # Build an in-memory lookup keyed by stream_id from the authoritative
+                # analyzed_streams list. This carries correct loop results and m3u_account
+                # names without depending on UDI refresh timing or Dispatcharr staleness.
+                analyzed_lookup = {
+                    a.get('stream_id'): a
+                    for a in check_result.get('analyzed_streams', [])
+                    if a.get('stream_id') is not None
+                }
             else:
                 logger.info(f"Step 6/6: Skipping stream checking (checking is disabled for this channel)")
+                analyzed_lookup = {}
             
             # Gather statistics after check using centralized utility.
             # Refresh UDI cache first so stream_stats reflect the post-probe
@@ -3361,11 +3381,20 @@ class StreamCheckerService:
                 # Calculate score
                 score = self._calculate_stream_score(score_data)
                 
-                # Get M3U account name for this stream using helper method
-                m3u_account_name = None
-                m3u_account_id = stream.get('m3u_account')
-                if m3u_account_id:
-                    m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
+                # Prefer in-memory analyzed data for m3u_account and loop results —
+                # these are authoritative and not subject to UDI refresh timing.
+                # Fall back to Dispatcharr data for streams not in the lookup
+                # (e.g. streams added outside this check run).
+                analyzed = analyzed_lookup.get(stream.get('id'))
+
+                # M3U account: use the name already resolved during the check
+                if analyzed and analyzed.get('m3u_account'):
+                    m3u_account_name = analyzed.get('m3u_account')
+                else:
+                    m3u_account_name = None
+                    m3u_account_id = stream.get('m3u_account')
+                    if m3u_account_id:
+                        m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
                 
                 # Build stream detail dict — include loop results if persisted
                 stream_detail = {
@@ -3380,11 +3409,14 @@ class StreamCheckerService:
                     'hdr_format': extracted_stats.get('hdr_format')
                 }
 
-                # Loop detection results are persisted to stream_stats by
-                # _prepare_stream_stats_for_batch / _update_stream_stats.
-                # Read them back here so the single-channel changelog entry
-                # shows the Loop column the same as the batch path.
-                if stream_stats.get('loop_probe_ran'):
+                # Loop detection: prefer in-memory analyzed dict (authoritative, always
+                # current) over Dispatcharr stream_stats (may lag UDI refresh timing).
+                if analyzed and analyzed.get('loop_probe_ran'):
+                    stream_detail['loop_probe_ran']     = True
+                    stream_detail['loop_detected']      = analyzed.get('loop_detected')
+                    stream_detail['loop_duration_secs'] = analyzed.get('loop_duration_secs')
+                elif stream_stats.get('loop_probe_ran'):
+                    # Fallback: stream not in analyzed_lookup but has persisted loop data
                     stream_detail['loop_probe_ran']     = True
                     stream_detail['loop_detected']      = stream_stats.get('loop_detected')
                     stream_detail['loop_duration_secs'] = stream_stats.get('loop_duration_secs')
