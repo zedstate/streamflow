@@ -1104,7 +1104,13 @@ export default function ChannelConfiguration() {
       if (mode === 'global' && channelGroupId && Object.keys(groupMatchingConfig).length === 0) {
         try {
           const groupCfgResponse = await regexAPI.getGroupConfig(channelGroupId)
-          groupMatchingConfig = groupCfgResponse?.data || {}
+          // Merge response data with safe defaults so downstream .length and boolean
+          // checks never throw even if the API returns an unexpected shape.
+          groupMatchingConfig = {
+            regex_patterns: [],
+            match_by_tvg_id: false,
+            ...(groupCfgResponse?.data || {}),
+          }
           setGroupsConfig(prev => ({
             ...prev,
             [channelGroupId]: {
