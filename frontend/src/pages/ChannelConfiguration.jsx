@@ -443,7 +443,6 @@ export default function ChannelConfiguration() {
 
   // Automation Profile state
   const [profiles, setProfiles] = useState([])
-  const [assignProfileId, setAssignProfileId] = useState('')
   const [assignEpgProfileId, setAssignEpgProfileId] = useState('')
 
   // M3U account filtering state for regex patterns
@@ -684,44 +683,6 @@ export default function ChannelConfiguration() {
       })
     } finally {
       setBulkCheckingChannels(false)
-    }
-  }
-
-  const handleBatchAssignProfile = async (profileId) => {
-    if (selectedChannels.size === 0) {
-      toast({
-        title: "No Channels Selected",
-        description: "Please select at least one channel",
-        variant: "destructive"
-      })
-      return
-    }
-
-    try {
-      setLoading(true)
-      const channelIds = Array.from(selectedChannels)
-      const targetProfileId = profileId === 'none' ? null : profileId
-
-      // Use generic batch assignment endpoint
-      await automationAPI.assignChannels(channelIds, targetProfileId)
-
-      toast({
-        title: "Success",
-        description: `Profile ${targetProfileId ? 'assigned to' : 'removed from'} ${channelIds.length} channels`,
-      })
-
-      // Reload settings to update UI
-      loadData()
-    } catch (err) {
-      console.error('Failed to batch assign profile:', err)
-      toast({
-        title: "Error",
-        description: "Failed to assign profile to channels",
-        variant: "destructive"
-      })
-    } finally {
-      setLoading(false)
-      setAssignProfileId('') // Reset selection
     }
   }
 
@@ -2253,31 +2214,6 @@ export default function ChannelConfiguration() {
                           <DropdownMenuItem onClick={() => handleBulkMatchSettings(false)}>Disable</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </div>
-
-                    <Separator orientation="vertical" className="h-6 hidden lg:block" />
-
-                    {/* Section: Automation Profile */}
-                    <div className="flex items-center gap-3">
-                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Profile</div>
-                      <Select
-                        value={assignProfileId}
-                        onValueChange={(v) => {
-                          setAssignProfileId(v)
-                          handleBatchAssignProfile(v)
-                        }}
-                        disabled={selectedChannels.size === 0}
-                      >
-                        <SelectTrigger className="h-8 w-[160px] text-xs">
-                          <SelectValue placeholder="Assign profile…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">— Remove profile —</SelectItem>
-                          {profiles.map((profile) => (
-                            <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
                     </div>
 
                     <Separator orientation="vertical" className="h-6 hidden lg:block" />
