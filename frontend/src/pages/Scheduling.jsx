@@ -326,7 +326,14 @@ export default function Scheduling() {
 
       setRegexMatches(response.data.programs || [])
 
-      if (response.data.matches === 0) {
+      // SCH-002: backend signals the channel has no TVG-ID configured
+      if (response.data.no_tvg_id) {
+        toast({
+          title: "No TVG-ID Configured",
+          description: "This channel has no TVG-ID set. EPG matching requires a TVG-ID — open the channel in Dispatcharr and click \"Use EPG TVG-ID\" to populate it.",
+          variant: "destructive"
+        })
+      } else if (response.data.matches === 0) {
         toast({
           title: "No Matches",
           description: "The regex pattern didn't match any programs in the EPG (tested on first available channel)",
