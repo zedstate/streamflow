@@ -7,6 +7,7 @@ import requests
 from flask import jsonify
 
 from apps.core.logging_config import setup_logging
+from apps.stream.acestream_session_service import stop_ace_loop_detector
 
 logger = setup_logging(__name__)
 
@@ -177,6 +178,8 @@ def delete_acestream_monitor_entry_response(*, monitor_id: str, get_client_or_er
     client, error_payload = get_client_or_error()
     if error_payload:
         return error_payload
+
+    stop_ace_loop_detector(monitor_id)
 
     try:
         response_data = client.delete_entry(monitor_id)
@@ -496,6 +499,9 @@ def stop_acestream_channel_session_response(
             monitor_id = entry.get("monitor_id")
             if not monitor_id:
                 continue
+            
+            stop_ace_loop_detector(monitor_id)
+            
             try:
                 client.stop_session(monitor_id)
             except Exception:

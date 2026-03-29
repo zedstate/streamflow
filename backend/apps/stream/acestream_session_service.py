@@ -13,8 +13,22 @@ from apps.core.logging_config import setup_logging
 from apps.core.stream_stats_utils import extract_stream_stats
 from apps.stream.acestream_monitoring_client import normalize_content_id
 from apps.udi import get_udi_manager
+from apps.stream.zero_decode_loop_detector import ZeroDecodeLoopDetector
 
 logger = setup_logging(__name__)
+
+# Global registry for active zero-decode loop detectors
+_loop_detectors: Dict[str, ZeroDecodeLoopDetector] = {}
+
+def stop_ace_loop_detector(monitor_id: str):
+    if not monitor_id:
+        return
+    detector = _loop_detectors.pop(monitor_id, None)
+    if detector:
+        try:
+            detector.stop()
+        except Exception as e:
+            logger.error(f"Error stopping loop detector for monitor {monitor_id}: {e}")
 
 
 def get_ace_management_settings() -> Dict[str, float]:
@@ -238,8 +252,40 @@ def _evaluate_ace_entry_management(entry: Dict[str, Any], monitor: Any, now_ts: 
         reason = "missing-monitor"
     else:
         raw_status = (monitor.get("status") or "unknown").lower()
-
-        if manual_quarantine:
+        
+        # Check loop detector
+        enable_loop_detection = settings.get("enable_loop_detection", False)
+        if enable_loop_detection and raw_status == "running":
+            monitor_id = entry.get("monitor_id")
+            stream_id = entry.get("stream_id")
+            content_id = entry.get("content_id")
+            engine = monitor.get("engine") or {}
+            host = engine.get("host")
+            port = engine.get("port")
+            
+            if monitor_id and content_id and host and port:
+                if monitor_id not in _loop_detectors:
+                    url = f"http://{host}:{port}/ace/getstream?id={content_id}"
+                    
+                    def on_loop(loop_duration: float = 0.0):
+                        logger.warning(f"Loop confirmed by detector for Acestream {stream_id}")
+                        entry["is_looping"] = True
+                        entry["loop_duration"] = loop_duration
+                        
+                    detector = ZeroDecodeLoopDetector(
+                        url=url, 
+                        session_id=settings.get("session_id", "unknown"),
+                        stream_id=str(stream_id),
+                        on_loop_detected=on_loop
+                    )
+                    _loop_detectors[monitor_id] = detector
+                    detector.start()
+                    
+        # Check if loop detected and handle
+        if entry.get("is_looping"):
+            target_state = "quarantined"
+            reason = "loop_detected"
+        elif manual_quarantine:
             target_state = "quarantined"
             reason = "manual"
         elif raw_status == "dead":
@@ -267,7 +313,11 @@ def _evaluate_ace_entry_management(entry: Dict[str, Any], monitor: Any, now_ts: 
                     reason = "low-score"
         else:
             target_state = "review"
-            reason = f"status-{raw_status}"
+            reason = "status-" + raw_status
+            
+        if target_state != "review" and target_state != "stable" and target_state != "starting":
+            # If we are quarantined or similar, we should stop the detector
+            stop_ace_loop_detector(entry.get("monitor_id"))
 
     QUARANTINE_DURATION = 900.0
     if target_state == "quarantined" and not manual_quarantine:
@@ -447,7 +497,13 @@ def evaluate_ace_session_management(raw_session: Any, monitors_by_id: Dict[str, 
 
         monitor = monitors_by_id.get(entry.get("monitor_id"))
         _schedule_ace_ffprobe_recheck(entry, monitor)
-        if _evaluate_ace_entry_management(entry, monitor, now_ts, settings):
+        
+        # Pass session info through settings
+        eval_settings = dict(settings)
+        eval_settings["enable_loop_detection"] = raw_session.get("enable_loop_detection", False)
+        eval_settings["session_id"] = raw_session.get("session_id", "unknown")
+        
+        if _evaluate_ace_entry_management(entry, monitor, now_ts, eval_settings):
             changed = True
 
     return changed
@@ -887,6 +943,7 @@ def create_acestream_channel_session_impl(
     epg_event_start: Any = None,
     epg_event_end: Any = None,
     epg_event_id: Any = None,
+    enable_loop_detection: bool = False,
     *,
     get_client_or_error,
     ping_orchestrator_ready,
@@ -1037,6 +1094,7 @@ def create_acestream_channel_session_impl(
             "epg_event_start": epg_event_start,
             "epg_event_end": epg_event_end,
             "epg_event_id": epg_event_id,
+            "enable_loop_detection": enable_loop_detection,
             "created_at": time.time(),
             "entries": entries,
         }
