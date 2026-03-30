@@ -1741,8 +1741,9 @@ class AutomatedStreamManager:
             forced_period_id: Optional period ID to filter channels.
             channel_id: Optional channel ID to scope discovery to a single channel.
                         When provided, only that channel receives stream assignments and
-                        all_streams is pre-filtered to that channel's known M3U accounts
-                        to avoid processing the full stream catalogue unnecessarily.
+                        all_streams is pre-filtered to globally-enabled M3U accounts
+                        (same boundary as full discovery) so that streams from new or
+                        previously-unassigned providers are still considered.
                         All other callers pass None (default) for full discovery.
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
@@ -1840,23 +1841,25 @@ class AutomatedStreamManager:
                     return {}
                 logger.info(f"[single-channel] Scoping stream discovery to channel {channel_id}")
 
-                # Pre-filter all_streams to only streams from this channel's known
-                # M3U accounts — avoids regex-matching the full stream catalogue.
-                channel_stream_account_ids = set()
-                for s in udi.get_channel_streams(channel_id):
-                    acct = s.get('m3u_account_id') or s.get('m3u_account')
-                    if acct:
-                        channel_stream_account_ids.add(acct)
-                if channel_stream_account_ids:
+                # Pre-filter all_streams to only streams from globally-enabled M3U accounts.
+                # This mirrors what the full-discovery path already applied above, so the
+                # stream catalogue here is identical to a normal full-discovery run —
+                # it just skips iterating/assigning every other channel.
+                #
+                # Previously this block narrowed the catalogue to accounts the channel
+                # *already* had assigned streams from, which prevented newly added M3U
+                # providers (or existing providers that added the event later) from ever
+                # being matched to this channel during a single-channel check.
+                if enabled_account_ids:
                     pre_filter_count = len(all_streams)
                     all_streams = [
                         s for s in all_streams
                         if s.get('is_custom', False)
-                        or (s.get('m3u_account_id') or s.get('m3u_account')) in channel_stream_account_ids
+                        or (s.get('m3u_account_id') or s.get('m3u_account')) in enabled_account_ids
                     ]
                     logger.info(
                         f"[single-channel] Pre-filtered streams from {pre_filter_count} "
-                        f"to {len(all_streams)} (accounts: {channel_stream_account_ids})"
+                        f"to {len(all_streams)} (enabled accounts: {enabled_account_ids})"
                     )
 
             # Filter channels by automation profile settings
