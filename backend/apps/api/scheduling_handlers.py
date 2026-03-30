@@ -67,10 +67,18 @@ def get_epg_grid_response(*, force_refresh: bool, get_scheduling_service: Callab
 
 def get_channel_programs_response(*, channel_id: int, get_scheduling_service: Callable[[], Any]):
     """Handle retrieval of EPG programs for one channel."""
+    from apps.automation.scheduling_service import NoTvgIdError
     try:
         service = get_scheduling_service()
         programs = service.get_programs_by_channel(channel_id)
         return jsonify(programs)
+    except NoTvgIdError as exc:
+        # SCH-002: surface missing TVG-ID as a structured response
+        return jsonify({
+            "programs": [],
+            "no_tvg_id": True,
+            "message": str(exc),
+        }), 200
     except Exception as exc:
         logger.error(f"Error fetching programs for channel {channel_id}: {exc}")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -237,6 +245,7 @@ def update_auto_create_rule_response(
 
 def test_auto_create_rule_response(*, payload: Any, get_scheduling_service: Callable[[], Any]):
     """Handle regex testing against EPG data for a channel."""
+    from apps.automation.scheduling_service import NoTvgIdError
     try:
         schema = AutoCreateRuleTestSchema.from_payload(payload)
 
@@ -244,6 +253,17 @@ def test_auto_create_rule_response(*, payload: Any, get_scheduling_service: Call
         matching_programs = service.test_regex_against_epg(schema.channel_id, schema.regex_pattern)
 
         return jsonify({"matches": len(matching_programs), "programs": matching_programs})
+
+    except NoTvgIdError as exc:
+        # SCH-002: channel has no TVG-ID — return structured 200 so the frontend
+        # shows a specific actionable message instead of generic "No Matches".
+        return jsonify({
+            "matches": 0,
+            "programs": [],
+            "no_tvg_id": True,
+            "message": str(exc),
+        }), 200
+
     except ValidationError as exc:
         return error_response(
             exc.message,
@@ -363,7 +383,6 @@ def get_scheduled_event_processor_status_response(
             and scheduled_event_processor_thread.is_alive()
         )
         is_running = thread_alive and scheduled_event_processor_running
-
         return jsonify({"running": is_running, "thread_alive": thread_alive}), 200
     except Exception as exc:
         logger.error(f"Error getting scheduled event processor status: {exc}")
