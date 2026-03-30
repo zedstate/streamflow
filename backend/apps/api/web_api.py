@@ -1916,7 +1916,7 @@ def _acestream_client_or_error():
 
 
 def _ping_orchestrator_ready(client=None):
-    """Ping the orchestrator /version endpoint to verify it is running and reachable.
+    """Ping the orchestrator /api/v1/version endpoint to verify it is running and reachable.
 
     Returns (True, version_str) on success, (False, error_msg) on failure.
     The response must be a JSON object with a 'title' field containing 'AceStream Orchestrator'.
@@ -1927,13 +1927,13 @@ def _ping_orchestrator_ready(client=None):
         return False, "AceStream orchestrator is not configured"
 
     base_url = client.base_url
-    version_url = f"{base_url.rstrip('/')}/version"
+    version_url = f"{base_url.rstrip('/')}/api/v1/version"
     try:
         resp = requests.get(version_url, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         if not isinstance(data, dict):
-            return False, "Orchestrator /version returned unexpected format"
+            return False, "Orchestrator /api/v1/version returned unexpected format"
         title = str(data.get('title') or '')
         if 'AceStream Orchestrator' not in title:
             return False, f"Unexpected orchestrator title: '{title}'"
@@ -1944,7 +1944,7 @@ def _ping_orchestrator_ready(client=None):
     except requests.exceptions.Timeout:
         return False, f"Timeout connecting to AceStream orchestrator at {base_url}"
     except requests.exceptions.HTTPError as exc:
-        return False, f"Orchestrator /version returned HTTP {exc.response.status_code}"
+        return False, f"Orchestrator /api/v1/version returned HTTP {exc.response.status_code}"
     except Exception as exc:
         # Log full exception details server-side, but return a generic message to the client
         logger.error("Unexpected error while pinging AceStream orchestrator", exc_info=True)
