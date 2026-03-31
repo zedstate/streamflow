@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
@@ -432,6 +433,8 @@ export default function ChannelConfiguration() {
 
   const [pendingChanges, setPendingChanges] = useState({})
   const [activeTab, setActiveTab] = useState('regex')
+  const [matchCounts, setMatchCounts] = useState({})        // {channelId: matchCount}
+  const [totalStreamCount, setTotalStreamCount] = useState(null)
 
   // Multi-select state for bulk regex assignment
   const [selectedChannels, setSelectedChannels] = useState(new Set())
@@ -520,6 +523,80 @@ export default function ChannelConfiguration() {
       loadGroupsConfig()
     }
   }, [activeTab, groups])
+
+  // Bulk match count — fires when Regex tab is active, on page change, pattern edits,
+  // or after groupsConfig populates (so group-inherited channels get their counts too).
+  useEffect(() => {
+    if (activeTab !== 'regex' || channels.length === 0) return
+
+    const fetchMatchCounts = async () => {
+      // Build effective config for each channel on the current page,
+      // mirroring the global mode logic in handleTestPattern.
+      const channelConfigs = []
+
+      for (const channel of paginatedChannels) {
+        const channelId = channel.id
+        const channelPatternConfig = patterns[channelId] || patterns[String(channelId)] || {}
+        const channelGroupId = channel?.group_id ?? channel?.channel_group_id
+        const groupMatchingConfig = channelGroupId
+          ? ((groupsConfig[channelGroupId] || {}).matching || {})
+          : {}
+
+        const hasChannelRegexPatterns =
+          (Array.isArray(channelPatternConfig.regex_patterns) && channelPatternConfig.regex_patterns.length > 0) ||
+          (Array.isArray(channelPatternConfig.regex) && channelPatternConfig.regex.length > 0)
+        const hasExplicitChannelOverride =
+          hasChannelRegexPatterns ||
+          channelPatternConfig.match_by_tvg_id === true ||
+          channelPatternConfig.enabled === false
+
+        const effectivePatternConfig = hasExplicitChannelOverride ? channelPatternConfig : groupMatchingConfig
+
+        // Build regex patterns array in the normalised format
+        let regexPatterns = []
+        if (effectivePatternConfig.regex_patterns) {
+          regexPatterns = effectivePatternConfig.regex_patterns
+        } else if (effectivePatternConfig.regex) {
+          regexPatterns = effectivePatternConfig.regex.map(p => ({
+            pattern: p,
+            m3u_accounts: effectivePatternConfig.m3u_accounts || null,
+          }))
+        }
+
+        const matchByTvgId = effectivePatternConfig.match_by_tvg_id || false
+        const hasTvg = matchByTvgId && Boolean(channel.tvg_id)
+        const hasRegex = regexPatterns.length > 0
+
+        // Skip channels with nothing to evaluate — display will show '— / Y'
+        if (!hasRegex && !hasTvg) continue
+
+        channelConfigs.push({
+          channel_id: channelId,
+          channel_name: channel.name || '',
+          tvg_id: channel.tvg_id || null,
+          match_by_tvg_id: matchByTvgId,
+          regex_patterns: regexPatterns,
+          match_priority_order: ['tvg', 'regex'],
+          case_sensitive: true,
+        })
+      }
+
+      if (channelConfigs.length === 0) return
+
+      try {
+        const response = await regexAPI.bulkMatchCounts({ channels: channelConfigs })
+        const { counts, total_streams } = response.data
+        setMatchCounts(prev => ({ ...prev, ...counts }))
+        if (total_streams != null) setTotalStreamCount(total_streams)
+      } catch (err) {
+        console.error('Failed to fetch bulk match counts:', err)
+      }
+    }
+
+    fetchMatchCounts()
+  // paginatedChannels is derived — listing its deps individually avoids stale closure
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentPage, patterns, groupsConfig, channels])
 
   const loadData = async () => {
     try {
@@ -2413,6 +2490,8 @@ export default function ChannelConfiguration() {
                               onPreviewMatch={handlePreviewMatch}
                               onRefresh={loadData}
                               onAssignEpgProfile={handleAssignEpgProfile}
+                              matchCount={matchCounts[String(channel.id)]}
+                              totalStreamCount={totalStreamCount}
                             />
                           )
                         })}
