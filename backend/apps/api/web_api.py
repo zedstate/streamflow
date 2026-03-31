@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Web API Server for StreamFlow for Dispatcharr
@@ -120,7 +121,7 @@ from apps.api.setup_wizard_handlers import (
     ensure_wizard_config_response,
     get_setup_wizard_status_response,
 )
-from apps.api.match_preview_handlers import test_match_live_response
+from apps.api.match_preview_handlers import test_match_live_response, bulk_match_count_response
 from apps.api.stream_checker_handlers import (
     add_to_stream_checker_queue_response,
     check_single_channel_now_response,
@@ -1009,6 +1010,25 @@ def test_match_live():
     from apps.core.api_utils import get_streams, get_m3u_accounts
 
     return test_match_live_response(
+        payload=request.get_json(silent=True),
+        get_streams=get_streams,
+        get_m3u_accounts=get_m3u_accounts,
+        is_dangerous_regex=is_dangerous_regex,
+    )
+
+@app.route('/api/regex-match-counts', methods=['POST'])
+def regex_match_counts():
+    """
+    Bulk regex match count for multiple channels in a single stream pool scan.
+
+    Accepts an array of channel configs (each with regex_patterns, tvg_id, etc.)
+    and returns per-channel match counts against the full UDI stream pool.
+    Used to display 'X / Y' (potential matches / assigned streams) on the
+    Regex Configuration tab without N individual test-match-live calls.
+    """
+    from apps.core.api_utils import get_streams, get_m3u_accounts
+
+    return bulk_match_count_response(
         payload=request.get_json(silent=True),
         get_streams=get_streams,
         get_m3u_accounts=get_m3u_accounts,

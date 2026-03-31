@@ -156,3 +156,153 @@ def test_match_live_response(
     except Exception as exc:
         logger.error(f"Error testing match live: {exc}")
         return jsonify({"error": "Internal Server Error"}), 500
+
+
+def bulk_match_count_response(
+    *,
+    payload: Any,
+    get_streams: Callable[[], Any],
+    get_m3u_accounts: Callable[[], Any],
+    is_dangerous_regex: Callable[[str], bool],
+):
+    """Handle bulk regex match count for multiple channels in one stream pool scan.
+
+    Accepts an array of channel configs and returns per-channel match counts.
+    The stream pool is fetched once and shared across all channel evaluations,
+    making this significantly cheaper than N individual test-match-live calls.
+
+    Request body:
+        {
+            "channels": [
+                {
+                    "channel_id": 7200,
+                    "channel_name": "Fox News",
+                    "tvg_id": "FoxNews.us",
+                    "match_by_tvg_id": false,
+                    "regex_patterns": [{"pattern": "Fox News.*", "m3u_accounts": null}],
+                    "match_priority_order": ["tvg", "regex"],
+                    "case_sensitive": true
+                },
+                ...
+            ]
+        }
+
+    Response:
+        {
+            "counts": {"7200": 47, "7201": 12},
+            "total_streams": 12847
+        }
+
+    Channels with no effective patterns are omitted from counts entirely;
+    the frontend handles the display of '—' for those.
+    """
+    try:
+        data = payload
+        if not data:
+            return jsonify({"error": "Missing request body"}), 400
+
+        channel_configs = data.get("channels", [])
+        if not channel_configs:
+            return jsonify({"counts": {}, "total_streams": 0})
+
+        # Fetch stream pool once — shared across all channel evaluations
+        all_streams = get_streams(log_result=False)
+        if not all_streams:
+            return jsonify({"counts": {}, "total_streams": 0})
+
+        whitespace_pattern = re.compile(r"(?<!\\) +")
+        counts = {}
+
+        for channel_cfg in channel_configs:
+            channel_id = channel_cfg.get("channel_id")
+            if channel_id is None:
+                continue
+
+            channel_name = channel_cfg.get("channel_name", "Unknown Channel")
+            match_by_tvg_id = channel_cfg.get("match_by_tvg_id", False)
+            tvg_id = channel_cfg.get("tvg_id")
+            case_sensitive = channel_cfg.get("case_sensitive", True)
+            match_priority_order = channel_cfg.get("match_priority_order", ["tvg", "regex"])
+
+            # Normalize regex patterns (same format as test_match_live_response)
+            raw_patterns = channel_cfg.get("regex_patterns", [])
+            normalized_patterns = []
+            for p in raw_patterns:
+                if isinstance(p, dict):
+                    normalized_patterns.append(p)
+                elif isinstance(p, str):
+                    normalized_patterns.append({"pattern": p, "priority": 0})
+
+            # Skip channels with nothing to match against
+            has_regex = len(normalized_patterns) > 0
+            has_tvg = match_by_tvg_id and bool(tvg_id)
+            if not has_regex and not has_tvg:
+                continue
+
+            match_count = 0
+
+            for stream in all_streams:
+                if not isinstance(stream, dict):
+                    continue
+
+                stream_name = stream.get("name", "")
+                if not stream_name:
+                    continue
+
+                stream_tvg_id = stream.get("tvg_id")
+                stream_m3u_account = stream.get("m3u_account")
+
+                matched = False
+
+                for match_type in match_priority_order:
+                    if matched:
+                        break
+
+                    if match_type == "tvg":
+                        if has_tvg and stream_tvg_id and stream_tvg_id == tvg_id:
+                            matched = True
+
+                    elif match_type == "regex" and has_regex:
+                        search_name = stream_name if case_sensitive else stream_name.lower()
+
+                        for pattern_obj in normalized_patterns:
+                            pattern = pattern_obj.get("pattern", "")
+                            if not pattern:
+                                continue
+
+                            pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                            if pattern_m3u_accounts and len(pattern_m3u_accounts) > 0:
+                                if (
+                                    stream_m3u_account is None
+                                    or stream_m3u_account not in pattern_m3u_accounts
+                                ):
+                                    continue
+
+                            escaped_channel_name = re.escape(channel_name)
+                            substituted_pattern = pattern.replace("CHANNEL_NAME", escaped_channel_name)
+                            search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
+                            search_pattern = whitespace_pattern.sub(r"\\s+", search_pattern)
+
+                            try:
+                                if is_dangerous_regex(search_pattern):
+                                    continue
+                                if re.search(search_pattern, search_name):
+                                    matched = True
+                                    break
+                            except re.error:
+                                continue
+
+                if matched:
+                    match_count += 1
+
+            counts[str(channel_id)] = match_count
+
+        return jsonify(
+            {
+                "counts": counts,
+                "total_streams": len(all_streams),
+            }
+        )
+    except Exception as exc:
+        logger.error(f"Error computing bulk match counts: {exc}")
+        return jsonify({"error": "Internal Server Error"}), 500
