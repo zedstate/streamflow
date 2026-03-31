@@ -1,3 +1,4 @@
+
 import axios from 'axios';
 
 // Create axios instance with default config
@@ -156,6 +157,7 @@ export const regexAPI = {
   updateMatchSettings: (channelId, settings) => api.post(`/channels/${channelId}/match-settings`, settings),
   updateGroupMatchSettings: (groupId, settings) => api.post(`/channels/groups/${groupId}/match-settings`, settings),
   testMatchLive: (data) => api.post('/test-match-live', data),
+  bulkMatchCounts: (data) => api.post('/regex-match-counts', data),
   updateBulkMatchSettings: (data) => api.post('/regex-patterns/bulk-settings', data),
 };
 

@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button.jsx'
 import { Checkbox } from '@/components/ui/checkbox.jsx'
@@ -36,6 +37,8 @@ export function RegexTableRow({
   onPreviewMatch,
   onRefresh,
   onAssignEpgProfile,
+  matchCount,
+  totalStreamCount,
 }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
@@ -183,6 +186,38 @@ export function RegexTableRow({
               )}
             </>
           )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-xs font-mono tabular-nums cursor-default select-none">
+                <span className={matchCount !== undefined ? 'text-green-500' : 'text-muted-foreground'}>
+                  {matchCount !== undefined ? matchCount : '—'}
+                </span>
+                <span className="text-muted-foreground">{' / '}</span>
+                <span className="text-muted-foreground">{(channel.streams?.length ?? 0)}</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              <p className="font-medium mb-1">Stream Match Counts</p>
+              <p className="text-xs">
+                <span className="text-green-400">{matchCount !== undefined ? matchCount : '—'}</span>
+                {' '}streams currently match your regex configuration (potential)
+              </p>
+              <p className="text-xs mt-1">
+                <span className="text-foreground">{channel.streams?.length ?? 0}</span>
+                {' '}streams Dispatcharr has assigned from the last check pass
+              </p>
+              {matchCount !== undefined && (
+                <p className="text-xs mt-1 text-muted-foreground">
+                  The difference represents streams culled by health checking
+                </p>
+              )}
+              {matchCount === undefined && (
+                <p className="text-xs mt-1 text-muted-foreground">
+                  Potential match count loading or unavailable
+                </p>
+              )}
+            </TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-2">
           <Tooltip>

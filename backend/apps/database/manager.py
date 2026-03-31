@@ -1,3 +1,4 @@
+
 import logging
 from typing import List, Dict, Optional, Any, Set, Tuple
 from contextlib import contextmanager
@@ -546,7 +547,14 @@ class DatabaseManager:
         session = self._get_session()
         try:
             if not merge:
-                # Wipe all existing configs
+                # Wipe all existing configs and their patterns.
+                # Must delete ChannelRegexPattern rows explicitly first because
+                # SQLAlchemy's bulk query.delete() bypasses ORM-level cascade,
+                # and SQLite does not enforce foreign key CASCADE by default
+                # (requires PRAGMA foreign_keys = ON per connection).
+                # Deleting patterns first prevents orphaned rows that survive
+                # the config wipe and cause duplicates on the next import.
+                session.query(ChannelRegexPattern).delete()
                 session.query(ChannelRegexConfig).delete()
                 session.flush()
 
