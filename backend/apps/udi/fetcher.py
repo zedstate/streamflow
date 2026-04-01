@@ -287,6 +287,53 @@ class UDIFetcher:
         except Exception:
             return False
     
+    def fetch_entity_counts(self) -> Dict[str, Optional[int]]:
+        """Fetch lightweight entity counts from Dispatcharr without pulling full objects.
+
+        Uses the ``/ids/`` action endpoints exposed by ChannelViewSet and
+        StreamViewSet — each returns only a flat list of IDs, making this
+        much cheaper than a full paginated fetch while still giving an
+        authoritative total from Dispatcharr's database.
+
+        Designed to be called *before* a full refresh so manager.py can
+        compare post-fetch counts against a known-good oracle, and also
+        *after* a refresh to verify completeness independently of the
+        pagination envelope.
+
+        Returns:
+            Dict with keys ``'channels'`` and ``'streams'``, each mapped to
+            an integer count or ``None`` if the endpoint was unreachable.
+        """
+        if not self.base_url:
+            logger.warning("fetch_entity_counts: base_url not set")
+            return {'channels': None, 'streams': None}
+
+        counts: Dict[str, Optional[int]] = {'channels': None, 'streams': None}
+
+        # Channels /ids/ — ChannelViewSet.get_ids() returns a flat list of IDs
+        try:
+            channel_ids = self._fetch_url(f"{self.base_url}/api/channels/channels/ids/")
+            if isinstance(channel_ids, list):
+                counts['channels'] = len(channel_ids)
+                logger.debug(f"fetch_entity_counts: {counts['channels']} channels (from /ids/)")
+            else:
+                logger.warning("fetch_entity_counts: unexpected response from channels/ids/")
+        except Exception as e:
+            logger.warning(f"fetch_entity_counts: failed to fetch channel IDs: {e}")
+
+        # Streams /ids/ — StreamViewSet.get_ids() returns a flat list of IDs
+        try:
+            stream_ids = self._fetch_url(f"{self.base_url}/api/channels/streams/ids/")
+            if isinstance(stream_ids, list):
+                counts['streams'] = len(stream_ids)
+                logger.debug(f"fetch_entity_counts: {counts['streams']} streams (from /ids/)")
+            else:
+                logger.warning("fetch_entity_counts: unexpected response from streams/ids/")
+        except Exception as e:
+            logger.warning(f"fetch_entity_counts: failed to fetch stream IDs: {e}")
+
+        return counts
+
     def _fetch_url(self, url: str) -> Optional[Any]:
         """Fetch data from a URL with authentication and retry logic.
         
@@ -335,7 +382,10 @@ class UDIFetcher:
         all_items: List[Dict[str, Any]] = []
         expected_count: Optional[int] = None
         first_page = True
-        url = f"{base_url}?page_size={page_size}"
+        # Include page=1 explicitly so ChannelPagination does not short-circuit
+        # into bare-list mode (it disables pagination when no 'page' param is
+        # present, which drops the DRF count/results envelope).
+        url = f"{base_url}?page_size={page_size}&page=1"
 
         while url:
             response = self._fetch_url(url)

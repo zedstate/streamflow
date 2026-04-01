@@ -608,14 +608,33 @@ class UDIManager:
             return False
         
         try:
+            # Pre-fetch step: get authoritative counts from lightweight /ids/
+            # endpoints before pulling full objects.  These counts serve as the
+            # integrity oracle when the pagination envelope does not include a
+            # 'count' field (e.g. ChannelPagination in older Dispatcharr builds).
+            self._update_init_progress(percentage=2, message='Fetching entity counts...', current_step='pre_count')
+            pre_counts = self.fetcher.fetch_entity_counts()
+            logger.debug(
+                f"Pre-fetch counts from Dispatcharr /ids/ endpoints: "
+                f"channels={pre_counts.get('channels')}, streams={pre_counts.get('streams')}"
+            )
+
             # Step 1: Channels
             self._update_init_progress(percentage=5, message='Fetching channels...', current_step='channels')
             channels_result = self.fetcher.fetch_channels()
+            # If pagination envelope omitted 'count', fall back to the /ids/ oracle
+            if channels_result.expected_count is None and pre_counts.get('channels') is not None:
+                channels_result.expected_count = pre_counts['channels']
+                logger.debug(f"Using /ids/ oracle for channels expected_count: {channels_result.expected_count}")
             channels_ok = _check_fetch_integrity('channels', channels_result)
 
             # Step 2: Streams
             self._update_init_progress(percentage=20, message='Fetching streams...', current_step='streams')
             streams_result = self.fetcher.fetch_streams()
+            # If pagination envelope omitted 'count', fall back to the /ids/ oracle
+            if streams_result.expected_count is None and pre_counts.get('streams') is not None:
+                streams_result.expected_count = pre_counts['streams']
+                logger.debug(f"Using /ids/ oracle for streams expected_count: {streams_result.expected_count}")
             streams_ok = _check_fetch_integrity('streams', streams_result)
 
             # Step 3: Channel Groups (non-paginated — no integrity check)
@@ -651,6 +670,8 @@ class UDIManager:
 
             # Build entity_counts for the progress dict — used by the frontend
             # stats panel and the future unstable-state check.
+            # 'expected' reflects the best oracle available: pagination envelope
+            # count if present, otherwise the pre-fetch /ids/ count.
             entity_counts = {
                 'channels': {
                     'received': len(channels_result),
@@ -666,7 +687,7 @@ class UDIManager:
                 },
                 'm3u_accounts': {
                     'received': len(m3u_accounts),
-                    'expected': None,  # non-paginated
+                    'expected': None,  # non-paginated, no oracle available
                 },
             }
 
