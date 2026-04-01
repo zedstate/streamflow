@@ -71,7 +71,7 @@ def get_version_response(*, current_file: Path):
 
 
 def get_environment_response():
-    """Get environment info including cached public IP."""
+    """Get environment info including cached public IP and debug mode flag."""
     now = time.time()
     if _env_cache["public_ip"] is None or (now - _env_cache["fetched_at"]) >= _ENV_CACHE_TTL:
         try:
@@ -83,11 +83,18 @@ def get_environment_response():
             logger.warning(f"Failed to fetch public IP: {exc}")
             # Keep existing cache values on transient failures.
 
+    # debug_mode is exposed so the frontend can conditionally render dev-only
+    # tooling (e.g. the UDI fault injection panel).  It is derived purely from
+    # the DEBUG_MODE env var and is always False in production containers where
+    # that var is not set.
+    debug_mode = os.getenv("DEBUG_MODE", "false").lower() in ("true", "1", "yes", "on")
+
     return jsonify(
         {
             "public_ip": _env_cache["public_ip"],
             "country_code": None,
             "country_name": None,
+            "debug_mode": debug_mode,
         }
     )
 
