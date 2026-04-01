@@ -42,7 +42,6 @@ export default function Dashboard() {
     loadPlaylists()
     loadPeriods()
     loadEnvironment()
-    loadUdiStats()
     const interval = setInterval(() => {
       loadStatus()
       loadPlaylists()
@@ -99,34 +98,50 @@ export default function Dashboard() {
     }
   }
 
-  // Restore UDI stats from the backend's last known state on every mount.
-  // entity_counts is populated by manager.py after every refresh_all() and
-  // persists in _init_progress for the lifetime of the backend process —
-  // so navigating away and back will restore the counts without a reload.
-  const loadUdiStats = async () => {
-    try {
-      const res = await dispatcharrAPI.getInitializationStatus()
-      const data = res.data || {}
-      const ec = data.entity_counts || {}
+  // On mount, poll getInitializationStatus until the UDI reports completed or
+  // failed.  This handles the common case where the page loads while the
+  // background startup refresh is still running — counts populate automatically
+  // once the refresh finishes rather than requiring a manual Reload UDI.
+  // Also handles navigating away and back — if already completed, the first
+  // poll resolves immediately and the interval is cleared.
+  useEffect(() => {
+    let udiPollInterval = null
 
-      // Only populate if the backend has real counts — don't overwrite
-      // a user-initiated reload result with stale/empty data.
-      if (data.status && Object.keys(ec).length > 0) {
-        setUdiStats(prev => {
-          // Don't overwrite if a manual reload already set fresher counts
-          if (prev !== null) return prev
-          return {
-            syncStatus:         data.status,
-            channels_count:     ec.channels?.received     ?? null,
-            streams_count:      ec.streams?.received      ?? null,
-            m3u_accounts_count: ec.m3u_accounts?.received ?? null,
-          }
-        })
+    const pollUdiStatus = async () => {
+      // Don't poll if a manual reload already populated stats
+      if (udiStats !== null) {
+        clearInterval(udiPollInterval)
+        return
       }
-    } catch (err) {
-      console.error('Failed to load UDI stats:', err)
+      try {
+        const res = await dispatcharrAPI.getInitializationStatus()
+        const data = res.data || {}
+        const ec = data.entity_counts || {}
+
+        if (data.status === 'completed' || data.status === 'failed') {
+          clearInterval(udiPollInterval)
+          setUdiStats(prev => {
+            if (prev !== null) return prev
+            return {
+              syncStatus:         data.status,
+              channels_count:     ec.channels?.received     ?? null,
+              streams_count:      ec.streams?.received      ?? null,
+              m3u_accounts_count: ec.m3u_accounts?.received ?? null,
+            }
+          })
+        }
+        // status is 'in_progress' or 'idle' — keep polling
+      } catch (err) {
+        console.error('UDI status poll error:', err)
+      }
     }
-  }
+
+    // Poll immediately, then every 3 seconds until resolved
+    pollUdiStatus()
+    udiPollInterval = setInterval(pollUdiStatus, 3000)
+
+    return () => clearInterval(udiPollInterval)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reload UDI: the POST blocks until the full refresh completes and returns
   // real entity counts.  We use those counts directly — no timer, no polling.
