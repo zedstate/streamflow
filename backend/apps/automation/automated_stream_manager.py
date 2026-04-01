@@ -1359,6 +1359,7 @@ class AutomatedStreamManager:
             Tuple of (success_bool, refreshed_accounts_list)
         """
         refreshed_accounts = []
+        refresh_failed = False
         try:
             if not force and not self.config.get("enabled_features", {}).get("auto_playlist_update", True):
                 if not force:  # Allow force to override feature flag
@@ -1409,18 +1410,34 @@ class AutomatedStreamManager:
                     acc_id = account.get('id')
                     if acc_id is not None:
                         logger.info(f"Refreshing M3U account {acc_id}: {account.get('name')}")
-                        refresh_m3u_playlists(account_id=acc_id)
-                        refreshed_accounts.append({
-                            "id": acc_id,
-                            "name": account.get('name', f"Account {acc_id}")
-                        })
+                        response = refresh_m3u_playlists(account_id=acc_id)
+                        if self._is_m3u_refresh_response_success(response):
+                            refreshed_accounts.append({
+                                "id": acc_id,
+                                "name": account.get('name', f"Account {acc_id}")
+                            })
+                        else:
+                            refresh_failed = True
+                            status = getattr(response, 'status_code', None)
+                            logger.error(
+                                f"M3U refresh failed for account {acc_id} ({account.get('name')}), "
+                                f"status={status}"
+                            )
                 
                 if not accounts_to_process:
                     logger.info("No accounts matched criteria for refresh.")
             else:
                 # Fallback: if we can't get accounts, refresh all (legacy behavior)
                 logger.warning("Could not fetch M3U accounts, refreshing all as fallback")
-                refresh_m3u_playlists()
+                response = refresh_m3u_playlists()
+                if not self._is_m3u_refresh_response_success(response):
+                    refresh_failed = True
+                    status = getattr(response, 'status_code', None)
+                    logger.error(f"Fallback M3U refresh failed, status={status}")
+
+            if refresh_failed:
+                logger.error("Playlist refresh encountered one or more failed account refreshes")
+                return False, refreshed_accounts
             
             # NOTE: UDI refresh is intentionally decoupled from playlist refresh.
             # Automation cycles perform a single dedicated UDI refresh step to avoid
@@ -1497,6 +1514,71 @@ class AutomatedStreamManager:
                 })
             
             return False, []
+
+    def _is_m3u_refresh_response_success(self, response: Any) -> bool:
+        """Validate M3U refresh API responses.
+
+        Accepts mock responses used in tests. If no status code is present,
+        assume success to preserve compatibility with simplified mocks.
+        """
+        if response is None:
+            return False
+
+        status_code = getattr(response, 'status_code', None)
+        if status_code is None:
+            return True
+
+        try:
+            code = int(status_code)
+        except (TypeError, ValueError):
+            return False
+
+        return 200 <= code < 300
+
+    def _should_abort_for_suspicious_stream_pool(self, before_count: int, after_count: int, playlists_refreshed: bool) -> bool:
+        """Return True when the post-refresh stream pool looks unsafe.
+
+        Safety checks apply only when playlists were refreshed in this cycle.
+        """
+        if not playlists_refreshed:
+            return False
+
+        if before_count <= 0:
+            return False
+
+        if after_count <= 0:
+            logger.error(
+                "Aborting matching: stream pool is empty after playlist refresh "
+                f"(before={before_count}, after={after_count})"
+            )
+            return True
+
+        safety_cfg = self.config.get('automation_safety', {}) if isinstance(self.config, dict) else {}
+        min_ratio = safety_cfg.get('min_stream_pool_ratio_after_refresh', 0.5)
+        min_drop = safety_cfg.get('min_stream_pool_drop_after_refresh', 100)
+
+        try:
+            min_ratio = max(0.0, min(1.0, float(min_ratio)))
+        except (TypeError, ValueError):
+            min_ratio = 0.5
+
+        try:
+            min_drop = max(1, int(min_drop))
+        except (TypeError, ValueError):
+            min_drop = 100
+
+        drop = before_count - after_count
+        ratio = after_count / before_count
+
+        if drop >= min_drop and ratio < min_ratio:
+            logger.error(
+                "Aborting matching: suspicious stream pool drop after playlist refresh "
+                f"(before={before_count}, after={after_count}, drop={drop}, ratio={ratio:.3f}, "
+                f"threshold_ratio={min_ratio}, threshold_drop={min_drop})"
+            )
+            return True
+
+        return False
     def _match_streams_batch(self, streams: List[Dict], channel_streams: Dict[str, set],
                              dead_stream_removal_enabled: bool,
                              channel_to_revive_enabled: Dict[str, bool] = None,
@@ -2730,8 +2812,17 @@ class AutomatedStreamManager:
             # 3. Update Playlists
             refresh_success = False
             refreshed_accounts = []
+            pre_refresh_stream_count = 0
+            post_refresh_stream_count = 0
+            check_results = {}
             
             start_time = datetime.now()
+
+            try:
+                pre_refresh_stream_count = len(get_streams(log_result=False) or [])
+            except Exception as e:
+                logger.warning(f"Could not read pre-refresh stream pool size: {e}")
+                pre_refresh_stream_count = 0
             
             if update_all_playlists:
                 logger.info("Updating ALL playlists (requested by one or more profiles)")
@@ -2761,7 +2852,24 @@ class AutomatedStreamManager:
             # cache sync to the M3U refresh call path.
             self._refresh_udi_cache_for_automation_cycle()
 
+            try:
+                post_refresh_stream_count = len(get_streams(log_result=False) or [])
+            except Exception as e:
+                logger.warning(f"Could not read post-refresh stream pool size: {e}")
+                post_refresh_stream_count = 0
+
             playlists_refreshed = bool(update_all_playlists or playlists_to_update)
+
+            if refresh_success and self._should_abort_for_suspicious_stream_pool(
+                before_count=pre_refresh_stream_count,
+                after_count=post_refresh_stream_count,
+                playlists_refreshed=playlists_refreshed,
+            ):
+                logger.error(
+                    "Automation safety gate triggered. Skipping validation and assignment "
+                    "to preserve existing channel streams."
+                )
+                refresh_success = False
             
             if refresh_success:
                 # Optional post-refresh delay for environments where provider updates
@@ -2793,7 +2901,6 @@ class AutomatedStreamManager:
                     assigned_stream_ids = {}
 
                 # 4.5. Trigger Quality Checks for all channels in the period(s)
-                check_results = {}
                 if channels_to_quality_check:
                     try:
                         from apps.stream.stream_checker_service import get_stream_checker_service
