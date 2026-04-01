@@ -1422,20 +1422,9 @@ class AutomatedStreamManager:
                 logger.warning("Could not fetch M3U accounts, refreshing all as fallback")
                 refresh_m3u_playlists()
             
-            # Refresh UDI cache to get updated streams and channels after playlist update
-            # This ensures deleted/added streams are reflected in the cache
-            # Also refresh M3U accounts to detect any new accounts added in Dispatcharr
-            # And refresh channel groups to detect any group changes (splits, merges, etc.)
-            # Profile refresh is critical: ensures channel profiles stay synced with Dispatcharr
-            # (deletions, modifications, new profiles) to prevent orphaned profile references
-            logger.info("Refreshing UDI cache after playlist update...")
-            udi = get_udi_manager()
-            udi.refresh_m3u_accounts()  # Check for new M3U accounts
-            udi.refresh_streams()
-            udi.refresh_channels()
-            udi.refresh_channel_groups()  # Check for new/updated channel groups
-            udi.refresh_channel_profiles()  # Sync profiles with Dispatcharr to prevent orphaned references
-            logger.info("UDI cache refreshed successfully")
+            # NOTE: UDI refresh is intentionally decoupled from playlist refresh.
+            # Automation cycles perform a single dedicated UDI refresh step to avoid
+            # duplicate refreshes when playlist updates are part of the cycle.
             
             # Trigger EPG matching to pick up any EPG/tvg-id changes made in Dispatcharr
             # This ensures that if a channel's EPG assignment was changed in Dispatcharr,
@@ -2557,6 +2546,28 @@ class AutomatedStreamManager:
              
         return False
 
+    def _refresh_udi_cache_for_automation_cycle(self) -> bool:
+        """Refresh all UDI entities once per automation cycle.
+
+        This is intentionally separate from playlist refresh calls so that:
+        - Automation cycles always refresh UDI even without M3U updates.
+        - Cycles with M3U updates still perform only one UDI refresh.
+        """
+        try:
+            logger.info("Refreshing UDI cache for automation cycle...")
+            udi = get_udi_manager()
+            udi.refresh_m3u_accounts()
+            udi.refresh_streams()
+            udi.refresh_channels()
+            udi.refresh_channel_groups()
+            udi.refresh_channel_profiles()
+
+            logger.info("UDI cache refresh for automation cycle completed")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to refresh UDI cache for automation cycle: {e}")
+            return False
+
     def _get_post_refresh_delay_seconds(self) -> float:
         """Return optional delay after playlist refresh before matching starts.
 
@@ -2744,6 +2755,11 @@ class AutomatedStreamManager:
 
             # Deduplicate while preserving order (channels may appear in multiple active period groups).
             channels_to_quality_check = list(dict.fromkeys(channels_to_quality_check))
+
+            # Refresh UDI once per cycle, independent of playlist refresh selection.
+            # This keeps channel/stream/group/profile state current without coupling
+            # cache sync to the M3U refresh call path.
+            self._refresh_udi_cache_for_automation_cycle()
 
             playlists_refreshed = bool(update_all_playlists or playlists_to_update)
             
