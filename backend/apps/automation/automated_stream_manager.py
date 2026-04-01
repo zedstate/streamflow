@@ -2556,6 +2556,39 @@ class AutomatedStreamManager:
              return datetime.now() - last_run >= timedelta(minutes=60)
              
         return False
+
+    def _get_post_refresh_delay_seconds(self) -> float:
+        """Return optional delay after playlist refresh before matching starts.
+
+        Priority order:
+        1) Environment variable `STREAMFLOW_POST_REFRESH_DELAY_SECONDS`
+        2) Config key `post_refresh_delay_seconds`
+        3) Config key `automation_tuning.post_refresh_delay_seconds`
+        4) Default `0.0` (no artificial delay)
+        """
+        env_value = os.environ.get("STREAMFLOW_POST_REFRESH_DELAY_SECONDS")
+        if env_value is not None:
+            try:
+                return max(0.0, float(env_value))
+            except (TypeError, ValueError):
+                logger.warning(
+                    f"Invalid STREAMFLOW_POST_REFRESH_DELAY_SECONDS='{env_value}', using config/default"
+                )
+
+        configured_value = self.config.get("post_refresh_delay_seconds")
+        if configured_value is None:
+            configured_value = self.config.get("automation_tuning", {}).get("post_refresh_delay_seconds")
+
+        if configured_value is None:
+            return 0.0
+
+        try:
+            return max(0.0, float(configured_value))
+        except (TypeError, ValueError):
+            logger.warning(
+                f"Invalid post_refresh_delay_seconds value '{configured_value}', defaulting to 0"
+            )
+            return 0.0
     
     def run_automation_cycle(self, forced: bool = False, forced_period_id: str = None):
         """Run one complete automation cycle with profile support."""
@@ -2711,10 +2744,18 @@ class AutomatedStreamManager:
 
             # Deduplicate while preserving order (channels may appear in multiple active period groups).
             channels_to_quality_check = list(dict.fromkeys(channels_to_quality_check))
+
+            playlists_refreshed = bool(update_all_playlists or playlists_to_update)
             
             if refresh_success:
-                # Small delay to allow playlist processing
-                time.sleep(10)
+                # Optional post-refresh delay for environments where provider updates
+                # are eventually consistent. Defaults to 0 to avoid fixed latency.
+                post_refresh_delay = self._get_post_refresh_delay_seconds()
+                if playlists_refreshed and post_refresh_delay > 0:
+                    logger.info(
+                        f"Waiting {post_refresh_delay:.2f}s after playlist refresh before stream matching"
+                    )
+                    time.sleep(post_refresh_delay)
                 
                 # 4. Stream Matching (Validation & Assignment)
                 # Group results by channel for easier joining later
