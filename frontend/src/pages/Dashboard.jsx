@@ -132,14 +132,21 @@ export default function Dashboard() {
       await loadPlaylists()
 
     } catch (err) {
-      // Surface backend's reported status as evidence of failure
+      // The request may have timed out while the backend completed successfully.
+      // Poll the status endpoint to recover whatever counts the backend loaded,
+      // so the tiles show real numbers rather than staying at '—'.
       try {
         const statusRes = await dispatcharrAPI.getInitializationStatus()
-        setUdiStats(prev => ({
-          ...prev,
-          syncStatus: statusRes.data?.status || 'failed',
-        }))
-      } catch (_) { /* ignore secondary error */ }
+        const statusData = statusRes.data || {}
+        const ec = statusData.entity_counts || {}
+
+        setUdiStats({
+          syncStatus:         statusData.status || 'failed',
+          channels_count:     ec.channels?.received     ?? null,
+          streams_count:      ec.streams?.received      ?? null,
+          m3u_accounts_count: ec.m3u_accounts?.received ?? null,
+        })
+      } catch (_) { /* ignore secondary error — tiles stay at '—' */ }
 
       toast({
         title: "UDI Sync Failed",
