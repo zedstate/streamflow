@@ -42,6 +42,7 @@ export default function Dashboard() {
     loadPlaylists()
     loadPeriods()
     loadEnvironment()
+    loadUdiStats()
     const interval = setInterval(() => {
       loadStatus()
       loadPlaylists()
@@ -95,6 +96,35 @@ export default function Dashboard() {
       setDebugMode(response.data?.debug_mode === true)
     } catch (err) {
       console.error('Failed to load environment:', err)
+    }
+  }
+
+  // Restore UDI stats from the backend's last known state on every mount.
+  // entity_counts is populated by manager.py after every refresh_all() and
+  // persists in _init_progress for the lifetime of the backend process —
+  // so navigating away and back will restore the counts without a reload.
+  const loadUdiStats = async () => {
+    try {
+      const res = await dispatcharrAPI.getInitializationStatus()
+      const data = res.data || {}
+      const ec = data.entity_counts || {}
+
+      // Only populate if the backend has real counts — don't overwrite
+      // a user-initiated reload result with stale/empty data.
+      if (data.status && Object.keys(ec).length > 0) {
+        setUdiStats(prev => {
+          // Don't overwrite if a manual reload already set fresher counts
+          if (prev !== null) return prev
+          return {
+            syncStatus:         data.status,
+            channels_count:     ec.channels?.received     ?? null,
+            streams_count:      ec.streams?.received      ?? null,
+            m3u_accounts_count: ec.m3u_accounts?.received ?? null,
+          }
+        })
+      }
+    } catch (err) {
+      console.error('Failed to load UDI stats:', err)
     }
   }
 
