@@ -315,7 +315,7 @@ class UDIFetcher:
             channel_ids = self._fetch_url(f"{self.base_url}/api/channels/channels/ids/")
             if isinstance(channel_ids, list):
                 counts['channels'] = len(channel_ids)
-                logger.debug(f"fetch_entity_counts: {counts['channels']} channels (from /ids/)")
+                logger.info(f"fetch_entity_counts: {counts['channels']} channels (from /ids/)")
             else:
                 logger.warning("fetch_entity_counts: unexpected response from channels/ids/")
         except Exception as e:
@@ -326,7 +326,7 @@ class UDIFetcher:
             stream_ids = self._fetch_url(f"{self.base_url}/api/channels/streams/ids/")
             if isinstance(stream_ids, list):
                 counts['streams'] = len(stream_ids)
-                logger.debug(f"fetch_entity_counts: {counts['streams']} streams (from /ids/)")
+                logger.info(f"fetch_entity_counts: {counts['streams']} streams (from /ids/)")
             else:
                 logger.warning("fetch_entity_counts: unexpected response from streams/ids/")
         except Exception as e:
@@ -426,7 +426,7 @@ class UDIFetcher:
         
         url = f"{self.base_url}/api/channels/channels/"
         result = self._fetch_paginated(url)
-        logger.debug(
+        logger.info(
             f"Fetched {len(result)} channels"
             + (f" (expected {result.expected_count})" if result.expected_count is not None else "")
         )
@@ -475,7 +475,7 @@ class UDIFetcher:
         
         url = f"{self.base_url}/api/channels/streams/"
         result = self._fetch_paginated(url)
-        logger.debug(
+        logger.info(
             f"Fetched {len(result)} streams"
             + (f" (expected {result.expected_count})" if result.expected_count is not None else "")
         )

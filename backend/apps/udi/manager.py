@@ -614,9 +614,9 @@ class UDIManager:
             # 'count' field (e.g. ChannelPagination in older Dispatcharr builds).
             self._update_init_progress(percentage=2, message='Fetching entity counts...', current_step='pre_count')
             pre_counts = self.fetcher.fetch_entity_counts()
-            logger.debug(
-                f"Pre-fetch counts from Dispatcharr /ids/ endpoints: "
-                f"channels={pre_counts.get('channels')}, streams={pre_counts.get('streams')}"
+            logger.info(
+                f"UDI pre-fetch oracle: channels={pre_counts.get('channels')}, "
+                f"streams={pre_counts.get('streams')} (from Dispatcharr /ids/ endpoints)"
             )
 
             # Step 1: Channels
@@ -625,7 +625,7 @@ class UDIManager:
             # If pagination envelope omitted 'count', fall back to the /ids/ oracle
             if channels_result.expected_count is None and pre_counts.get('channels') is not None:
                 channels_result.expected_count = pre_counts['channels']
-                logger.debug(f"Using /ids/ oracle for channels expected_count: {channels_result.expected_count}")
+                logger.info(f"UDI integrity: using /ids/ oracle for channels — expected {channels_result.expected_count}")
             channels_ok = _check_fetch_integrity('channels', channels_result)
 
             # Step 2: Streams
@@ -634,7 +634,7 @@ class UDIManager:
             # If pagination envelope omitted 'count', fall back to the /ids/ oracle
             if streams_result.expected_count is None and pre_counts.get('streams') is not None:
                 streams_result.expected_count = pre_counts['streams']
-                logger.debug(f"Using /ids/ oracle for streams expected_count: {streams_result.expected_count}")
+                logger.info(f"UDI integrity: using /ids/ oracle for streams — expected {streams_result.expected_count}")
             streams_ok = _check_fetch_integrity('streams', streams_result)
 
             # Step 3: Channel Groups (non-paginated — no integrity check)
