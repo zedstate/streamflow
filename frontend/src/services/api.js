@@ -234,7 +234,7 @@ export const dispatcharrAPI = {
   getConfig: () => api.get('/dispatcharr/config'),
   updateConfig: (config) => api.put('/dispatcharr/config', config),
   testConnection: (config) => api.post('/dispatcharr/test-connection', config),
-  initializeUDI: () => api.post('/dispatcharr/initialize-udi'),
+  initializeUDI: () => api.post('/dispatcharr/initialize-udi', {}, { timeout: 120000 }),
   getInitializationStatus: () => api.get('/dispatcharr/initialization-status'),
 };
 
