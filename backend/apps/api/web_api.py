@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Web API Server for StreamFlow for Dispatcharr
@@ -2660,19 +2659,53 @@ if __name__ == '__main__':
         except Exception as e:
             logger.error(f"Failed to auto-start stream monitoring service: {e}")
             
-        # Force a full UDI Refresh on startup in the background if wizard is complete
+        # Force a full UDI Refresh on startup in the background if wizard is complete.
+        # Polls Dispatcharr readiness before attempting the refresh so that a
+        # simultaneous Docker stack startup does not silently fail while Dispatcharr
+        # is still booting.
         try:
             if check_wizard_complete():
                 def startup_udi_refresh():
-                    logger.info("Initializing UDI Manager with fresh data from Dispatcharr on startup...")
+                    """Wait for Dispatcharr to become ready, then do a full UDI refresh."""
+                    from apps.core.api_utils import get_udi_manager
+                    from apps.udi.fetcher import UDIFetcher
+
+                    POLL_INTERVAL_SECONDS = 10
+                    MAX_WAIT_SECONDS = 300  # 5-minute ceiling
+
+                    fetcher = UDIFetcher()
+                    elapsed = 0
+
+                    logger.info(
+                        f"Startup UDI refresh: polling Dispatcharr every {POLL_INTERVAL_SECONDS}s "
+                        f"(max {MAX_WAIT_SECONDS}s)..."
+                    )
+
+                    while elapsed < MAX_WAIT_SECONDS:
+                        if fetcher.test_connection():
+                            logger.info(
+                                f"Dispatcharr ready after {elapsed}s — starting UDI refresh..."
+                            )
+                            break
+                        logger.info(
+                            f"Dispatcharr not ready yet ({elapsed}s elapsed) — "
+                            f"retrying in {POLL_INTERVAL_SECONDS}s..."
+                        )
+                        time.sleep(POLL_INTERVAL_SECONDS)
+                        elapsed += POLL_INTERVAL_SECONDS
+                    else:
+                        logger.error(
+                            f"Dispatcharr did not become ready within {MAX_WAIT_SECONDS}s. "
+                            "Skipping startup UDI refresh — use 'Reload UDI' on the dashboard."
+                        )
+                        return
+
                     try:
-                        from apps.core.api_utils import get_udi_manager
                         udi = get_udi_manager()
                         udi.initialize(force_refresh=True)
                     except Exception as e:
                         logger.error(f"Background startup UDI refresh failed: {e}")
-                        
-                import threading
+
                 threading.Thread(target=startup_udi_refresh, name="Startup-UDI-Refresh", daemon=True).start()
         except Exception as e:
              logger.error(f"Failed to start UDI background refresh thread: {e}")
