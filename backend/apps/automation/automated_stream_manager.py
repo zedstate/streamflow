@@ -16,6 +16,7 @@ import os
 import re
 import time
 import threading
+from functools import lru_cache
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union
@@ -30,6 +31,15 @@ _WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
 # Placeholder for CHANNEL_NAME variable during regex validation
 # Used to substitute CHANNEL_NAME in patterns before compiling for validation
 _CHANNEL_NAME_PLACEHOLDER = 'PLACEHOLDER'
+
+
+@lru_cache(maxsize=50000)
+def _compile_stream_search_regex(pattern: str, channel_name: str, case_sensitive: bool) -> re.Pattern:
+    """Compile and cache stream-matching regex patterns for reuse."""
+    substituted_pattern = pattern.replace('CHANNEL_NAME', re.escape(channel_name))
+    search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
+    search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
+    return re.compile(search_pattern)
 
 # Import croniter for cron expression support
 try:
@@ -280,12 +290,15 @@ class RegexChannelMatcher:
         # If a path is given and the file exists, the patterns are seeded into the
         # SQL database before loading.  In production the parameter is unused.
         self.lock = threading.RLock()
+        self._config_file: Optional[Path] = None
         if config_file is not None:
             config_file = Path(config_file)
+            self._config_file = config_file
             if config_file.exists():
                 self._seed_from_config_file(config_file)
-        self.channel_patterns = self._load_patterns()
         self.group_patterns_key = 'group_regex_patterns'
+        self.channel_patterns = self._load_patterns()
+        self.group_patterns = self._load_group_patterns()
 
     def _seed_from_config_file(self, config_file: Path):
         """Read a JSON config file and import the patterns into SQL.
@@ -411,8 +424,13 @@ class RegexChannelMatcher:
         self.channel_patterns = self._build_in_memory(
             db.get_all_channel_regex_configs(), global_settings
         )
+        self._clear_runtime_caches()
 
-    def _get_group_patterns(self) -> Dict[str, Any]:
+    def _clear_runtime_caches(self):
+        """Clear hot-path caches used during stream matching."""
+        _compile_stream_search_regex.cache_clear()
+
+    def _load_group_patterns(self) -> Dict[str, Any]:
         """Load group-level regex pattern config from system settings."""
         from apps.database.manager import get_db_manager
         db = get_db_manager()
@@ -421,11 +439,21 @@ class RegexChannelMatcher:
             return {}
         return data
 
+    def _get_group_patterns(self) -> Dict[str, Any]:
+        """Get group-level regex pattern config from in-memory cache."""
+        with self.lock:
+            return dict(self.group_patterns)
+
     def _save_group_patterns(self, data: Dict[str, Any]) -> bool:
         """Persist group-level regex pattern config to system settings."""
         from apps.database.manager import get_db_manager
         db = get_db_manager()
-        return db.set_system_setting(self.group_patterns_key, data)
+        saved = db.set_system_setting(self.group_patterns_key, data)
+        if saved:
+            with self.lock:
+                self.group_patterns = dict(data)
+            self._clear_runtime_caches()
+        return saved
 
     def _normalize_regex_patterns(self, regex_patterns: 'Union[List[str], List[Dict]]', m3u_accounts: Optional[List[int]] = None) -> List[Dict[str, Any]]:
         """Normalize regex patterns to the canonical object format."""
@@ -625,6 +653,7 @@ class RegexChannelMatcher:
                 'match_by_tvg_id': match_by_tvg_id,
                 'regex_patterns': normalized_patterns,
             }
+        self._clear_runtime_caches()
         
         if silent:
             logger.debug(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
@@ -640,6 +669,7 @@ class RegexChannelMatcher:
         if channel_id in self.channel_patterns.get("patterns", {}):
             with self.lock:
                 del self.channel_patterns["patterns"][channel_id]
+            self._clear_runtime_caches()
             db.delete_channel_regex_config(str(channel_id))
             logger.info(f"Deleted all patterns for channel {channel_id}")
         else:
@@ -647,8 +677,15 @@ class RegexChannelMatcher:
     
     def reload_patterns(self):
         """Reload patterns from SQL (refreshes the in-memory cache)."""
+        # Legacy/test compatibility: when initialized from a config file,
+        # refresh SQL from that file before rebuilding in-memory caches.
+        if self._config_file is not None and self._config_file.exists():
+            self._seed_from_config_file(self._config_file)
+
         with self.lock:
             self.channel_patterns = self._load_patterns()
+            self.group_patterns = self._load_group_patterns()
+        self._clear_runtime_caches()
         logger.debug("Reloaded regex patterns from SQL")
     
     def _substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
@@ -736,6 +773,7 @@ class RegexChannelMatcher:
                         continue
                     
                     channel_name = channel_name_map.get(str(channel_id)) or config.get("name", "")
+                    match_by_tvg = config.get("match_by_tvg_id", False)
                     
                     # Support both new format (regex_patterns) and old format (regex) for backward compatibility
                     regex_patterns = config.get("regex_patterns")
@@ -769,22 +807,15 @@ class RegexChannelMatcher:
                         # SAFETY CHECK: If match_by_tvg_id is enabled, IGNORE catch-all regexes
                         # This prevents the issue where a lingering ".*" causes unwanted matches
                         # despite the user enabling TVG matching.
-                        if config.get("match_by_tvg_id", False):
+                        if match_by_tvg:
                             is_catch_all = pattern == ".*" or pattern == "^.*$" or pattern == ".+" or pattern == "^.+$"
                             if is_catch_all:
                                 # logger.debug(f"Ignoring catch-all regex '{pattern}' for channel {channel_id} because match_by_tvg_id is enabled")
                                 continue
-
-                        # Substitute channel name variable if present
-                        substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
-                        
-                        search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
-                        
-                        # Convert literal spaces in pattern to flexible whitespace regex
-                        search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                         
                         try:
-                            if re.search(search_pattern, search_name):
+                            compiled_pattern = _compile_stream_search_regex(pattern, channel_name, case_sensitive)
+                            if compiled_pattern.search(search_name):
                                 matches.append(channel_id)
                                 matched_channel = True
                                 regex_matched = True
@@ -865,6 +896,7 @@ class RegexChannelMatcher:
                             continue
                         
                         channel_name = channel_name_map.get(str(channel_id)) or config.get("name", "")
+                        match_by_tvg = config.get("match_by_tvg_id", False)
                         
                         # Support both new format (regex_patterns) and old format (regex) for backward compatibility
                         regex_patterns = config.get("regex_patterns")
@@ -898,20 +930,17 @@ class RegexChannelMatcher:
                                     continue
                             
                             # SAFETY CHECK: If match_by_tvg_id is enabled, IGNORE catch-all regexes
-                            if config.get("match_by_tvg_id", False):
+                            if match_by_tvg:
                                 is_catch_all = pattern == ".*" or pattern == "^.*$" or pattern == ".+" or pattern == "^.+$"
                                 if is_catch_all:
                                     continue
 
-                            # Substitute channel name variable if present
-                            substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
-                            
-                            search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
-                            
-                            # Convert literal spaces in pattern to flexible whitespace regex
-                            search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
-                            
-                            if re.search(search_pattern, search_name):
+                            try:
+                                compiled_pattern = _compile_stream_search_regex(pattern, channel_name, case_sensitive)
+                            except re.error:
+                                continue
+
+                            if compiled_pattern.search(search_name):
                                 regex_matched = True
                                 # Only match once per channel
                                 break
@@ -1508,6 +1537,10 @@ class AutomatedStreamManager:
         channel_to_match_priorities = channel_to_match_priorities or {}
         channel_to_group_map = channel_to_group_map or {}
         channel_name_map = channel_name_map or {}
+        match_stream_to_channels = self.regex_matcher.match_stream_to_channels
+
+        # Cache match outcomes for repeated stream signatures inside this batch.
+        stream_match_cache: Dict[Tuple[str, Any, Optional[str]], Tuple[str, ...]] = {}
         
         for stream in streams:
             # Validate that stream is a dictionary before accessing attributes
@@ -1523,19 +1556,22 @@ class AutomatedStreamManager:
             # Get stream's url and m3u_account
             stream_url = stream.get('url', '')
             stream_m3u_account = stream.get('m3u_account')
-            
-            # Find matching channels (with M3U account filtering if applicable)
-            # Pass TVG-ID data for matching
             stream_tvg_id = stream.get('tvg_id')
-            matching_channels = self.regex_matcher.match_stream_to_channels(
-                stream_name,
-                stream_m3u_account,
-                stream_tvg_id,
-                channel_tvg_map,
-                channel_to_match_priorities,
-                channel_to_group_map,
-                channel_name_map,
-            )
+            match_cache_key = (stream_name, stream_m3u_account, stream_tvg_id)
+            
+            matching_channels = stream_match_cache.get(match_cache_key)
+            if matching_channels is None:
+                matching_channels = tuple(match_stream_to_channels(
+                    stream_name,
+                    stream_m3u_account,
+                    stream_tvg_id,
+                    channel_tvg_map,
+                    channel_to_match_priorities,
+                    channel_to_group_map,
+                    channel_name_map,
+                ))
+                stream_match_cache[match_cache_key] = matching_channels
+
             if not matching_channels:
                 continue
 
@@ -1559,23 +1595,6 @@ class AutomatedStreamManager:
                         # This prevents the continuous re-addition loop for low quality/failed streams
                         # logger.debug(f"Skipping dead stream {stream_id} (revival disabled)")
                         continue
-            
-            # Get stream's m3u_account for M3U account filtering
-            stream_m3u_account = stream.get('m3u_account')
-            
-            # Find matching channels (with M3U account filtering if applicable)
-            # RegexChannelMatcher is thread-safe for reading patterns
-            # Pass TVG-ID data for matching
-            stream_tvg_id = stream.get('tvg_id')
-            matching_channels = self.regex_matcher.match_stream_to_channels(
-                stream_name,
-                stream_m3u_account,
-                stream_tvg_id,
-                channel_tvg_map,
-                channel_to_match_priorities,
-                channel_to_group_map,
-                channel_name_map,
-            )
             
             for channel_id in matching_channels:
                 # Check if stream is already in this channel
@@ -2006,9 +2025,20 @@ class AutomatedStreamManager:
             else:
                 max_workers = min(16, base_workers)
                 
-            # Batch size for streams - calculate smaller batches for more frequent progress updates
-            # At least 100 batches to get 1% progress increments, or min 50 streams per batch
-            batch_size = max(50, total_streams // (max_workers * 4))
+            # Batch size for streams - use more work units for large playlists
+            # to improve balancing across workers and reduce long-tail batches.
+            if total_streams < 1000:
+                batches_per_worker = 4
+            elif total_streams < 5000:
+                batches_per_worker = 6
+            elif total_streams < 20000:
+                batches_per_worker = 10
+            else:
+                batches_per_worker = 16
+
+            batch_size = max(50, total_streams // max(1, (max_workers * batches_per_worker)))
+            if total_streams >= 20000:
+                batch_size = min(batch_size, 400)
             
             logger.info(f"Processing {total_streams} streams for pattern matching (Parallel, {max_workers} workers, {batch_size} streams per batch)...")
             
