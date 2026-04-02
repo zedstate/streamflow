@@ -392,5 +392,156 @@ class TestSingleChannelHandlerNoProfileResponse(unittest.TestCase):
         self.assertEqual(data.get('error'), 'no_profile')
 
 
+
+class TestSingleChannelForcedProfileId(unittest.TestCase):
+    """Tests for scenario 3 — multi-period channel with explicit profile selection via picker."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @patch('stream_checker_service.get_udi_manager')
+    @patch('stream_checker_service.StreamCheckConfig')
+    @patch('apps.stream.stream_checker_service.get_automation_config_manager')
+    @patch('apps.stream.stream_checker_service.get_session_manager')
+    def test_forced_profile_id_bypasses_period_resolution(
+        self, mock_get_session_mgr, mock_get_acm, mock_config_class, mock_get_udi
+    ):
+        """When forced_profile_id is provided the service must use that profile directly,
+        skipping both EPG override and active-period resolution."""
+        from apps.stream.stream_checker_service import StreamCheckerService
+
+        channel_id = 301
+        forced_id = 'profile-abc'
+        forced_profile = _make_profile(matching_enabled=True, checking_enabled=True)
+        forced_profile['name'] = 'Picker Selected Profile'
+
+        mock_streams = [
+            {'id': 1, 'url': 'http://example.com/1', 'm3u_account': 1,
+             'stream_stats': {'status': 'ok'}},
+        ]
+        mock_config_class.return_value = _make_mock_config()
+        mock_get_udi.return_value = _make_mock_udi(channel_id, 'Multi-Period Channel', mock_streams)
+
+        mock_session_mgr = Mock()
+        mock_session_mgr.get_channels_in_active_sessions.return_value = []
+        mock_get_session_mgr.return_value = mock_session_mgr
+
+        mock_acm = Mock()
+        # get_profile called with forced_id should return the profile
+        mock_acm.get_profile.return_value = forced_profile
+        # These should NOT be called when forced_profile_id resolves
+        mock_acm.get_effective_epg_scheduled_profile.return_value = None
+        mock_acm.get_effective_configuration.return_value = None
+        mock_get_acm.return_value = mock_acm
+
+        service = StreamCheckerService()
+        service._check_channel = Mock(return_value={'dead_streams_count': 0, 'revived_streams_count': 0})
+
+        with patch('stream_checker_service.fetch_channel_streams', return_value=mock_streams),              patch('api_utils.refresh_m3u_playlists'),              patch('automated_stream_manager.AutomatedStreamManager') as mock_asm:
+            mock_asm.return_value.discover_and_assign_streams = Mock(return_value={})
+            result = service.check_single_channel(
+                channel_id=channel_id,
+                forced_profile_id=forced_id,
+            )
+
+        # Must not be a no_profile error
+        self.assertNotEqual(result.get('error'), 'no_profile',
+                            "Forced profile should prevent no_profile error")
+
+        # get_profile must have been called with the forced_id
+        mock_acm.get_profile.assert_called_once_with(forced_id)
+
+        # EPG and period resolution must NOT have been called
+        mock_acm.get_effective_epg_scheduled_profile.assert_not_called()
+        mock_acm.get_effective_configuration.assert_not_called()
+
+    @patch('stream_checker_service.get_udi_manager')
+    @patch('stream_checker_service.StreamCheckConfig')
+    @patch('apps.stream.stream_checker_service.get_automation_config_manager')
+    @patch('apps.stream.stream_checker_service.get_session_manager')
+    def test_forced_profile_id_not_found_falls_back_to_period_resolution(
+        self, mock_get_session_mgr, mock_get_acm, mock_config_class, mock_get_udi
+    ):
+        """If forced_profile_id does not resolve (deleted profile), fall back to
+        standard period resolution rather than hard-halting."""
+        from apps.stream.stream_checker_service import StreamCheckerService
+
+        channel_id = 302
+        forced_id = 'deleted-profile-id'
+
+        mock_streams = [
+            {'id': 1, 'url': 'http://example.com/1', 'm3u_account': 1,
+             'stream_stats': {'status': 'ok'}},
+        ]
+        mock_config_class.return_value = _make_mock_config()
+        mock_get_udi.return_value = _make_mock_udi(channel_id, 'Channel With Deleted Profile', mock_streams)
+
+        mock_session_mgr = Mock()
+        mock_session_mgr.get_channels_in_active_sessions.return_value = []
+        mock_get_session_mgr.return_value = mock_session_mgr
+
+        mock_acm = Mock()
+        # forced_profile_id doesn't resolve
+        mock_acm.get_profile.return_value = None
+        # But a period-based profile exists as fallback
+        mock_acm.get_effective_epg_scheduled_profile.return_value = None
+        mock_acm.get_effective_configuration.return_value = {
+            'profile': _make_profile(matching_enabled=True, checking_enabled=True),
+            'periods': [],
+        }
+        mock_get_acm.return_value = mock_acm
+
+        service = StreamCheckerService()
+        service._check_channel = Mock(return_value={'dead_streams_count': 0, 'revived_streams_count': 0})
+
+        with patch('stream_checker_service.fetch_channel_streams', return_value=mock_streams),              patch('api_utils.refresh_m3u_playlists'),              patch('automated_stream_manager.AutomatedStreamManager') as mock_asm:
+            mock_asm.return_value.discover_and_assign_streams = Mock(return_value={})
+            result = service.check_single_channel(
+                channel_id=channel_id,
+                forced_profile_id=forced_id,
+            )
+
+        # Should not hard-halt — period profile is the fallback
+        self.assertNotEqual(result.get('error'), 'no_profile')
+        # get_effective_configuration must have been called as fallback
+        mock_acm.get_effective_configuration.assert_called_once()
+
+    @patch('stream_checker_service.get_udi_manager')
+    @patch('stream_checker_service.StreamCheckConfig')
+    @patch('apps.stream.stream_checker_service.get_automation_config_manager')
+    @patch('apps.stream.stream_checker_service.get_session_manager')
+    def test_forced_profile_id_none_uses_normal_resolution(
+        self, mock_get_session_mgr, mock_get_acm, mock_config_class, mock_get_udi
+    ):
+        """forced_profile_id=None must behave identically to not passing it —
+        normal EPG/period resolution applies."""
+        from apps.stream.stream_checker_service import StreamCheckerService
+
+        channel_id = 303
+        mock_config_class.return_value = _make_mock_config()
+        mock_get_udi.return_value = _make_mock_udi(channel_id, 'Normal Channel')
+
+        mock_session_mgr = Mock()
+        mock_session_mgr.get_channels_in_active_sessions.return_value = []
+        mock_get_session_mgr.return_value = mock_session_mgr
+
+        mock_acm = Mock()
+        mock_acm.get_effective_epg_scheduled_profile.return_value = None
+        mock_acm.get_effective_configuration.return_value = None
+        mock_get_acm.return_value = mock_acm
+
+        service = StreamCheckerService()
+        result = service.check_single_channel(channel_id=channel_id, forced_profile_id=None)
+
+        # No forced_profile_id and no configured profile — must hard-halt
+        self.assertEqual(result.get('error'), 'no_profile')
+        # get_profile must NOT have been called (forced_profile_id is None/falsy)
+        mock_acm.get_profile.assert_not_called()
+
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
