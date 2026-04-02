@@ -1,3 +1,4 @@
+
 """Regex and matching API handler functions extracted from web_api."""
 
 import re
@@ -66,17 +67,33 @@ def add_regex_pattern_response(*, payload: Any, get_regex_matcher: Callable[[], 
 
 
 def delete_regex_pattern_response(*, channel_id: str, get_regex_matcher: Callable[[], Any]):
-    """Handle regex pattern deletion for one channel."""
+    """Handle regex pattern deletion for one channel.
+
+    Previously this read the full pattern dict, deleted one entry, then called
+    _save_patterns() which rewrote *every* channel via a merge=False import.
+    That triggered the bulk-delete orphan bug (ChannelRegexPattern rows surviving
+    the ChannelRegexConfig wipe) and was also unnecessarily expensive.
+
+    Now we delegate directly to matcher.delete_channel_pattern() which:
+      - Removes the entry from the in-memory cache under the lock
+      - Calls db.delete_channel_regex_config() which deletes the ORM object,
+        allowing SQLAlchemy cascade to cleanly remove the pattern rows
+    No other channel's patterns are touched.
+    """
     try:
         matcher = get_regex_matcher()
+        cid = str(channel_id)
+
+        # Reload to ensure the in-memory cache is current before the existence
+        # check, avoiding a false 404 on a stale cache.
         matcher.reload_patterns()
         patterns = matcher.get_patterns()
 
-        if "patterns" in patterns and str(channel_id) in patterns["patterns"]:
-            del patterns["patterns"][str(channel_id)]
-            matcher._save_patterns(patterns)
-            return jsonify({"message": "Pattern deleted successfully"})
-        return jsonify({"error": "Pattern not found"}), 404
+        if "patterns" not in patterns or cid not in patterns["patterns"]:
+            return jsonify({"error": "Pattern not found"}), 404
+
+        matcher.delete_channel_pattern(cid)
+        return jsonify({"message": "Pattern deleted successfully"})
     except Exception as exc:
         logger.error(f"Error deleting regex pattern: {exc}")
         return jsonify({"error": "Internal Server Error"}), 500
