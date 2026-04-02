@@ -26,6 +26,7 @@ import {
   BatchPeriodEditDialog,
 } from '@/components/channel-configuration/PeriodDialogs.jsx'
 import { MatchPreviewDialog, MatchResultsList } from '@/components/channel-configuration/MatchPreviewDialog.jsx'
+import { ProfilePickerDialog } from '@/components/channel-configuration/ProfilePickerDialog.jsx'
 import {
   DndContext,
 
@@ -402,6 +403,9 @@ export default function ChannelConfiguration() {
 
   const [loading, setLoading] = useState(true)
   const [checkingChannel, setCheckingChannel] = useState(null)
+  const [profilePickerOpen, setProfilePickerOpen] = useState(false)
+  const [profilePickerData, setProfilePickerData] = useState(null)
+  // profilePickerData shape: { channelId, channelName, periods }
   const [searchQuery, setSearchQuery] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingChannelId, setEditingChannelId] = useState(null)
@@ -675,17 +679,94 @@ export default function ChannelConfiguration() {
     }
   }
 
-  const handleCheckChannel = async (channelId) => {
+  /**
+   * Health check pre-flight + execution.
+   *
+   * Uses automation_periods_count already on the channel object
+   * (populated by ChannelService._enrich_channels server-side) to avoid
+   * unnecessary API calls for the 0-period and 1-period cases.
+   *
+   * Decision tree:
+   *   0 periods -> toast (no profile), stop
+   *   1 period  -> proceed directly (unambiguous)
+   *   >1 periods -> fetch enriched list, deduplicate by profile_id
+   *               -> all share one profile: proceed
+   *               -> different profiles: open ProfilePickerDialog
+   *
+   * @param {number} channelId
+   * @param {string|null} resolvedProfileId - set when called back from ProfilePickerDialog
+   */
+  const handleCheckChannel = async (channelId, resolvedProfileId = null) => {
+    // Pre-flight: profile resolution
+    if (!resolvedProfileId) {
+      const channel = channels.find(ch => ch.id === channelId)
+      const periodCount = Number(channel?.automation_periods_count ?? 0)
+
+      // Case 1: No periods assigned - hard block, actionable message
+      if (periodCount === 0) {
+        toast({
+          title: 'No Automation Profile',
+          description:
+            'This channel has no automation profile assigned. ' +
+            'Assign an automation period with a profile before running a health check.',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      // Case 2: Exactly one period - unambiguous, proceed immediately
+      // (falls through to the actual check below)
+
+      // Case 3: Multiple periods - check for profile ambiguity
+      if (periodCount > 1) {
+        try {
+          setCheckingChannel(channelId) // Show spinner during fetch
+          const response = await automationAPI.getChannelPeriods(channelId)
+          const periods = response.data || []
+
+          // Deduplicate by profile_id - multiple periods may share one profile
+          const uniqueProfileIds = [...new Set(
+            periods.map(p => p.profile_id).filter(Boolean)
+          )]
+
+          if (uniqueProfileIds.length <= 1) {
+            // All periods resolve to the same profile - no ambiguity, proceed
+            setCheckingChannel(null)
+            // Falls through to actual check; backend resolves active period
+          } else {
+            // Genuine ambiguity - open picker for user to select
+            setCheckingChannel(null)
+            setProfilePickerData({
+              channelId,
+              channelName: channel?.name ?? `Channel ${channelId}`,
+              periods,
+            })
+            setProfilePickerOpen(true)
+            return // Picker's onSelect calls handleCheckChannel with resolvedProfileId
+          }
+        } catch (err) {
+          setCheckingChannel(null)
+          console.error('Error fetching channel periods for health check pre-flight:', err)
+          toast({
+            title: 'Error',
+            description: 'Could not load automation periods for this channel.',
+            variant: 'destructive',
+          })
+          return
+        }
+      }
+    }
+
+    // Actual check
     try {
       setCheckingChannel(channelId)
 
-      // Show starting notification
       toast({
         title: "Channel Check Started",
         description: "Checking channel streams... This may take a few minutes.",
       })
 
-      const response = await streamCheckerAPI.checkSingleChannel(channelId)
+      const response = await streamCheckerAPI.checkSingleChannel(channelId, resolvedProfileId)
 
       if (response.data.success) {
         const stats = response.data.stats
@@ -693,8 +774,17 @@ export default function ChannelConfiguration() {
           title: "Channel Check Complete",
           description: `Checked ${stats.total_streams} streams. Dead: ${stats.dead_streams}. Avg Resolution: ${stats.avg_resolution}, Avg Bitrate: ${stats.avg_bitrate}`,
         })
-        // Reload the channel data to show updated stats
         loadData()
+      } else if (response.data.error === 'no_profile') {
+        // Backend safety-net fired (e.g. periods exist but none active at execution time)
+        toast({
+          title: 'No Active Profile',
+          description:
+            response.data.message ||
+            'This channel has no active automation profile. ' +
+            'Check that your automation period schedule is currently active.',
+          variant: 'destructive',
+        })
       } else {
         toast({
           title: "Check Failed",
@@ -704,7 +794,19 @@ export default function ChannelConfiguration() {
       }
     } catch (err) {
       console.error('Error checking channel:', err)
-      // Check if it's a timeout error
+
+      // 400 with no_profile = backend guard fired, surface it cleanly
+      if (err.response?.status === 400 && err.response?.data?.error === 'no_profile') {
+        toast({
+          title: 'No Active Profile',
+          description:
+            err.response.data.message ||
+            'This channel has no active automation profile.',
+          variant: 'destructive',
+        })
+        return
+      }
+
       if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
         toast({
           title: "Check Taking Longer Than Expected",
@@ -3713,6 +3815,20 @@ export default function ChannelConfiguration() {
           }}
         />
 
+        {profilePickerData && (
+          <ProfilePickerDialog
+            open={profilePickerOpen}
+            onOpenChange={(open) => {
+              setProfilePickerOpen(open)
+              if (!open) setProfilePickerData(null)
+            }}
+            channelName={profilePickerData.channelName}
+            periods={profilePickerData.periods}
+            onSelect={(profileId) =>
+              handleCheckChannel(profilePickerData.channelId, profileId)
+            }
+          />
+        )}
         <MatchPreviewDialog
           open={previewResultsOpen}
           onOpenChange={setPreviewResultsOpen}
