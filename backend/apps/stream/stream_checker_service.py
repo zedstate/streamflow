@@ -3127,35 +3127,71 @@ class StreamCheckerService:
                     'channel_name': channel_name
                 }
             
-            # Check channel settings for matching and checking modes
-            # Check channel settings for matching and checking modes via Automation Profiles
+            # Resolve the automation profile that governs this check.
+            #
+            # Resolution order:
+            #   1. EPG scheduled profile override (channel-level then group-level).
+            #      Only consulted when is_epg_scheduled=True.
+            #   2. Active period-based profile via get_effective_configuration.
+            #   3. Hard halt — no fallback to global automation controls.
+            #
+            # Rationale: the opt-in model requires an explicit profile. Without one
+            # the system cannot know the user's intent (matching flags, checking flags,
+            # scoring weights, loop detection, minimum thresholds, etc.) and must not
+            # act. Global automation controls are a system-wide on/off switch, not a
+            # per-channel configuration, and are never an appropriate fallback here.
             from apps.automation.automation_config_manager import get_automation_config_manager
             automation_config = get_automation_config_manager()
-            
-            # channel dict is available in local scope
+
             channel_group_id = channel.get('channel_group_id')
 
-            # If this is an EPG scheduled check, prefer the EPG scheduled profile override
+            # Step 1: EPG scheduled profile override (EPG-triggered checks only)
             profile = None
             if is_epg_scheduled:
-                epg_profile = automation_config.get_effective_epg_scheduled_profile(channel_id, channel_group_id)
+                epg_profile = automation_config.get_effective_epg_scheduled_profile(
+                    channel_id, channel_group_id
+                )
                 if epg_profile:
                     profile = epg_profile
-                    logger.info(f"Channel {channel_name}: using EPG scheduled profile '{epg_profile.get('name')}'")
+                    logger.info(
+                        f"Channel {channel_name}: using EPG scheduled profile "
+                        f"'{epg_profile.get('name')}'"
+                    )
 
-            # Fall back to the active period-based profile if no EPG profile was found
+            # Step 2: Active period-based profile
             if profile is None:
                 config = automation_config.get_effective_configuration(channel_id, channel_group_id)
                 profile = config.get('profile') if config else None
-            
-            # Default to global automation controls when no channel/group profile applies.
-            matching_enabled = self.config.get('automation_controls.auto_stream_matching', True)
-            checking_enabled = self.config.get('automation_controls.auto_quality_checking', True)
-            if profile:
-                matching_enabled = profile.get('stream_matching', {}).get('enabled', False)
-                checking_enabled = profile.get('stream_checking', {}).get('enabled', False)
-            
-            logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
+
+            # Step 3: Hard halt — no profile means no check.
+            # This replaces the former global-controls fallback which silently ran
+            # checks with system-wide defaults, ignoring per-channel intent entirely.
+            if profile is None:
+                logger.warning(
+                    f"⛔ Channel {channel_name} (ID: {channel_id}) has no automation "
+                    f"profile assigned. Health check cannot proceed without an explicit "
+                    f"profile. Assign an automation period, or for EPG checks an EPG "
+                    f"scheduled profile override."
+                )
+                return {
+                    'success': False,
+                    'error': 'no_profile',
+                    'message': (
+                        f"Channel {channel_name} has no automation profile assigned. "
+                        f"Assign an automation period with a profile before running "
+                        f"a health check."
+                    ),
+                    'channel_id': channel_id,
+                    'channel_name': channel_name,
+                }
+
+            matching_enabled = profile.get('stream_matching', {}).get('enabled', False)
+            checking_enabled = profile.get('stream_checking', {}).get('enabled', False)
+
+            logger.info(
+                f"Channel {channel_name} settings: "
+                f"matching={matching_enabled}, checking={checking_enabled}"
+            )
 
             # Signal to the frontend that this is a single channel check so the
             # stale batch progress card from the previous automation run is suppressed.
