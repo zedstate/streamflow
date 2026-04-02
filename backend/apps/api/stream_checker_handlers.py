@@ -270,8 +270,12 @@ def check_single_channel_now_response(
             return jsonify({"error": "channel_id required"}), 400
 
         channel_id = data["channel_id"]
+        # profile_id is optionally supplied when the user explicitly chose a profile
+        # via the ProfilePickerDialog (multi-period channel). When present it is
+        # forwarded to the service so the correct profile governs the check.
+        forced_profile_id = data.get("profile_id")
         service = get_stream_checker_service()
-        result = service.check_single_channel(channel_id)
+        result = service.check_single_channel(channel_id, forced_profile_id=forced_profile_id)
 
         if result.get("success"):
             return jsonify(result), 200
