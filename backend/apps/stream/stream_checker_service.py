@@ -3067,7 +3067,7 @@ class StreamCheckerService:
                 
         return results
 
-    def check_single_channel(self, channel_id: int, program_name: Optional[str] = None, is_epg_scheduled: bool = False) -> Dict:
+    def check_single_channel(self, channel_id: int, program_name: Optional[str] = None, is_epg_scheduled: bool = False, forced_profile_id: Optional[str] = None) -> Dict:
         """Check a single channel immediately and return results.
         
         This performs a targeted channel refresh for a single channel:
@@ -3145,9 +3145,25 @@ class StreamCheckerService:
 
             channel_group_id = channel.get('channel_group_id')
 
-            # Step 1: EPG scheduled profile override (EPG-triggered checks only)
+            # Step 0: Explicitly chosen profile (from ProfilePickerDialog, multi-period channels).
+            # When the user selected a specific profile via the picker we honour it
+            # directly, skipping the schedule-based resolution entirely.
             profile = None
-            if is_epg_scheduled:
+            if forced_profile_id:
+                profile = automation_config.get_profile(forced_profile_id)
+                if profile:
+                    logger.info(
+                        f"Channel {channel_name}: using explicitly selected profile "
+                        f"'{profile.get('name')}' (id={forced_profile_id})"
+                    )
+                else:
+                    logger.warning(
+                        f"Channel {channel_name}: forced_profile_id={forced_profile_id!r} "
+                        f"not found — falling back to standard resolution"
+                    )
+
+            # Step 1: EPG scheduled profile override (EPG-triggered checks only)
+            if profile is None and is_epg_scheduled:
                 epg_profile = automation_config.get_effective_epg_scheduled_profile(
                     channel_id, channel_group_id
                 )
