@@ -890,7 +890,7 @@ class StreamCheckerService:
 
     # Removed _refine_sorted_streams in favor of lexicographical Sort Keys.
     
-    def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
+    def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False, forced_profile_id: Optional[str] = None):
         """Check and reorder streams for a specific channel.
         
         Routes to either concurrent or sequential checking based on configuration.
@@ -902,11 +902,11 @@ class StreamCheckerService:
         concurrent_enabled = self.config.get('concurrent_streams.enabled', True)
         
         if concurrent_enabled:
-            return self._check_channel_concurrent(channel_id, skip_batch_changelog=skip_batch_changelog)
+            return self._check_channel_concurrent(channel_id, skip_batch_changelog=skip_batch_changelog, forced_profile_id=forced_profile_id)
         else:
-            return self._check_channel_sequential(channel_id, skip_batch_changelog=skip_batch_changelog)
+            return self._check_channel_sequential(channel_id, skip_batch_changelog=skip_batch_changelog, forced_profile_id=forced_profile_id)
     
-    def _check_channel_concurrent(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None):
+    def _check_channel_concurrent(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None, forced_profile_id: Optional[str] = None):
         """Check and reorder streams for a specific channel using parallel thread pool.
         
         Args:
@@ -954,8 +954,19 @@ class StreamCheckerService:
             channel = udi.get_channel_by_id(channel_id)
             group_id = channel.get('channel_group_id') if channel else None
             
-            config = automation_config.get_effective_configuration(channel_id, group_id)
-            profile = config.get('profile') if config else None
+            # If a profile was explicitly selected (via ProfilePickerDialog), use it
+            # directly so all checking parameters (weights, limits, revive, loop detection)
+            # reflect the user's intent rather than whichever period is currently active.
+            if forced_profile_id:
+                profile = automation_config.get_profile(forced_profile_id)
+                if not profile:
+                    logger.warning(
+                        f"forced_profile_id={forced_profile_id!r} not found in _check_channel "
+                        f"— falling back to active period resolution"
+                    )
+            if not forced_profile_id or not profile:
+                config = automation_config.get_effective_configuration(channel_id, group_id)
+                profile = config.get('profile') if config else None
             if profile:
                 profile_stream_checking = profile.get('stream_checking', {})
                 stream_limit = profile_stream_checking.get('stream_limit', 0)
@@ -1696,7 +1707,7 @@ class StreamCheckerService:
             log_function_return(logger, "_check_channel_concurrent")
 
     
-    def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None):
+    def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False, target_stream_ids: Optional[List[str]] = None, forced_profile_id: Optional[str] = None):
         """Check and reorder streams for a specific channel using sequential checking.
         
         Args:
@@ -1737,8 +1748,19 @@ class StreamCheckerService:
             channel = udi.get_channel_by_id(channel_id)
             group_id = channel.get('channel_group_id') if channel else None
             
-            config = automation_config.get_effective_configuration(channel_id, group_id)
-            profile = config.get('profile') if config else None
+            # If a profile was explicitly selected (via ProfilePickerDialog), use it
+            # directly so all checking parameters (weights, limits, revive, loop detection)
+            # reflect the user's intent rather than whichever period is currently active.
+            if forced_profile_id:
+                profile = automation_config.get_profile(forced_profile_id)
+                if not profile:
+                    logger.warning(
+                        f"forced_profile_id={forced_profile_id!r} not found in _check_channel "
+                        f"— falling back to active period resolution"
+                    )
+            if not forced_profile_id or not profile:
+                config = automation_config.get_effective_configuration(channel_id, group_id)
+                profile = config.get('profile') if config else None
             if profile:
                 profile_stream_checking = profile.get('stream_checking', {})
                 stream_limit = profile_stream_checking.get('stream_limit', 0)
@@ -3127,9 +3149,18 @@ class StreamCheckerService:
                     'channel_name': channel_name
                 }
             
+            # Check channel settings for matching and checking modes
+            # Check channel settings for matching and checking modes via Automation Profiles
+            from apps.automation.automation_config_manager import get_automation_config_manager
+            automation_config = get_automation_config_manager()
+            
+            # channel dict is available in local scope
+            channel_group_id = channel.get('channel_group_id')
+
             # Resolve the automation profile that governs this check.
             #
             # Resolution order:
+            #   0. Explicitly forced profile (from ProfilePickerDialog, multi-period channels).
             #   1. EPG scheduled profile override (channel-level then group-level).
             #      Only consulted when is_epg_scheduled=True.
             #   2. Active period-based profile via get_effective_configuration.
@@ -3140,10 +3171,6 @@ class StreamCheckerService:
             # scoring weights, loop detection, minimum thresholds, etc.) and must not
             # act. Global automation controls are a system-wide on/off switch, not a
             # per-channel configuration, and are never an appropriate fallback here.
-            from apps.automation.automation_config_manager import get_automation_config_manager
-            automation_config = get_automation_config_manager()
-
-            channel_group_id = channel.get('channel_group_id')
 
             # Step 0: Explicitly chosen profile (from ProfilePickerDialog, multi-period channels).
             # When the user selected a specific profile via the picker we honour it
@@ -3164,15 +3191,10 @@ class StreamCheckerService:
 
             # Step 1: EPG scheduled profile override (EPG-triggered checks only)
             if profile is None and is_epg_scheduled:
-                epg_profile = automation_config.get_effective_epg_scheduled_profile(
-                    channel_id, channel_group_id
-                )
+                epg_profile = automation_config.get_effective_epg_scheduled_profile(channel_id, channel_group_id)
                 if epg_profile:
                     profile = epg_profile
-                    logger.info(
-                        f"Channel {channel_name}: using EPG scheduled profile "
-                        f"'{epg_profile.get('name')}'"
-                    )
+                    logger.info(f"Channel {channel_name}: using EPG scheduled profile '{epg_profile.get('name')}'")
 
             # Step 2: Active period-based profile
             if profile is None:
@@ -3204,10 +3226,7 @@ class StreamCheckerService:
             matching_enabled = profile.get('stream_matching', {}).get('enabled', False)
             checking_enabled = profile.get('stream_checking', {}).get('enabled', False)
 
-            logger.info(
-                f"Channel {channel_name} settings: "
-                f"matching={matching_enabled}, checking={checking_enabled}"
-            )
+            logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
 
             # Signal to the frontend that this is a single channel check so the
             # stale batch progress card from the previous automation run is suppressed.
@@ -3364,7 +3383,7 @@ class StreamCheckerService:
                 # Perform the check (this will now bypass immunity and check all streams)
                 # Returns dict with dead_streams_count and revived_streams_count
                 # Skip batch changelog since this is a single channel check
-                check_result = self._check_channel(channel_id, skip_batch_changelog=True)
+                check_result = self._check_channel(channel_id, skip_batch_changelog=True, forced_profile_id=forced_profile_id)
                 if not check_result or not isinstance(check_result, dict):
                     # This should not happen with updated methods, but provide safe fallback
                     logger.warning(f"_check_channel did not return expected result dict, using defaults")
