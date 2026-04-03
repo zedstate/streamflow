@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, automationAPI } from '@/services/api.js'
 import { getCachedChannelLogoUrl, setCachedChannelLogoUrl } from '@/services/channelCache.js'
-import { Plus, Trash2, Loader2, Eye, ChevronDown, Activity, Calendar, CalendarClock, Edit } from 'lucide-react'
+import { Plus, Trash2, Loader2, Eye, ChevronDown, Activity, Calendar, CalendarClock, Edit, Zap } from 'lucide-react'
 import {
   REGEX_TABLE_GRID_COLS,
   normalizePatternData,
@@ -33,82 +33,140 @@ function formatSchedule(schedule) {
 
 // ---------------------------------------------------------------------------
 // Tooltip: Channel Group column
-// Shows resolved automation profile source + EPG override source
+//
+// Lazy-fetches /api/channels/<id>/active-profile on first hover to resolve
+// the *currently active* automation profile and EPG override — the same
+// resolution the stream checker uses. Falls back to static badge text
+// before the fetch completes.
 // ---------------------------------------------------------------------------
-function ChannelGroupTooltip({ children, channel, group, groupsConfig, profiles }) {
+function ChannelGroupTooltip({ children, channel, group, groupsConfig }) {
+  const [open, setOpen] = useState(false)
+  const [activeProfile, setActiveProfile] = useState(null)  // null = not yet fetched
+  const [loading, setLoading] = useState(false)
+  const fetchedRef = useRef(false)
+
+  const handleOpenChange = useCallback(
+    async (nextOpen) => {
+      setOpen(nextOpen)
+      if (!nextOpen || fetchedRef.current) return
+      fetchedRef.current = true
+      setLoading(true)
+      try {
+        const res = await channelsAPI.getChannelActiveProfile(channel.id)
+        setActiveProfile(res.data)
+      } catch {
+        setActiveProfile({ error: true })
+      } finally {
+        setLoading(false)
+      }
+    },
+    [channel.id]
+  )
+
   const channelGroupId = channel?.group_id ?? channel?.channel_group_id
 
-  // --- Automation profile resolution ---
+  // Static fallback values (always available without fetch)
   const isPeriodChannelOverride =
-    channel?.automation_periods_source === 'channel' ||
-    Number(channel?.channel_periods_count || 0) > 0
+    channel?.automation_periods_source === 'channel' || Number(channel?.channel_periods_count || 0) > 0
   const isPeriodGroupBased =
     channel?.automation_periods_source === 'group' ||
     (!isPeriodChannelOverride && Number(channel?.group_periods_count || 0) > 0)
-
-  // --- EPG profile resolution ---
   const isEpgChannelOverride = Boolean(channel?.channel_epg_scheduled_profile_id)
-  const groupEpgProfileId = groupsConfig?.[channelGroupId]?.epg_profile_id
-  const isEpgGroupBased = !isEpgChannelOverride && Boolean(groupEpgProfileId)
+  const isEpgGroupBased = !isEpgChannelOverride && Boolean(groupsConfig?.[channelGroupId]?.epg_profile_id)
 
-  // Resolve EPG profile name
-  const epgProfileId = channel?.channel_epg_scheduled_profile_id || groupEpgProfileId
-  const epgProfile = epgProfileId ? profiles?.find(p => String(p.id) === String(epgProfileId)) : null
-
-  // Automation source label
-  let automationSource = 'None'
-  if (isPeriodChannelOverride) automationSource = 'Channel override'
-  else if (isPeriodGroupBased) automationSource = 'Inherited from group'
-
-  // EPG source label
-  let epgSource = 'None'
-  if (isEpgChannelOverride) epgSource = 'Channel override'
-  else if (isEpgGroupBased) epgSource = 'Inherited from group'
+  const automation = activeProfile?.automation
+  const epgOverride = activeProfile?.epg_override
 
   return (
-    <Tooltip>
+    <Tooltip open={open} onOpenChange={handleOpenChange}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent className="max-w-[260px] space-y-2 p-3">
-        {/* Group name */}
+      <TooltipContent className="max-w-[280px] p-3 space-y-2">
+
         <p className="font-semibold text-sm">{group?.name || 'Ungrouped'}</p>
 
         <Separator className="my-1" />
 
-        {/* Automation profile */}
+        {loading && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Resolving active profile…
+          </div>
+        )}
+
+        {/* Active Automation Profile */}
         <div className="space-y-0.5">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Automation
+          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+            <Zap className="h-3 w-3" />
+            Active Automation Profile
           </p>
-          <p className="text-xs">{automationSource}</p>
+          {!loading && automation?.profile_name ? (
+            <div className="rounded-md bg-muted/50 px-2 py-1.5">
+              <p className="text-xs font-medium">{automation.profile_name}</p>
+              {automation.period_name && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  via period: {automation.period_name}
+                </p>
+              )}
+              {automation.source && (
+                <Badge
+                  variant={automation.source === 'channel' ? 'default' : 'outline'}
+                  className="text-[10px] h-4 px-1 mt-1"
+                >
+                  {automation.source === 'channel' ? 'Channel override' : 'From group'}
+                </Badge>
+              )}
+            </div>
+          ) : !loading ? (
+            <p className="text-xs text-muted-foreground italic">
+              {activeProfile?.error
+                ? 'Could not resolve'
+                : isPeriodChannelOverride || isPeriodGroupBased
+                  ? 'Periods assigned — none active right now'
+                  : 'No automation configured'}
+            </p>
+          ) : null}
         </div>
 
-        {/* EPG profile */}
+        {/* EPG Override Profile */}
         <div className="space-y-0.5">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            EPG Profile
+          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+            <CalendarClock className="h-3 w-3" />
+            EPG Override Profile
           </p>
-          {epgProfile ? (
-            <p className="text-xs flex items-center gap-1">
-              <CalendarClock className="h-3 w-3 shrink-0" />
-              <span>{epgProfile.name}</span>
-              <span className="text-muted-foreground">({epgSource})</span>
+          {!loading && epgOverride?.profile_name ? (
+            <div className="rounded-md bg-muted/50 px-2 py-1.5">
+              <p className="text-xs font-medium">{epgOverride.profile_name}</p>
+              {epgOverride.source && (
+                <Badge
+                  variant={epgOverride.source === 'channel' ? 'default' : 'outline'}
+                  className="text-[10px] h-4 px-1 mt-1"
+                >
+                  {epgOverride.source === 'channel' ? 'Channel override' : 'From group'}
+                </Badge>
+              )}
+            </div>
+          ) : !loading ? (
+            <p className="text-xs text-muted-foreground italic">
+              {activeProfile?.error
+                ? 'Could not resolve'
+                : isEpgChannelOverride || isEpgGroupBased
+                  ? 'Assigned (fetching…)'
+                  : 'None'}
             </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">{epgSource}</p>
-          )}
+          ) : null}
         </div>
+
       </TooltipContent>
     </Tooltip>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Tooltip: Nº of Periods column
-// Lazy-loads period details on first hover; caches result in a ref.
+// Tooltip: Nº of Periods column — lazy fetch on first hover
 // ---------------------------------------------------------------------------
 function PeriodsTooltip({ children, channel, profiles }) {
   const [open, setOpen] = useState(false)
-  const [periods, setPeriods] = useState(null)   // null = not yet fetched
+  const [periods, setPeriods] = useState(null)
   const [loading, setLoading] = useState(false)
   const fetchedRef = useRef(false)
 
@@ -156,20 +214,16 @@ function PeriodsTooltip({ children, channel, profiles }) {
             {periods.map((period) => {
               const profileName =
                 period.profile?.name ||
+                period.profile_name ||
                 (period.profile_id
                   ? profiles?.find(p => String(p.id) === String(period.profile_id))?.name
                   : null)
               return (
-                <div
-                  key={period.id}
-                  className="rounded-md bg-muted/50 px-2 py-1.5 space-y-0.5"
-                >
+                <div key={period.id} className="rounded-md bg-muted/50 px-2 py-1.5 space-y-0.5">
                   <p className="text-xs font-medium leading-tight">{period.name}</p>
                   <p className="text-[11px] text-muted-foreground leading-tight">
                     {formatSchedule(period.schedule)}
-                    {profileName && (
-                      <span className="ml-1">· {profileName}</span>
-                    )}
+                    {profileName && <span className="ml-1">· {profileName}</span>}
                   </p>
                 </div>
               )
@@ -182,8 +236,7 @@ function PeriodsTooltip({ children, channel, profiles }) {
 }
 
 // ---------------------------------------------------------------------------
-// Tooltip: Regex Patterns column
-// All data is already in props — zero fetching needed.
+// Tooltip: Regex Patterns column — zero fetching, pure props
 // ---------------------------------------------------------------------------
 function RegexPatternsTooltip({ children, channelPatterns, matchByTvgId, isTvgInherited, channel }) {
   const normalizedPatterns = normalizePatternData(channelPatterns)
@@ -194,7 +247,6 @@ function RegexPatternsTooltip({ children, channelPatterns, matchByTvgId, isTvgIn
       <TooltipContent className="max-w-[320px] p-3 space-y-2">
         <p className="font-semibold text-sm">Regex Patterns</p>
 
-        {/* TVG-ID matching */}
         {matchByTvgId && (
           <div className="rounded-md bg-muted/50 px-2 py-1.5">
             <p className="text-xs font-medium flex items-center gap-1">
@@ -213,7 +265,6 @@ function RegexPatternsTooltip({ children, channelPatterns, matchByTvgId, isTvgIn
           </div>
         )}
 
-        {/* Regex patterns list */}
         {normalizedPatterns.length > 0 ? (
           <div className="space-y-1.5">
             {normalizedPatterns.map((p, i) => (
@@ -289,7 +340,7 @@ export function RegexTableRow({
     ? groupMatchingConfig.regex_patterns.length
     : 0
 
-  // Logo loading (unchanged)
+  // Logo
   useEffect(() => {
     const cached = getCachedChannelLogoUrl(channel.id)
     if (cached) { setLogoUrl(cached); return }
@@ -303,7 +354,7 @@ export function RegexTableRow({
     }
   }, [channel.id, channel.logo_id])
 
-  // Period loading for the expanded row panel (unchanged behaviour)
+  // Expanded panel period fetch
   const loadChannelPeriods = useCallback(async () => {
     setLoadingPeriods(true)
     try {
@@ -331,14 +382,9 @@ export function RegexTableRow({
     }
   }
 
-  // Matching mode helpers
-  const effectiveMatchingEnabled = effectiveMatchingConfig?.enabled !== false
-  const effectiveCheckingMode =
-    channel?.checking_mode || groupsConfig?.[channelGroupId]?.checking_mode || 'enabled'
-
   return (
     <div className="border-b last:border-b-0">
-      {/* ── Collapsed row grid ── */}
+      {/* ── Collapsed row ── */}
       <div
         className="grid items-center gap-2 px-3 py-3 hover:bg-muted/30 transition-colors"
         style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS }}
@@ -379,13 +425,12 @@ export function RegexTableRow({
           <span className="font-medium truncate">{channel.name}</span>
         </div>
 
-        {/* ── Channel Group column (with tooltip) ── */}
+        {/* ── Channel Group — fetches active profile on hover ── */}
         <div className="flex items-center text-sm text-muted-foreground min-w-0">
           <ChannelGroupTooltip
             channel={channel}
             group={group}
             groupsConfig={groupsConfig}
-            profiles={profiles}
           >
             <div className="min-w-0 cursor-default">
               <div className="truncate">{group?.name || '-'}</div>
@@ -407,7 +452,7 @@ export function RegexTableRow({
           </ChannelGroupTooltip>
         </div>
 
-        {/* ── Nº of Periods column (with tooltip) ── */}
+        {/* ── Nº of Periods ── */}
         <div className="flex items-center">
           <PeriodsTooltip channel={channel} profiles={profiles}>
             <div className="cursor-default">
@@ -419,7 +464,7 @@ export function RegexTableRow({
           </PeriodsTooltip>
         </div>
 
-        {/* ── Regex Patterns column (with tooltip) ── */}
+        {/* ── Regex Patterns ── */}
         <div className="flex items-center gap-2 flex-wrap">
           <RegexPatternsTooltip
             channelPatterns={channelPatterns}
@@ -450,7 +495,7 @@ export function RegexTableRow({
             </div>
           </RegexPatternsTooltip>
 
-          {/* Stream match count tooltip (pre-existing, unchanged) */}
+          {/* Stream match count (pre-existing, unchanged) */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="text-xs font-mono tabular-nums cursor-default select-none">
@@ -520,22 +565,17 @@ export function RegexTableRow({
       {/* ── Expanded panel (unchanged) ── */}
       {expanded && (
         <div className="px-4 pb-4 space-y-4 bg-muted/20 border-t">
-          {/* Regex patterns editor */}
           <div className="pt-4">
             <div className="flex items-center justify-between mb-3">
               <h4 className="font-medium text-sm flex items-center gap-2">
                 <Edit className="h-4 w-4" />
                 Regex Patterns
-                {hasChannelMatchingConfig ? null : channelGroupId && groupMatchingPatternCount > 0 ? (
+                {!hasChannelMatchingConfig && channelGroupId && groupMatchingPatternCount > 0 && (
                   <Badge variant="outline" className="text-[10px]">Inherited from group</Badge>
-                ) : null}
+                )}
               </h4>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={() => onEditRegex?.(channel.id, null)}
-              >
+              <Button size="sm" variant="outline" className="h-7 text-xs"
+                onClick={() => onEditRegex?.(channel.id, null)}>
                 <Plus className="h-3 w-3 mr-1" />
                 Add Pattern
               </Button>
@@ -544,10 +584,8 @@ export function RegexTableRow({
             {normalizePatternData(channelPatterns).length > 0 ? (
               <div className="space-y-2">
                 {normalizePatternData(channelPatterns).map((p, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2"
-                  >
+                  <div key={idx}
+                    className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-mono break-all">{p.pattern}</p>
                       {p.m3u_accounts && p.m3u_accounts.length > 0 && (
@@ -557,20 +595,13 @@ export function RegexTableRow({
                       )}
                     </div>
                     <div className="flex gap-1 shrink-0">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0"
-                        onClick={() => onEditRegex?.(channel.id, idx)}
-                      >
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                        onClick={() => onEditRegex?.(channel.id, idx)}>
                         <Edit className="h-3 w-3" />
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
+                      <Button size="sm" variant="ghost"
                         className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                        onClick={() => onDeletePattern?.(channel.id, idx)}
-                      >
+                        onClick={() => onDeletePattern?.(channel.id, idx)}>
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     </div>
@@ -588,14 +619,11 @@ export function RegexTableRow({
 
           <Separator />
 
-          {/* TVG-ID matching toggle */}
           {onUpdateMatchSettings && (
             <div className="flex items-center justify-between">
               <div>
                 <Label className="text-sm font-medium">TVG-ID Matching</Label>
-                <p className="text-xs text-muted-foreground">
-                  Match streams using the channel's TVG-ID
-                </p>
+                <p className="text-xs text-muted-foreground">Match streams using the channel's TVG-ID</p>
               </div>
               <Switch
                 checked={matchByTvgId}
@@ -608,19 +636,14 @@ export function RegexTableRow({
 
           <Separator />
 
-          {/* Automation periods */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <h4 className="font-medium text-sm flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
                 Automation Periods
               </h4>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={() => setAssignDialogOpen(true)}
-              >
+              <Button size="sm" variant="outline" className="h-7 text-xs"
+                onClick={() => setAssignDialogOpen(true)}>
                 <Plus className="h-3 w-3 mr-1" />
                 Assign Period
               </Button>
@@ -636,14 +659,13 @@ export function RegexTableRow({
                 {channelPeriods.map((period) => {
                   const profileName =
                     period.profile?.name ||
+                    period.profile_name ||
                     (period.profile_id
                       ? profiles?.find(p => String(p.id) === String(period.profile_id))?.name
                       : null)
                   return (
-                    <div
-                      key={period.id}
-                      className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2"
-                    >
+                    <div key={period.id}
+                      className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium">{period.name}</p>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -651,12 +673,9 @@ export function RegexTableRow({
                           {profileName && <span className="ml-1">· {profileName}</span>}
                         </p>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
+                      <Button size="sm" variant="ghost"
                         onClick={() => handleRemovePeriod(period.id)}
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10 h-7 w-7 p-0"
-                      >
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10 h-7 w-7 p-0">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -683,7 +702,6 @@ export function RegexTableRow({
 
           <Separator />
 
-          {/* EPG Scheduled Profile override */}
           {onAssignEpgProfile && (
             <div>
               <h4 className="font-medium text-sm flex items-center gap-2 mb-2">
