@@ -47,7 +47,7 @@ const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 
 // Constants for grid layout
-const REGEX_TABLE_GRID_COLS = '32px 60px 48px minmax(120px, 1fr) minmax(220px, 2fr) 100px 80px 140px'
+const REGEX_TABLE_GRID_COLS = '32px 60px 48px 2fr 3fr 100px 80px 140px'
 
 // Constants for stream checker priorities
 
@@ -2608,7 +2608,7 @@ export default function ChannelConfiguration() {
                       {/* Table Rows */}
                       <div className="divide-y">
                         {paginatedChannels.map(channel => {
-                          const group = groups.find(g => g.id === channel.channel_group_id)
+                          const group = groups.find(g => String(g.id) === String(channel.channel_group_id))
 
 
                           return (
