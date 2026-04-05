@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
@@ -511,6 +510,12 @@ export default function ChannelConfiguration() {
   // Update settings only mode (for playlist/priority changes without find & replace)
   const [updateOnlyMode, setUpdateOnlyMode] = useState(false)
 
+  // Active profile cache — keyed by channel ID; populated eagerly when paginatedChannels changes.
+  // Stays alive across page navigation so re-visiting a page doesn't re-fetch.
+  // Values: undefined = not yet fetched | null = in flight | { error } | { automation, epg_override }
+  const activeProfilesRef = useRef({})
+  const [activeProfiles, setActiveProfiles] = useState({})
+
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -602,6 +607,38 @@ export default function ChannelConfiguration() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, currentPage, patterns, groupsConfig, channels])
 
+  // Eager active-profile fetch — fires when the visible page of channels changes on the
+  // Regex tab. Skips channels already in the cache (ref survives pagination navigation).
+  // Sets null (in-flight) immediately so the cell shows muted '—' while loading.
+  useEffect(() => {
+    if (activeTab !== 'regex' || channels.length === 0) return
+
+    const channelsToFetch = paginatedChannels.filter(
+      ch => !(String(ch.id) in activeProfilesRef.current)
+    )
+    if (channelsToFetch.length === 0) return
+
+    // Mark all as in-flight immediately so cells render the muted state
+    const inFlight = {}
+    channelsToFetch.forEach(ch => { inFlight[String(ch.id)] = null })
+    activeProfilesRef.current = { ...activeProfilesRef.current, ...inFlight }
+    setActiveProfiles(prev => ({ ...prev, ...inFlight }))
+
+    channelsToFetch.forEach(async (ch) => {
+      const key = String(ch.id)
+      try {
+        const res = await channelsAPI.getChannelActiveProfile(ch.id)
+        activeProfilesRef.current[key] = res.data
+      } catch {
+        activeProfilesRef.current[key] = { error: true }
+      }
+      // Update state with a fresh copy of the ref so React re-renders the affected row
+      setActiveProfiles({ ...activeProfilesRef.current })
+    })
+  // paginatedChannels is derived — list primitive deps to avoid stale closure
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentPage, channels])
+
   const loadData = async () => {
     try {
       setLoading(true)
@@ -667,6 +704,10 @@ export default function ChannelConfiguration() {
       setOrderedChannels(orderedList)
       setOriginalChannelOrder(orderedList)
       setHasOrderChanges(false)
+
+      // Clear active profile cache so fresh data is fetched for the new channel list
+      activeProfilesRef.current = {}
+      setActiveProfiles({})
     } catch (err) {
       console.error('Failed to load data:', err)
       toast({
@@ -2594,6 +2635,7 @@ export default function ChannelConfiguration() {
                               onAssignEpgProfile={handleAssignEpgProfile}
                               matchCount={matchCounts[String(channel.id)]}
                               totalStreamCount={totalStreamCount}
+                              activeProfile={activeProfiles[String(channel.id)]}
                             />
                           )
                         })}
@@ -3841,3 +3883,4 @@ export default function ChannelConfiguration() {
     </TooltipProvider >
   )
 }
+</file>
