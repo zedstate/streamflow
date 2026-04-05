@@ -32,16 +32,13 @@ function formatSchedule(schedule) {
 }
 
 // ---------------------------------------------------------------------------
-// Tooltip: Channel Group column
-//
-// Lazy-fetches /api/channels/<id>/active-profile on first hover to resolve
-// the *currently active* automation profile and EPG override — the same
-// resolution the stream checker uses. Falls back to static badge text
-// before the fetch completes.
+// ChannelGroupTooltip — commented out; cell now shows the same data inline.
+// Kept in file for reference; uncomment if the inline approach is ever reverted.
 // ---------------------------------------------------------------------------
+/*
 function ChannelGroupTooltip({ children, channel, group, groupsConfig }) {
   const [open, setOpen] = useState(false)
-  const [activeProfile, setActiveProfile] = useState(null)  // null = not yet fetched
+  const [activeProfile, setActiveProfile] = useState(null)
   const [loading, setLoading] = useState(false)
   const fetchedRef = useRef(false)
 
@@ -64,8 +61,6 @@ function ChannelGroupTooltip({ children, channel, group, groupsConfig }) {
   )
 
   const channelGroupId = channel?.group_id ?? channel?.channel_group_id
-
-  // Static fallback values (always available without fetch)
   const isPeriodChannelOverride =
     channel?.automation_periods_source === 'channel' || Number(channel?.channel_periods_count || 0) > 0
   const isPeriodGroupBased =
@@ -81,19 +76,14 @@ function ChannelGroupTooltip({ children, channel, group, groupsConfig }) {
     <Tooltip open={open} onOpenChange={handleOpenChange}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
       <TooltipContent className="max-w-[280px] p-3 space-y-2">
-
         <p className="font-semibold text-sm">{group?.name || 'Ungrouped'}</p>
-
         <Separator className="my-1" />
-
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
             <Loader2 className="h-3 w-3 animate-spin" />
             Resolving active profile…
           </div>
         )}
-
-        {/* Active Automation Profile */}
         <div className="space-y-0.5">
           <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1">
             <Zap className="h-3 w-3" />
@@ -103,31 +93,20 @@ function ChannelGroupTooltip({ children, channel, group, groupsConfig }) {
             <div className="rounded-md bg-muted/50 px-2 py-1.5">
               <p className="text-xs font-medium">{automation.profile_name}</p>
               {automation.period_name && (
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  via period: {automation.period_name}
-                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">via period: {automation.period_name}</p>
               )}
               {automation.source && (
-                <Badge
-                  variant={automation.source === 'channel' ? 'default' : 'outline'}
-                  className="text-[10px] h-4 px-1 mt-1"
-                >
-                  {automation.source === 'channel' ? 'Channel override' : 'From group'}
+                <Badge variant={automation.source === 'channel' ? 'default' : 'outline'} className="text-[10px] h-4 px-1 mt-1">
+                  {automation.source === 'channel' ? 'Channel' : 'Group'}
                 </Badge>
               )}
             </div>
           ) : !loading ? (
             <p className="text-xs text-muted-foreground italic">
-              {activeProfile?.error
-                ? 'Could not resolve'
-                : isPeriodChannelOverride || isPeriodGroupBased
-                  ? 'Periods assigned — none active right now'
-                  : 'No automation configured'}
+              {activeProfile?.error ? 'Could not resolve' : 'No automation configured'}
             </p>
           ) : null}
         </div>
-
-        {/* EPG Override Profile */}
         <div className="space-y-0.5">
           <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1">
             <CalendarClock className="h-3 w-3" />
@@ -137,29 +116,22 @@ function ChannelGroupTooltip({ children, channel, group, groupsConfig }) {
             <div className="rounded-md bg-muted/50 px-2 py-1.5">
               <p className="text-xs font-medium">{epgOverride.profile_name}</p>
               {epgOverride.source && (
-                <Badge
-                  variant={epgOverride.source === 'channel' ? 'default' : 'outline'}
-                  className="text-[10px] h-4 px-1 mt-1"
-                >
-                  {epgOverride.source === 'channel' ? 'Channel override' : 'From group'}
+                <Badge variant={epgOverride.source === 'channel' ? 'default' : 'outline'} className="text-[10px] h-4 px-1 mt-1">
+                  {epgOverride.source === 'channel' ? 'Channel' : 'Group'}
                 </Badge>
               )}
             </div>
           ) : !loading ? (
             <p className="text-xs text-muted-foreground italic">
-              {activeProfile?.error
-                ? 'Could not resolve'
-                : isEpgChannelOverride || isEpgGroupBased
-                  ? 'Assigned (fetching…)'
-                  : 'None'}
+              {activeProfile?.error ? 'Could not resolve' : 'None'}
             </p>
           ) : null}
         </div>
-
       </TooltipContent>
     </Tooltip>
   )
 }
+*/
 
 // ---------------------------------------------------------------------------
 // Tooltip: Nº of Periods column — lazy fetch on first hover
@@ -197,18 +169,15 @@ function PeriodsTooltip({ children, channel, profiles }) {
         <p className="font-semibold text-sm">
           {periodCount} Automation {periodCount === 1 ? 'Period' : 'Periods'}
         </p>
-
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
             <Loader2 className="h-3 w-3 animate-spin" />
             Loading…
           </div>
         )}
-
         {!loading && periods !== null && periods.length === 0 && (
           <p className="text-xs text-muted-foreground italic">No periods assigned</p>
         )}
-
         {!loading && periods && periods.length > 0 && (
           <div className="space-y-1.5">
             {periods.map((period) => {
@@ -246,7 +215,6 @@ function RegexPatternsTooltip({ children, channelPatterns, matchByTvgId, isTvgIn
       <TooltipTrigger asChild>{children}</TooltipTrigger>
       <TooltipContent className="max-w-[320px] p-3 space-y-2">
         <p className="font-semibold text-sm">Regex Patterns</p>
-
         {matchByTvgId && (
           <div className="rounded-md bg-muted/50 px-2 py-1.5">
             <p className="text-xs font-medium flex items-center gap-1">
@@ -264,7 +232,6 @@ function RegexPatternsTooltip({ children, channelPatterns, matchByTvgId, isTvgIn
             )}
           </div>
         )}
-
         {normalizedPatterns.length > 0 ? (
           <div className="space-y-1.5">
             {normalizedPatterns.map((p, i) => (
@@ -283,6 +250,70 @@ function RegexPatternsTooltip({ children, channelPatterns, matchByTvgId, isTvgIn
         ) : null}
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ActiveProfileLines — renders the two inline lines in the Channel Group cell.
+// Data comes from the activeProfile prop (fetched eagerly at page level and
+// cached in ChannelConfiguration.jsx). Starts muted while loading.
+// ---------------------------------------------------------------------------
+function ActiveProfileLines({ activeProfile }) {
+  // activeProfile is one of:
+  //   undefined  — fetch not yet initiated or in flight
+  //   null       — fetch in flight (explicit loading state)
+  //   { error }  — fetch failed
+  //   { automation: {...}, epg_override: {...} } — resolved
+
+  const loading = activeProfile === null || activeProfile === undefined
+
+  const auto = activeProfile?.automation
+  const epg  = activeProfile?.epg_override
+
+  const renderAutomation = () => {
+    if (loading) return <span className="text-muted-foreground/40">—</span>
+    if (activeProfile?.error) return <span className="text-muted-foreground/60 italic">error</span>
+    if (!auto?.profile_name) return <span className="text-muted-foreground/40">—</span>
+    const source = auto.source === 'channel' ? 'Channel' : auto.source === 'group' ? 'Group' : null
+    return (
+      <span className="text-foreground">
+        {auto.profile_name}
+        {auto.period_name && (
+          <span className="text-muted-foreground"> · {auto.period_name}</span>
+        )}
+        {source && (
+          <span className="text-muted-foreground"> · {source}</span>
+        )}
+      </span>
+    )
+  }
+
+  const renderEpg = () => {
+    if (loading) return <span className="text-muted-foreground/40">—</span>
+    if (activeProfile?.error) return <span className="text-muted-foreground/60 italic">error</span>
+    if (!epg?.profile_name) return <span className="text-muted-foreground/40">—</span>
+    const source = epg.source === 'channel' ? 'Channel' : epg.source === 'group' ? 'Group' : null
+    return (
+      <span className="text-foreground">
+        {epg.profile_name}
+        {source && (
+          <span className="text-muted-foreground"> · {source}</span>
+        )}
+      </span>
+    )
+  }
+
+  return (
+    <div className="space-y-0.5 min-w-0">
+      <p className="text-[11px] leading-snug">
+        <span className="text-muted-foreground">Automation Profile: </span>
+        {renderAutomation()}
+      </p>
+      <p className="text-[11px] leading-snug">
+        <span className="text-muted-foreground">EPG Profile: </span>
+        {renderEpg()}
+      </p>
+    </div>
   )
 }
 
@@ -310,6 +341,7 @@ export function RegexTableRow({
   onAssignEpgProfile,
   matchCount,
   totalStreamCount,
+  activeProfile,   // { automation, epg_override } | { error } | null | undefined
 }) {
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
@@ -329,11 +361,6 @@ export function RegexTableRow({
   const matchByTvgId = Boolean(effectiveMatchingConfig?.match_by_tvg_id)
   const isTvgInherited = !hasChannelMatchingConfig && Boolean(channelGroupId)
   const patternCount = normalizePatternData(channelPatterns).length
-  const isPeriodChannelOverride =
-    channel?.automation_periods_source === 'channel' || Number(channel?.channel_periods_count || 0) > 0
-  const isPeriodGroupBased =
-    channel?.automation_periods_source === 'group' ||
-    (!isPeriodChannelOverride && Number(channel?.group_periods_count || 0) > 0)
   const isEpgChannelOverride = Boolean(channel?.channel_epg_scheduled_profile_id)
   const isEpgGroupBased = !isEpgChannelOverride && Boolean(groupsConfig?.[channelGroupId]?.epg_profile_id)
   const groupMatchingPatternCount = Array.isArray(groupMatchingConfig?.regex_patterns)
@@ -422,34 +449,15 @@ export function RegexTableRow({
 
         {/* Channel name */}
         <div className="flex items-center">
-          <span className="font-medium truncate">{channel.name}</span>
+          <span className="font-medium">{channel.name}</span>
         </div>
 
-        {/* ── Channel Group — fetches active profile on hover ── */}
-        <div className="flex items-center text-sm text-muted-foreground min-w-0">
-          <ChannelGroupTooltip
-            channel={channel}
-            group={group}
-            groupsConfig={groupsConfig}
-          >
-            <div className="min-w-0 cursor-default">
-              <div className="truncate">{group?.name || '-'}</div>
-              <div className="flex items-center gap-1 mt-1 flex-wrap">
-                <Badge
-                  variant={isPeriodChannelOverride ? 'default' : 'outline'}
-                  className="text-[10px] h-5 px-1.5"
-                >
-                  Automation: {isPeriodChannelOverride ? 'Override' : isPeriodGroupBased ? 'Group' : 'None'}
-                </Badge>
-                <Badge
-                  variant={isEpgChannelOverride ? 'default' : 'outline'}
-                  className="text-[10px] h-5 px-1.5"
-                >
-                  EPG Profile: {isEpgChannelOverride ? 'Override' : isEpgGroupBased ? 'Group' : 'None'}
-                </Badge>
-              </div>
-            </div>
-          </ChannelGroupTooltip>
+        {/* ── Channel Group column — inline active profile lines, no tooltip ── */}
+        <div className="flex items-start text-sm min-w-0">
+          <div className="min-w-0 w-full">
+            <div className="text-xs text-muted-foreground truncate mb-1">{group?.name || '-'}</div>
+            <ActiveProfileLines activeProfile={activeProfile} />
+          </div>
         </div>
 
         {/* ── Nº of Periods ── */}
@@ -465,14 +473,14 @@ export function RegexTableRow({
         </div>
 
         {/* ── Regex Patterns ── */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-col gap-1 items-center justify-center">
           <RegexPatternsTooltip
             channelPatterns={channelPatterns}
             matchByTvgId={matchByTvgId}
             isTvgInherited={isTvgInherited}
             channel={channel}
           >
-            <div className="flex items-center gap-2 flex-wrap cursor-default">
+            <div className="flex items-center gap-1 flex-wrap cursor-default">
               {patternCount > 0 ? (
                 <Badge variant="secondary">
                   {patternCount} pattern{patternCount > 1 ? 's' : ''}
@@ -482,7 +490,7 @@ export function RegexTableRow({
                   {groupMatchingPatternCount} (group)
                 </Badge>
               ) : (
-                <span className="text-sm text-muted-foreground">No patterns</span>
+                <span className="text-xs text-muted-foreground">No patterns</span>
               )}
               {matchByTvgId && (
                 <>
@@ -495,7 +503,7 @@ export function RegexTableRow({
             </div>
           </RegexPatternsTooltip>
 
-          {/* Stream match count (pre-existing, unchanged) */}
+          {/* Stream match count — stacked below pattern badge */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="text-xs font-mono tabular-nums cursor-default select-none">
