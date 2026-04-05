@@ -47,7 +47,7 @@ const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 
 // Constants for grid layout
-const REGEX_TABLE_GRID_COLS = '32px 60px 48px 1fr 280px 100px 80px 140px'
+const REGEX_TABLE_GRID_COLS = '32px 60px 48px minmax(120px, 1fr) minmax(220px, 2fr) 100px 80px 140px'
 
 // Constants for stream checker priorities
 
@@ -2599,7 +2599,7 @@ export default function ChannelConfiguration() {
                           <div>Logo</div>
                           <div>Channel Name</div>
                           <div>Channel Group</div>
-                          <div>Nº of Periods</div>
+                          <div>Active Periods</div>
                           <div>Regex Patterns</div>
                           <div>Actions</div>
                         </div>
