@@ -305,11 +305,11 @@ function ActiveProfileLines({ activeProfile }) {
 
   return (
     <div className="space-y-0.5 min-w-0">
-      <p className="text-[11px] leading-snug truncate">
+      <p className="text-[11px] leading-snug">
         <span className="text-muted-foreground">Automation Profile: </span>
         {renderAutomation()}
       </p>
-      <p className="text-[11px] leading-snug truncate">
+      <p className="text-[11px] leading-snug">
         <span className="text-muted-foreground">EPG Profile: </span>
         {renderEpg()}
       </p>
@@ -473,14 +473,14 @@ export function RegexTableRow({
         </div>
 
         {/* ── Regex Patterns ── */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-col gap-1 justify-center">
           <RegexPatternsTooltip
             channelPatterns={channelPatterns}
             matchByTvgId={matchByTvgId}
             isTvgInherited={isTvgInherited}
             channel={channel}
           >
-            <div className="flex items-center gap-2 flex-wrap cursor-default">
+            <div className="flex items-center gap-1 flex-wrap cursor-default">
               {patternCount > 0 ? (
                 <Badge variant="secondary">
                   {patternCount} pattern{patternCount > 1 ? 's' : ''}
@@ -490,7 +490,7 @@ export function RegexTableRow({
                   {groupMatchingPatternCount} (group)
                 </Badge>
               ) : (
-                <span className="text-sm text-muted-foreground">No patterns</span>
+                <span className="text-xs text-muted-foreground">No patterns</span>
               )}
               {matchByTvgId && (
                 <>
@@ -503,7 +503,7 @@ export function RegexTableRow({
             </div>
           </RegexPatternsTooltip>
 
-          {/* Stream match count (pre-existing, unchanged) */}
+          {/* Stream match count — stacked below pattern badge */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="text-xs font-mono tabular-nums cursor-default select-none">
