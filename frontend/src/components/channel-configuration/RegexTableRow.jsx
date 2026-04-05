@@ -449,7 +449,7 @@ export function RegexTableRow({
 
         {/* Channel name */}
         <div className="flex items-center">
-          <span className="font-medium truncate">{channel.name}</span>
+          <span className="font-medium">{channel.name}</span>
         </div>
 
         {/* ── Channel Group column — inline active profile lines, no tooltip ── */}
@@ -473,7 +473,7 @@ export function RegexTableRow({
         </div>
 
         {/* ── Regex Patterns ── */}
-        <div className="flex flex-col gap-1 justify-center">
+        <div className="flex flex-col gap-1 items-center justify-center">
           <RegexPatternsTooltip
             channelPatterns={channelPatterns}
             matchByTvgId={matchByTvgId}
