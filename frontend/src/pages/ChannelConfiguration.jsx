@@ -47,7 +47,7 @@ const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 
 // Constants for grid layout
-const REGEX_TABLE_GRID_COLS = '50px 80px 80px 1fr 180px 120px 150px 140px'
+const REGEX_TABLE_GRID_COLS = '32px 60px 48px 1fr 280px 100px 80px 140px'
 
 // Constants for stream checker priorities
 
@@ -2578,8 +2578,8 @@ export default function ChannelConfiguration() {
                   <Card>
                     <CardContent className="p-0">
                       <div className="border-b bg-muted/50">
-                        <div className={`gap-4 p-4 font-medium text-sm`} style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS, display: 'grid' }}>
-                          <div className="flex items-center justify-center">
+                        <div className={`gap-2 px-3 py-3 font-medium text-sm`} style={{ gridTemplateColumns: REGEX_TABLE_GRID_COLS, display: 'grid' }}>
+                          <div className="flex items-center">
                             <Checkbox
                               checked={filteredChannels.length > 0 && filteredChannels.every(ch => selectedChannels.has(ch.id))}
                               onCheckedChange={(checked) => {
